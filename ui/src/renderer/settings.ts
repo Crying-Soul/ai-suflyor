@@ -9,7 +9,7 @@ declare global {
 
 const api = window.api;
 
-type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "privacy";
+type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "privacy" | "logs";
 
 interface Field {
   /** Dotted config.json key. */
@@ -150,6 +150,7 @@ const SECTIONS: Section[] = [
       { key: "debug.recordWav", label: "Записывать WAV обеих сторон", kind: "bool" },
       { key: "debug.recordDir", label: "Папка записей", kind: "text" },
       { key: "stt.verbose", label: "Подробный лог whisper", kind: "bool" },
+      { key: "logs", label: "Логи", kind: "logs", hint: "Логи за 7 дней. Приложите файл за нужный день к сообщению об ошибке." },
     ],
   },
 ];
@@ -232,6 +233,11 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       s.addEventListener("change", sync);
       sync();
       return [el("div", { className: "pair" }, s, exe), () => (s.value === "process" ? `process:${exe.value.trim()}` : "system")];
+    }
+    case "logs": {
+      const open = el("button", { type: "button", className: "btn-ghost", textContent: "Открыть папку логов" });
+      open.onclick = () => api.openLogs();
+      return [open, () => undefined];
     }
     case "privacy": {
       const out = el("div", { className: "privacy-out" });

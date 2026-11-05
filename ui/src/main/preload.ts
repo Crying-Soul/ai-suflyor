@@ -43,6 +43,7 @@ const api: RendererApi = {
     },
   },
   privacyTest: () => ipcRenderer.invoke("privacy:test"),
+  openLogs: () => ipcRenderer.send("logs:open"),
   pathForFile: (file) => webUtils.getPathForFile(file),
 };
 

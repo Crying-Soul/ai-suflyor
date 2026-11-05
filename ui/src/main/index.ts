@@ -7,6 +7,7 @@ import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodeP
 import * as calls from "./calls";
 import * as models from "./models";
 import { createTray } from "./tray";
+import { startLogs } from "./log";
 import { CoreProcess, resolveCoreExe } from "./core";
 
 interface Hotkeys {
@@ -588,6 +589,9 @@ function registerCallsIpc(): void {
   ipcMain.handle("calls:current", () => lastCall);
 }
 
+const logDir = path.join(app.getPath("userData"), "logs");
+startLogs(logDir);
+
 app.whenReady().then(() => {
   ipcMain.on("core-cmd", (_e, cmd: Command) => {
     if (cmd.cmd === "open_call") return openCall(cmd.dir);
@@ -605,6 +609,7 @@ app.whenReady().then(() => {
   registerCallsIpc();
   registerModelsIpc();
   ipcMain.handle("privacy:test", privacyTest);
+  ipcMain.on("logs:open", () => shell.openPath(logDir));
   createOverlay("transcript");
   createOverlay("hints");
   tray = createTray({ toggleWindows, openCalls, openSettings, togglePreset, toggleClickThrough, quit: () => app.quit() });
