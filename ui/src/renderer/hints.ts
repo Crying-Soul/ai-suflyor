@@ -177,8 +177,15 @@ function clearTurns(): void {
 // ---------- events ----------
 
 function renderLatency(): void {
-  const first = Math.min(metrics.answer_first_token_quick ?? Infinity, metrics.answer_first_token_full ?? Infinity);
-  latencyEl.textContent = Number.isFinite(first) ? `Первое слово через ${(first / 1000).toFixed(1).replace(".", ",")}\u00a0с` : "";
+  const min = (p: string) => Math.min(metrics[`${p}_quick`] ?? Infinity, metrics[`${p}_full`] ?? Infinity);
+  const secs = (ms: number) => `${(ms / 1000).toFixed(1).replace(".", ",")}\u00a0с`;
+  const fromQuestion = min("question_to_first_token");
+  const first = min("answer_first_token");
+  latencyEl.textContent = Number.isFinite(fromQuestion)
+    ? `От конца вопроса до первого слова ${secs(fromQuestion)}`
+    : Number.isFinite(first)
+      ? `Первое слово через ${secs(first)}`
+      : "";
 }
 
 api.onEvent((e: CoreEvent) => {
@@ -235,7 +242,7 @@ api.onEvent((e: CoreEvent) => {
       break;
     }
     case "metrics":
-      if (e.name.startsWith("answer_first_token_")) {
+      if (e.name.startsWith("answer_first_token_") || e.name.startsWith("question_to_first_token_")) {
         metrics[e.name] = e.ms;
         renderLatency();
       }
