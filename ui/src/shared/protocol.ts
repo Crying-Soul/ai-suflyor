@@ -174,7 +174,9 @@ export type UiMessage =
   /** Show an older (-1) or newer (1) answer. */
   | { kind: "nav"; dir: -1 | 1 }
   /** Copy the answer on show. */
-  | { kind: "copy" };
+  | { kind: "copy" }
+  /** The screen hotkey was pressed: a capture and an answer are coming. */
+  | { kind: "looking" };
 
 export interface RendererApi {
   send(cmd: Command): void;

@@ -126,5 +126,22 @@ app.whenReady().then(async () => {
   await shot(c, "calls-live.png");
   await c.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(b => b.textContent === 'Предпросмотр контекста').click()`);
   await shot(c, "calls-preview.png");
+
+  // «Экран + вопрос»: the chip while capturing, then a card with the screen thumb.
+  hi.webContents.send("ui", { kind: "looking" });
+  await shot(hi, "hints-looking.png");
+  const thumb = (await c.webContents.capturePage()).resize({ width: 320 }).toDataURL();
+  const q = "";
+  send([hi], [
+    { ev: "screenshot", turn: 20, width: 1568, height: 1085, thumb },
+    { ev: "answer_start", id: 21, turn: 20, trigger: "screen", question: q, tier: "quick" },
+    { ev: "answer_delta", id: 21, text: "На экране функция шардирования: ключ по user_id, перекос на крупных продавцах." },
+    { ev: "answer_start", id: 22, turn: 20, trigger: "screen", question: q, tier: "full" },
+    { ev: "answer_delta", id: 22, text: "- Ошибка: `hash % n` ломает раскладку при добавлении шарда.\n- Лучше consistent hashing или таблица маршрутизации.\n- Сложность поиска O(1), перенос данных O(k/n)." },
+    { ev: "answer_end", id: 22 },
+  ]);
+  await shot(hi, "hints-screen.png");
+  await hi.webContents.executeJavaScript(`document.querySelector('.shot').click()`);
+  await shot(hi, "hints-screen-big.png");
   app.quit();
 });

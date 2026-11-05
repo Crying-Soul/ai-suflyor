@@ -337,7 +337,7 @@ function registerHotkeys(): void {
   const hotkeys = loadHotkeys();
   const map: [string, () => void][] = [
     [hotkeys.ask, () => core.send({ cmd: "ask", screenshot: false })],
-    [hotkeys.screenshotAsk, () => core.send({ cmd: "ask", screenshot: true })],
+    [hotkeys.screenshotAsk, () => (sendUi(overlays.hints, { kind: "looking" }), core.send({ cmd: "ask", screenshot: true }))],
     [hotkeys.toggleWindow, toggleWindows],
     [hotkeys.toggleAuto, () => core.send({ cmd: "set", auto: !(lastStatus?.auto ?? true) })],
     [hotkeys.clickThrough, toggleClickThrough],
