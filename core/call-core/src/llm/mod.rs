@@ -3,6 +3,8 @@
 
 pub mod api;
 pub mod claude_code;
+#[cfg(test)]
+pub mod mock;
 
 use anyhow::Result;
 use protocol::Speaker;
@@ -43,6 +45,8 @@ impl Turn {
 pub enum Session {
     Api(api::ApiSession),
     Code(claude_code::CodeSession),
+    #[cfg(test)]
+    Mock(mock::MockSession),
 }
 
 impl Session {
@@ -52,6 +56,8 @@ impl Session {
         match self {
             Session::Api(s) => Ok(s.prepare()),
             Session::Code(s) => s.prepare(model).await,
+            #[cfg(test)]
+            Session::Mock(s) => Ok(s.prepare()),
         }
     }
 
@@ -60,6 +66,8 @@ impl Session {
         match self {
             Session::Api(_) => Ok(()),
             Session::Code(s) => s.warm(model).await,
+            #[cfg(test)]
+            Session::Mock(_) => Ok(()),
         }
     }
 
@@ -67,6 +75,8 @@ impl Session {
         match self {
             Session::Api(s) => s.ask(model, turn, out).await,
             Session::Code(s) => s.ask(turn, out).await,
+            #[cfg(test)]
+            Session::Mock(s) => s.ask(turn, out).await,
         }
     }
 
@@ -82,6 +92,8 @@ impl Session {
         match self {
             Session::Api(s) => s.set_system(system),
             Session::Code(s) => s.set_system(system),
+            #[cfg(test)]
+            Session::Mock(_) => {}
         }
     }
 
@@ -89,6 +101,8 @@ impl Session {
         match self {
             Session::Api(s) => s.reset(),
             Session::Code(s) => s.reset().await,
+            #[cfg(test)]
+            Session::Mock(s) => s.reset(),
         }
     }
 }

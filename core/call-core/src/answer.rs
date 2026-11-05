@@ -330,6 +330,91 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::mock::MockSession;
+    use protocol::Speaker;
+
+    fn segs() -> Arc<Vec<FinalSegment>> {
+        Arc::new(vec![FinalSegment { speaker: Speaker::Them, t_ms: 0, end_ms: 0, text: "Что такое горутина?".into() }])
+    }
+
+    fn ask(id: u64, shot: Option<Arc<Shot>>) -> Msg {
+        Msg::Ask(Req {
+            id,
+            turn: id,
+            model: "test".into(),
+            trigger: "test".into(),
+            question: "Что такое горутина?".into(),
+            q_t: None,
+            segs: segs(),
+            shot,
+            shot_file: None,
+        })
+    }
+
+    /// The error of the answer `id` (None = it finished).
+    async fn end(rx: &mut mpsc::UnboundedReceiver<Event>, want: u64) -> Option<String> {
+        loop {
+            if let Event::AnswerEnd { id, error } = rx.recv().await.expect("tier stopped") {
+                if id == want {
+                    return error;
+                }
+            }
+        }
+    }
+
+    fn tier(mock: MockSession) -> (mpsc::UnboundedSender<Msg>, Arc<Shared>, mpsc::UnboundedReceiver<Event>) {
+        let (shared, rx) = Shared::for_test();
+        (spawn_tier("full", Session::Mock(mock), "test".into(), shared.clone()), shared, rx)
+    }
+
+    #[tokio::test]
+    async fn newer_ask_cancels_running_one() {
+        let (mock, _) = MockSession::new(Duration::from_millis(50), vec!["a", "b", "c"], 0);
+        let (tx, _shared, mut rx) = tier(mock);
+        tx.send(ask(1, None)).unwrap();
+        tx.send(ask(2, None)).unwrap();
+        assert_eq!(end(&mut rx, 1).await.as_deref(), Some("cancelled"));
+        assert_eq!(end(&mut rx, 2).await, None);
+    }
+
+    #[tokio::test]
+    async fn same_screen_is_not_sent_twice() {
+        let (mock, seen) = MockSession::new(Duration::ZERO, vec!["ok"], 0);
+        let (tx, _shared, mut rx) = tier(mock);
+        let shot = |hash| Some(Arc::new(Shot { png: vec![1], width: 1, height: 1, hash, thumb: vec![], source: "test".into() }));
+        for (id, hash) in [(1, 42), (2, 43), (3, !0)] {
+            tx.send(ask(id, shot(hash))).unwrap();
+            assert_eq!(end(&mut rx, id).await, None);
+        }
+        let seen = seen.lock().unwrap();
+        assert!(seen[0].1, "first screen goes with the image");
+        assert!(!seen[1].1 && seen[1].0.contains("Unchanged"), "one bit off is the same screen");
+        assert!(seen[2].1, "another screen goes again");
+    }
+
+    #[tokio::test]
+    async fn finished_answer_is_saved_to_the_open_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mock, _) = MockSession::new(Duration::ZERO, vec!["Лёгкий ", "поток"], 0);
+        let (tx, shared, mut rx) = tier(mock);
+        *shared.call.lock().unwrap() = Some(dir.path().to_path_buf());
+        tx.send(ask(1, None)).unwrap();
+        assert_eq!(end(&mut rx, 1).await, None);
+        let saved = std::fs::read_to_string(dir.path().join("answers.jsonl")).unwrap();
+        assert!(saved.contains("\"text\":\"Лёгкий поток\""), "{saved}");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn hung_backend_times_out_and_session_restarts() {
+        let (mock, seen) = MockSession::new(Duration::ZERO, vec!["ok"], 1);
+        let (tx, _shared, mut rx) = tier(mock);
+        tx.send(ask(1, None)).unwrap();
+        assert_eq!(end(&mut rx, 1).await.as_deref(), Some("Claude не ответил за 30 с"));
+        tx.send(ask(2, None)).unwrap();
+        assert_eq!(end(&mut rx, 2).await, None);
+        let seen = seen.lock().unwrap();
+        assert!(seen[1].0.contains("горутина"), "the new session gets the transcript again: {}", seen[1].0);
+    }
 
     #[tokio::test]
     async fn overdue_waits_for_first_token_then_total() {
