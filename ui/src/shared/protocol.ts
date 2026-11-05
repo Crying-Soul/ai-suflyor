@@ -4,7 +4,7 @@ export type Speaker = "me" | "them";
 export type AnswerMode = "confirmed" | "speculative";
 
 export type Command =
-  | { cmd: "ask"; screenshot: boolean }
+  | { cmd: "ask"; screenshot: boolean; question?: string }
   | { cmd: "set"; auto?: boolean; model?: string; answer_mode?: AnswerMode }
   | { cmd: "clear" }
   | { cmd: "shutdown" };
@@ -30,16 +30,22 @@ export type CoreEvent =
   | { ev: "ready"; version: string }
   | ({ ev: "status" } & Status)
   | { ev: "level"; speaker: Speaker; rms: number; peak: number }
-  | { ev: "vad"; speaker: Speaker; active: boolean }
-  | { ev: "partial"; speaker: Speaker; seg: number; text: string }
-  | { ev: "final"; speaker: Speaker; seg: number; t: number; text: string }
-  | { ev: "answer_start"; id: number; trigger: string; question: string; tier: "quick" | "full" }
+  // `t` (epoch ms of the utterance start) keys one utterance across vad, partial and final.
+  | { ev: "vad"; speaker: Speaker; active: boolean; t: number }
+  /** Live hypothesis: `stable` agreed by two decodes in a row, `tail` may still change. */
+  | { ev: "partial"; speaker: Speaker; t: number; stable: string; tail: string }
+  /** Empty `text`: the utterance was dropped. `question`: "them" text that asks the user something. */
+  | { ev: "final"; speaker: Speaker; t: number; text: string; question: boolean }
+  /** `turn` is shared by the quick and full answers of one ask; `q_t` is the question's first utterance. */
+  | { ev: "answer_start"; id: number; turn: number; trigger: string; question: string; q_t?: number; tier: "quick" | "full" }
   | { ev: "answer_delta"; id: number; text: string }
   | { ev: "answer_end"; id: number; error?: string }
   | { ev: "metrics"; name: string; ms: number }
   | { ev: "error"; message: string }
-  /** Emitted by the UI main process itself, not the core. */
-  | { ev: "core_down"; message: string };
+  // Emitted by the UI main process itself, not the core:
+  | { ev: "core_down"; message: string }
+  /** A window sent "clear": every window drops its transcript and answers. */
+  | { ev: "cleared" };
 
 /** config.json as stored (`raw`) and with the core's defaults filled in (`effective`). */
 export interface ConfigSnapshot {

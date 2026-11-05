@@ -1,27 +1,27 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'" />
-  <meta name="description" content="Settings of the call assistant, stored in config.json." />
-  <title>Settings</title>
+  <meta name="description" content="Настройки ассистента звонков, хранятся в config.json." />
+  <title>Настройки</title>
   <link rel="stylesheet" href="settings.css" />
 </head>
 <body>
   <header class="window-head">
-    <h1>Settings</h1>
+    <h1>Настройки</h1>
     <span id="cfg-path" class="path"></span>
   </header>
   <div class="layout">
-    <nav aria-label="Sections"><ul id="sections"></ul></nav>
+    <nav aria-label="Разделы"><ul id="sections"></ul></nav>
     <form id="form" autocomplete="off">
-      <p class="loading">Loading the config…</p>
+      <p class="loading">Загружаю настройки…</p>
     </form>
   </div>
   <footer class="actions">
     <span id="save-state" role="status"></span>
-    <button id="btn-cancel" class="btn-ghost" type="button">Close</button>
-    <button id="btn-save" class="btn" type="submit" form="form">Save and restart</button>
+    <button id="btn-cancel" class="btn-ghost" type="button">Закрыть</button>
+    <button id="btn-save" class="btn" type="submit" form="form">Сохранить и перезапустить</button>
   </footer>
   <script src="settings.js"></script>
 </body>

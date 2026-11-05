@@ -1,0 +1,31 @@
+/* Shared frame of the two overlay windows (transcript, hints): an opaque Dusk sheet with a drag bar on top. */
+@import url("./tokens.css");
+@import url("./base.css");
+@import url("./fonts.css");
+@import url("./controls.css");
+
+html, body { height: 100%; }
+body { overflow: hidden; }
+
+#app {
+  display: flex; flex-direction: column; gap: var(--space-sm);
+  height: 100%; padding: 0 var(--space-md) var(--space-sm);
+  border: 1px solid var(--color-rule);
+}
+
+/* Top bar: the whole strip drags the frameless window; its buttons stay clickable. */
+#bar { display: flex; align-items: center; gap: var(--space-xs); min-height: 40px; -webkit-app-region: drag; user-select: none; }
+#bar button { -webkit-app-region: no-drag; }
+.title { font: var(--display-weight) var(--text-md)/1 var(--font-display); letter-spacing: var(--tracking-display); }
+
+footer { display: flex; align-items: center; gap: var(--space-xs); min-height: 40px; }
+footer .spacer { flex: 1; }
+footer .btn, footer .btn-ghost { padding-inline: var(--space-sm); }
+footer .switch { padding-right: var(--space-sm); }
+.btn-ghost.small { min-height: 28px; padding-inline: var(--space-sm); font-size: var(--text-xs); }
+
+.empty { display: none; color: var(--color-muted); font-size: var(--text-sm); padding: var(--space-xs) 0; }
+
+/* Live-state motion; base.css cuts it to nothing under prefers-reduced-motion. */
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
