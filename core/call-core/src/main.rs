@@ -1,0 +1,208 @@
+//! call-core: audio capture, speech pipeline and Claude client for the call assistant.
+//! Talks NDJSON over stdio to the Electron UI (see the `protocol` crate).
+
+mod answer;
+mod config;
+mod llm;
+mod streams;
+mod stt_worker;
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+
+use anyhow::Result;
+use protocol::{Command, Event, Speaker, Status};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::sync::mpsc;
+use tracing::{error, info, warn};
+
+use crate::config::Config;
+use crate::streams::StreamSet;
+use crate::stt_worker::SttQueue;
+
+pub type EventTx = mpsc::UnboundedSender<Event>;
+
+#[derive(Debug, Clone)]
+pub struct FinalSegment {
+    pub speaker: Speaker,
+    pub t_ms: u64,
+    /// Epoch ms of the end of speech.
+    pub end_ms: u64,
+    pub text: String,
+}
+
+pub struct Shared {
+    pub status: Mutex<Status>,
+    pub events: EventTx,
+    /// Final transcript, chronological per speaker (merged by time when rendered).
+    pub transcript: Mutex<Vec<FinalSegment>>,
+    /// VAD of the other side is active (auto-detect waits for the end of their turn).
+    pub them_speaking: std::sync::atomic::AtomicBool,
+    /// Set once at startup; the STT worker reports "them" finals to it.
+    pub answerer: std::sync::OnceLock<answer::Answerer>,
+}
+
+impl Shared {
+    pub fn update_status(&self, f: impl FnOnce(&mut Status)) {
+        let snapshot = {
+            let mut s = self.status.lock().unwrap();
+            f(&mut s);
+            s.clone()
+        };
+        let _ = self.events.send(Event::Status(snapshot));
+    }
+}
+
+fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,ort=warn".into()),
+        )
+        .init();
+
+    let mut config_path: Option<PathBuf> = None;
+    let mut print_config = false;
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--config" => config_path = args.next().map(PathBuf::from),
+            // Effective config (file + defaults) as JSON, for the settings UI.
+            "--print-config" => print_config = true,
+            "--list-mics" => {
+                for m in audio::list_mics()? {
+                    println!("{m}");
+                }
+                return Ok(());
+            }
+            other => warn!("unknown argument {other}"),
+        }
+    }
+
+    let (cfg, loaded_from) = Config::load(config_path.as_deref())?;
+    if print_config {
+        println!("{}", serde_json::to_string(&cfg)?);
+        return Ok(());
+    }
+    match &loaded_from {
+        Some(p) => info!("config: {}", p.display()),
+        None => warn!("config.json not found, using defaults"),
+    }
+
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(run(cfg, loaded_from))
+}
+
+async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
+
+    // stdout writer: the only place that writes to stdout.
+    let writer = tokio::spawn(async move {
+        let mut out = tokio::io::stdout();
+        while let Some(ev) = rx.recv().await {
+            let mut line = match serde_json::to_vec(&ev) {
+                Ok(l) => l,
+                Err(e) => {
+                    error!("serialize event: {e}");
+                    continue;
+                }
+            };
+            line.push(b'\n');
+            if out.write_all(&line).await.is_err() || out.flush().await.is_err() {
+                break; // UI is gone
+            }
+        }
+    });
+
+    let record_dir = cfg.debug.record_wav.then(|| {
+        let base = config_path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
+        base.join(&cfg.debug.record_dir)
+    });
+
+    let shared = Arc::new(Shared {
+        status: Mutex::new(Status {
+            me: Default::default(),
+            them: Default::default(),
+            stt: "off".into(),
+            auto: cfg.auto_detect,
+            model: cfg.model.clone(),
+            answer_mode: cfg.answer_mode,
+            busy: false,
+            recording_dir: record_dir.as_ref().map(|d| d.display().to_string()),
+        }),
+        events: tx.clone(),
+        transcript: Mutex::new(Vec::new()),
+        them_speaking: Default::default(),
+        answerer: Default::default(),
+    });
+
+    let _ = tx.send(Event::Ready { version: env!("CARGO_PKG_VERSION").into() });
+    shared.update_status(|_| {});
+
+    let queue = Arc::new(SttQueue::default());
+    let stt = stt_worker::spawn(&cfg, shared.clone(), queue.clone())?;
+    let streams = StreamSet::start(&cfg, shared.clone(), queue.clone(), record_dir)?;
+    let answerer = answer::Answerer::start(&cfg, shared.clone());
+    let _ = shared.answerer.set(answerer.clone());
+
+    // stdin reader: commands from the UI. EOF means the UI died -> shut down.
+    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    loop {
+        tokio::select! {
+            line = lines.next_line() => {
+                let Some(line) = line? else { info!("stdin closed, shutting down"); break; };
+                if line.trim().is_empty() { continue; }
+                match serde_json::from_str::<Command>(&line) {
+                    Ok(Command::Shutdown) => break,
+                    Ok(cmd) => handle(cmd, &cfg, &shared, &answerer),
+                    Err(e) => { let _ = tx.send(Event::Error { message: format!("bad command {line:?}: {e}") }); }
+                }
+            }
+            _ = tokio::signal::ctrl_c() => break,
+        }
+    }
+
+    streams.stop();
+    queue.close();
+    // The STT worker may be stuck loading the model; don't hold up shutdown for it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !stt.is_finished() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    drop(shared);
+    drop(tx);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(1), writer).await;
+    Ok(())
+}
+
+fn handle(cmd: Command, cfg: &Config, shared: &Shared, answerer: &answer::Answerer) {
+    match cmd {
+        Command::Ask { screenshot } => {
+            if screenshot {
+                // shortcut: screenshots arrive in phase 6; the question is answered without one for now.
+                info!("screenshot requested; not implemented yet, answering without it");
+            }
+            answerer.ask(shared, "hotkey");
+        }
+        Command::Set { auto, model, answer_mode } => shared.update_status(|s| {
+            if let Some(a) = auto {
+                s.auto = a;
+            }
+            if let Some(m) = model {
+                s.model = if m == "toggle" {
+                    if s.model == cfg.model { cfg.alt_model.clone() } else { cfg.model.clone() }
+                } else {
+                    m
+                };
+            }
+            if let Some(m) = answer_mode {
+                s.answer_mode = m;
+            }
+        }),
+        Command::Clear => {
+            shared.transcript.lock().unwrap().clear();
+            answerer.clear();
+        }
+        Command::Shutdown => unreachable!(),
+    }
+}

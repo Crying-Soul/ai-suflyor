@@ -1,0 +1,50 @@
+{
+  "name": "call-assistant-ui",
+  "version": "0.1.0",
+  "description": "Live call assistant: hears mic + system audio, transcribes locally with whisper.cpp, answers with Claude",
+  "main": "dist/main.js",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p .",
+    "core": "cargo build --release --manifest-path ../core/Cargo.toml",
+    "start": "npm run build && electron .",
+    "dist": "npm run core && npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "electron": "^45.2.2",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  },
+  "build": {
+    "appId": "local.call-assistant",
+    "productName": "CallAssistant",
+    "files": [
+      "dist/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../core/target/release/call-core.exe",
+        "to": "call-core.exe"
+      },
+      {
+        "from": "../whisper",
+        "to": "whisper",
+        "filter": [
+          "*.dll",
+          "*.exe"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}

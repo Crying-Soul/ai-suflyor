@@ -1,0 +1,3 @@
+Headers from ggml-org/whisper.cpp tag b5454 (include/whisper.h, ggml/include/*.h).
+Must match the prebuilt whisper.dll in ../../../../whisper (release b5454).
+When upgrading the DLLs, refresh these headers from the same tag.

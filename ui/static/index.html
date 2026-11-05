@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'" />
+  <meta name="description" content="Live call overlay: transcript of both sides and Claude's hint for the latest question." />
+  <title>Call Assistant</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="bar">
+      <span class="title">Call Assistant</span>
+      <span id="status" role="status">starting core…</span>
+      <button id="btn-settings" class="icon-btn nodrag" type="button" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M3 6h9M15 6h2M3 14h2M8 14h9" /><circle cx="13.5" cy="6" r="1.8" /><circle cx="6.5" cy="14" r="1.8" /></svg>
+      </button>
+      <button id="btn-hide" class="icon-btn nodrag" type="button" title="Hide (Ctrl+Shift+H)" aria-label="Hide">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg>
+      </button>
+    </header>
+
+    <div class="sources">
+      <div class="src"><span id="lbl-me" class="lbl">Я</span><div class="meter"><div id="meter-me"></div></div><span id="src-me" class="srcname">…</span></div>
+      <div class="src"><span id="lbl-them" class="lbl">Они</span><div class="meter"><div id="meter-them"></div></div><span id="src-them" class="srcname">…</span></div>
+    </div>
+
+    <section id="answer-card" class="glass" aria-label="Answer" aria-live="polite">
+      <div id="answer-meta"></div>
+      <div id="answer-quick"></div>
+      <div id="answer"></div>
+      <p class="empty answer-empty">The hint for the latest question shows here. Press Ctrl+Shift+Space to ask.</p>
+    </section>
+
+    <section id="transcript" aria-label="Transcript">
+      <p class="empty transcript-empty">The transcript starts when someone speaks.</p>
+    </section>
+
+    <div id="metrics" class="num"></div>
+
+    <footer class="nodrag">
+      <button id="btn-ask" class="btn" type="button" title="Ctrl+Shift+Space">Ask</button>
+      <button id="btn-shot" class="btn-ghost" type="button" title="Ctrl+Shift+S">Screen + ask</button>
+      <button id="btn-auto" class="switch" type="button" role="switch" aria-checked="false" title="Ctrl+Shift+A">Auto</button>
+      <span class="spacer"></span>
+      <button id="btn-model" class="btn-ghost" type="button" title="Switch model">model</button>
+      <button id="btn-clear" class="icon-btn" type="button" title="Clear transcript and answer" aria-label="Clear transcript and answer">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10" /></svg>
+      </button>
+    </footer>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
