@@ -49,3 +49,20 @@ export function follow(box: HTMLElement, pill: HTMLElement): () => void {
     else pill.hidden = false;
   };
 }
+
+const ICONS = { check: "M4 10.5l3.5 3.5L16 6" } as const;
+
+/** A 14px stroke icon in the current colour, hidden from assistive tech (the word beside it says it). */
+export function icon(name: keyof typeof ICONS): SVGSVGElement {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 20 20");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("aria-hidden", "true");
+  svg.classList.add("icon");
+  const path = document.createElementNS(ns, "path");
+  path.setAttribute("d", ICONS[name]);
+  svg.append(path);
+  return svg;
+}
