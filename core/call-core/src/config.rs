@@ -99,17 +99,20 @@ impl Default for SttConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LlmConfig {
-    /// "api" (Messages API, anthropicApiKey) or "claude-code" (local `claude -p` with its own login).
-    pub backend: String,
+    pub backend: Backend,
 }
 
-impl Default for LlmConfig {
-    fn default() -> Self {
-        Self { backend: "api".into() }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Backend {
+    /// Messages API with `anthropicApiKey`.
+    #[default]
+    Api,
+    /// Local `claude -p` with the user's own login.
+    ClaudeCode,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

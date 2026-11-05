@@ -10,15 +10,17 @@ use protocol::Event;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-use crate::config::Config;
+use crate::config::{Backend, Config};
 use crate::llm::{self, Chunk, Session};
 use crate::{FinalSegment, Shared};
 
 struct Req {
     id: u64,
+    turn: u64,
     model: String,
     trigger: String,
     question: String,
+    q_t: Option<u64>,
     segs: Arc<Vec<FinalSegment>>,
 }
 
@@ -44,7 +46,7 @@ impl Answerer {
         let make = |quick: bool| {
             let system = llm::system_prompt(quick, &cfg.user_context);
             let tier = if quick { "quick" } else { "full" };
-            if cfg.llm.backend == "claude-code" {
+            if cfg.llm.backend == Backend::ClaudeCode {
                 Session::Code(llm::claude_code::CodeSession::new(cfg.claude_code.command.clone(), system, cfg.effort.clone(), tier))
             } else {
                 let key = Some(cfg.anthropic_api_key.clone())
@@ -67,15 +69,19 @@ impl Answerer {
         let _ = self.auto.send(());
     }
 
-    pub fn ask(&self, shared: &Shared, trigger: &str) {
+    /// Starts both tiers. `question`: (text, start of its transcript run); None = the latest "them" run.
+    pub fn ask(&self, shared: &Shared, trigger: &str, question: Option<(String, Option<u64>)>) {
         let segs = Arc::new(shared.transcript.lock().unwrap().clone());
-        let question = llm::question(&segs);
+        let (question, q_t) = question.unwrap_or_else(|| llm::question(&segs));
         let model = shared.status.lock().unwrap().model.clone();
+        let turn = self.next_id.fetch_add(1, Ordering::Relaxed);
         let req = |model: String| Req {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            turn,
             model,
             trigger: trigger.to_string(),
             question: question.clone(),
+            q_t,
             segs: segs.clone(),
         };
         if let Some((tx, quick_model)) = &self.quick {
@@ -102,13 +108,13 @@ async fn auto_detect(a: Answerer, shared: Arc<Shared>, mut rx: mpsc::UnboundedRe
         if !shared.status.lock().unwrap().auto || shared.them_speaking.load(Ordering::Relaxed) {
             continue;
         }
-        let question = llm::question(&shared.transcript.lock().unwrap());
+        let (question, q_t) = llm::question(&shared.transcript.lock().unwrap());
         if question == last_asked || !textproc::is_question(&question) {
             continue;
         }
         info!("auto: question detected: {question}");
-        last_asked = question;
-        a.ask(&shared, "auto");
+        last_asked = question.clone();
+        a.ask(&shared, "auto", Some((question, q_t)));
     }
 }
 
@@ -140,7 +146,14 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
             };
             let id = req.id;
             let ev = shared.events.clone();
-            let _ = ev.send(Event::AnswerStart { id, trigger: req.trigger.clone(), question: req.question.clone(), tier: tier.into() });
+            let _ = ev.send(Event::AnswerStart {
+                id,
+                turn: req.turn,
+                trigger: req.trigger.clone(),
+                question: req.question.clone(),
+                q_t: req.q_t,
+                tier: tier.into(),
+            });
             if tier == "full" {
                 shared.update_status(|s| s.busy = true);
             }
