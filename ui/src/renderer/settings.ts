@@ -1,4 +1,4 @@
-import type { ConfigSnapshot, RendererApi } from "../shared/protocol";
+import type { ConfigSnapshot, ModelInfo, RendererApi } from "../shared/protocol";
 
 declare global {
   interface Window {
@@ -8,7 +8,7 @@ declare global {
 
 const api = window.api;
 
-type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source";
+type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models";
 
 interface Field {
   /** Dotted config.json key. */
@@ -97,6 +97,7 @@ const SECTIONS: Section[] = [
     title: "Распознавание",
     note: "Контекст о вас и глоссарий теперь в окне «Звонки»: кнопка с названием звонка в окне транскрипта.",
     fields: [
+      { key: "stt.model", label: "Модель Whisper", kind: "models", hint: "Выбор сразу перезапускает ядро, модель грузится несколько секунд. Загрузку можно прервать и продолжить." },
       { key: "language", label: "Язык речи", kind: "select", options: [["auto", "Определять"], ["ru", "Русский"], ["en", "Английский"]] },
       { key: "stt.useGpu", label: "Использовать GPU", kind: "bool" },
       { key: "stt.partialMs", label: "Живой текст каждые, мс", kind: "number", min: 0, max: 3000, step: 100, hint: "Показывает текст прямо во время речи. 0 выключает и освобождает GPU для финальных фраз." },
@@ -107,7 +108,6 @@ const SECTIONS: Section[] = [
       { key: "stt.noSpeechThold", label: "Порог «нет речи»", kind: "number", min: 0, max: 1, step: 0.05 },
       { key: "stt.temperatureInc", label: "Шаг температуры при повторе", kind: "number", min: 0, max: 1, step: 0.1, hint: "0: не перераспознавать при низкой уверенности." },
       { key: "stt.audioCtx", label: "Аудиоконтекст", kind: "number", min: 0, max: 1500, step: 1, hint: "0: полный контекст и лучшее качество." },
-      { key: "stt.model", label: "Файл модели", kind: "text" },
       { key: "stt.dll", label: "whisper.dll", kind: "text" },
     ],
   },
@@ -218,6 +218,12 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       sync();
       return [el("div", { className: "pair" }, s, exe), () => (s.value === "process" ? `process:${exe.value.trim()}` : "system")];
     }
+    case "models": {
+      const box = el("ul", { className: "models" });
+      renderModels(box).catch(() => box.replaceChildren(el("li", { className: "hint", textContent: "Список моделей недоступен." })));
+      api.models.onChange(() => void renderModels(box));
+      return [box, () => value];
+    }
     default: {
       const i = el("input", { type: f.kind === "secret" ? "password" : "text", className: "input", id, name: f.key, value: String(value ?? "") });
       i.autocomplete = "off";
@@ -225,6 +231,60 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       return [i, () => i.value];
     }
   }
+}
+
+const mb = (bytes: number) => Math.round(bytes / 1024 / 1024).toLocaleString("ru-RU");
+
+function small(text: string, onclick: () => unknown, cls = "btn-ghost small"): HTMLButtonElement {
+  const b = el("button", { type: "button", className: cls, textContent: text });
+  b.onclick = () => {
+    b.disabled = true;
+    Promise.resolve(onclick()).finally(() => (b.disabled = false));
+  };
+  return b;
+}
+
+/** Whisper models: one row each, the action fits its state. Redrawn on every download change. */
+async function renderModels(box: HTMLElement): Promise<void> {
+  const list = await api.models.list();
+  box.replaceChildren(...list.map((m) => modelRow(m, box)));
+}
+
+function modelRow(m: ModelInfo, box: HTMLElement): HTMLElement {
+  const info = el("div", { className: "model-info" },
+    el("span", { className: "model-name", textContent: m.label }),
+    el("span", { className: "hint", textContent: `${m.note} ${m.sizeMb.toLocaleString("ru-RU")}\u00a0МБ.` }),
+  );
+  if (m.error) info.append(el("span", { className: "hint error", textContent: `Не скачалась: ${m.error}` }));
+  const act = el("div", { className: "model-act" });
+  const refresh = () => renderModels(box);
+  const use = async () => {
+    const res = await api.models.use(m.id);
+    saveState.className = res.ok ? "done" : "error";
+    saveState.textContent = res.ok ? `Модель ${m.label}. Ядро перезапускается.` : `Не выбрана: ${res.error}`;
+    await refresh();
+  };
+  const del = async () => {
+    if (!confirm(`Удалить модель ${m.label} с диска?`)) return;
+    await api.models.remove(m.id).catch((e) => alert(String(e)));
+    await refresh();
+  };
+  if (m.active && m.state === "installed") {
+    act.append(el("span", { className: "in-use", textContent: "используется" }));
+  } else if (m.state === "installed") {
+    act.append(small("Выбрать", use, "btn small"), small("Удалить", del));
+  } else if (m.state === "downloading") {
+    const pct = m.total ? Math.floor((m.received / m.total) * 100) : 0;
+    const bar = el("progress", { max: 100, value: pct });
+    bar.setAttribute("aria-label", `Загрузка ${m.label}`);
+    act.append(bar, el("span", { className: "num pct", textContent: `${pct}\u00a0%` }), small("Отмена", () => api.models.cancel(m.id)));
+  } else if (m.state === "partial") {
+    act.append(el("span", { className: "hint num", textContent: `${mb(m.received)}\u00a0МБ` }), small("Продолжить", () => api.models.download(m.id), "btn small"), small("Удалить", del));
+  } else {
+    act.append(small("Скачать", () => api.models.download(m.id)));
+  }
+  const li = el("li", { className: m.active ? "model active" : "model" }, info, act);
+  return li;
 }
 
 function showSection(id: string): void {

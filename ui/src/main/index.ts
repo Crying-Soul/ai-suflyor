@@ -1,9 +1,10 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, screen, shell, type Rectangle } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, net, screen, shell, type Rectangle } from "electron";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { CallInfo, Command, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status } from "../shared/protocol";
 import * as calls from "./calls";
+import * as models from "./models";
 import { CoreProcess, resolveCoreExe } from "./core";
 
 interface Hotkeys {
@@ -349,6 +350,31 @@ async function removeNode(dir: string): Promise<void> {
   await shell.trashItem(dir);
 }
 
+/** Where downloaded whisper models go: whisper/ in dev (next to whisper.dll), userData when installed. */
+const modelsDir = () => (app.isPackaged ? path.join(app.getPath("userData"), "whisper-models") : path.join(rootDir(), "whisper"));
+
+/** stt.model as an absolute path (relative ones resolve against the config's folder, as in the core). */
+function activeModel(): string {
+  const p = (readRaw(configPath).stt as { model?: string } | undefined)?.model || "whisper/ggml-large-v3-turbo.bin";
+  return path.resolve(path.dirname(configPath ?? newConfigPath()), p);
+}
+
+function registerModelsIpc(): void {
+  models.useFetch(net.fetch as typeof fetch);
+  const changed = () => settingsWin?.webContents.send("models:changed");
+  ipcMain.handle("models:list", () => models.list(modelsDir(), activeModel()));
+  // Not awaited: the download outlives the request; progress arrives as models:changed.
+  ipcMain.handle("models:download", (_e, id: string) => void models.download(modelsDir(), id, changed));
+  ipcMain.on("models:cancel", (_e, id: string) => models.cancel(id));
+  ipcMain.handle("models:remove", (_e, id: string) => models.remove(modelsDir(), id, activeModel()));
+  ipcMain.handle("models:use", (_e, id: string) => {
+    const file = path.join(modelsDir(), models.fileOf(id));
+    if (!fs.existsSync(file)) return { ok: false, error: "модель не скачана" };
+    const rel = path.relative(path.dirname(configPath ?? newConfigPath()), file);
+    return saveConfig({ "stt.model": rel.startsWith("..") || path.isAbsolute(rel) ? file : rel.replaceAll("\\", "/") });
+  });
+}
+
 function registerCallsIpc(): void {
   ipcMain.on("calls:open", openCalls);
   ipcMain.handle("calls:tree", () => calls.tree(dataDir));
@@ -387,6 +413,7 @@ app.whenReady().then(() => {
   ipcMain.handle("config:save", (_e, patch: Record<string, unknown>) => saveConfig(patch));
   ipcMain.handle("config:mics", async () => (await runCore(["--list-mics"])).stdout.split(/\r?\n/).filter(Boolean));
   registerCallsIpc();
+  registerModelsIpc();
   createOverlay("transcript");
   createOverlay("hints");
   registerHotkeys();
