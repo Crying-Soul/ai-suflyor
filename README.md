@@ -13,7 +13,7 @@ Architecture and roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - [~] Phase 5: auto-answer in confirmed mode (question heuristic + 250 ms settle, one answer per question). Speculative mode still uses the confirmed path
 - [x] UI: separate transcript and hints windows, live rows from speech start with a stable/changing split, question marks, answer history, Russian UI
 - [x] Call folders with layered context, saved transcripts and summaries; whisper model manager; in-call window modes
-- [ ] Phase 6: screenshots + Windows OCR
+- [x] Phase 6: «Экран + вопрос» sends the foreground window to Claude (code and tasks on screen), unchanged screens not resent; capture-leak fixes and a privacy self-test. OCR dropped: Claude reads the image
 - [ ] Phase 7: rolling summary, NSIS installer
 
 ## Build and run (PowerShell)
@@ -59,7 +59,7 @@ Useful:
 | Keys | Action |
 |---|---|
 | Ctrl+Shift+Space | Ask Claude about the latest question |
-| Ctrl+Shift+S | Screenshot + ask |
+| Ctrl+Shift+S | Screenshot of the active window + ask (code, a task on a shared screen) |
 | Ctrl+Shift+A | Toggle auto-answer |
 | Ctrl+Shift+H | Hide or show both windows |
 | Ctrl+Alt+M | «У камеры»: hints as a strip at the top centre, near the camera |
@@ -71,4 +71,4 @@ Useful:
 
 Ctrl+Shift+S and Ctrl+Shift+A are also Teams shortcuts; if you use Teams, rebind them in Settings → «Горячие клавиши». The overlays never take keyboard focus.
 
-Both windows are excluded from screen sharing and screenshots (`setContentProtection`). Use headphones, otherwise the mic picks up the other side. Recording calls may require the other participants' consent, depending on jurisdiction and platform rules.
+All windows are excluded from screen sharing, recording and screenshots (`setContentProtection`, Windows 10 2004+); Settings → «Приватность» shows a capture to prove it. Not covered: a camera pointed at the screen, capture cards, the OS file-picker dialog. Use headphones, otherwise the mic picks up the other side. Recording calls may require the other participants' consent, depending on jurisdiction and platform rules.
