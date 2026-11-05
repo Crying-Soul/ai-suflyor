@@ -131,9 +131,18 @@ An attached image is the user's screen: if it shows code or a task, the line is 
 
 const SUMMARY_SYSTEM: &str = "You summarize a finished call for the user, who will read it before the next call with the same people. \
 The transcript comes from speech recognition: \"Q:\" lines are the other side, \"A:\" lines are the user. \
-Write markdown in the language of the call, at most 300 words, with these sections: \
-topics discussed; questions asked and how the user answered them; promises and follow-ups; facts learned about the other side. \
+<hints> holds what the assistant suggested during the call for each question. \
+Write markdown in the language of the call, at most 600 words, with these sections: \
+topics discussed; questions asked and how the user answered them; promises and follow-ups; facts learned about the other side; \
+what to answer better: for each question where the user's answer was weak, wrong or incomplete, one item with \
+what the user said, what was missing, and a better answer of two or three sentences the user can reuse. \
+Name that last section in the language of the call (in Russian: «Что ответить лучше»). \
 Skip a section with nothing in it. No preamble.";
+
+/// The "question" of «Мои вопросы»: what the user could ask the other side now.
+pub const MY_QUESTIONS: &str = "Suggest three short questions the user can ask the other side now, \
+based on the context (company, role, people) and the conversation so far. Skip what was already answered. \
+Reply in the language the people in the transcript speak, not in the language of this instruction. First line: the best one. Then a list of all three, each with a few words on why it is worth asking.";
 
 /// Instructions, then the assembled context (`context::assemble`): the prefix stays the same
 /// for the whole call, so the prompt cache holds it.

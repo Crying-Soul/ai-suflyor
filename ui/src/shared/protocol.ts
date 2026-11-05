@@ -4,7 +4,7 @@ export type Speaker = "me" | "them";
 export type AnswerMode = "confirmed" | "speculative";
 
 export type Command =
-  | { cmd: "ask"; screenshot: boolean; question?: string }
+  | { cmd: "ask"; screenshot: boolean; question?: string; questions?: boolean }
   | { cmd: "set"; auto?: boolean; model?: string; answer_mode?: AnswerMode }
   | { cmd: "clear" }
   | { cmd: "open_call"; dir: string }

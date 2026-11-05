@@ -58,8 +58,8 @@ function newTurn(id: number, question: string, trigger: string): Turn {
   const head = el("header", "q");
   const state = el("span", "state-word");
   head.append(
-    el("span", "qtext", question ? `«${question}»` : trigger === "screen" ? "Вопрос с экрана" : "Без вопроса: подсказка по разговору"),
-    el("span", "trigger", trigger === "auto" || trigger === "early" ? "авто" : trigger === "picked" ? "выбрано" : trigger === "screen" ? "экран" : "вручную"),
+    el("span", "qtext", trigger === "questions" ? "Что спросить у собеседника" : question ? `«${question}»` : trigger === "screen" ? "Вопрос с экрана" : "Без вопроса: подсказка по разговору"),
+    el("span", "trigger", trigger === "auto" || trigger === "early" ? "авто" : trigger === "picked" ? "выбрано" : trigger === "screen" ? "экран" : trigger === "questions" ? "мои вопросы" : "вручную"),
     state,
   );
   const quick = el("p", "quick");
@@ -266,6 +266,7 @@ api.onEvent((e: CoreEvent) => {
 });
 
 $("btn-ask").onclick = () => api.send({ cmd: "ask", screenshot: false });
+$("btn-questions").onclick = () => api.send({ cmd: "ask", screenshot: false, questions: true });
 $("btn-shot").onclick = () => {
   setPhase("looking");
   api.send({ cmd: "ask", screenshot: true });

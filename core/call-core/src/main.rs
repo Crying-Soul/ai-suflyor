@@ -269,7 +269,10 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
 
 fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::Answerer) {
     match cmd {
-        Command::Ask { screenshot, question } => {
+        Command::Ask { questions: true, .. } => {
+            answerer.ask(shared, "questions", Some((llm::MY_QUESTIONS.to_string(), None)), None);
+        }
+        Command::Ask { screenshot, question, .. } => {
             let picked = question.filter(|q| !q.trim().is_empty()).map(|q| (q, None));
             if !screenshot {
                 answerer.ask(shared, if picked.is_some() { "picked" } else { "hotkey" }, picked, None);
