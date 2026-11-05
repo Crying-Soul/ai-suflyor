@@ -125,6 +125,9 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
     let mut finalized_upto: [u64; 2] = [0, 0];
     // Per speaker: ((start_sample, len), text or None if dropped, decode ms) of the last speculative decode.
     let mut spec: [Option<((u64, usize), Option<String>, f64)>; 2] = Default::default();
+    // Language whisper detected on the last full decode. With `language: auto`, partials reuse it:
+    // detection on < 1 s of audio guesses wrong (Russian speech came out as Japanese).
+    let mut lang: Option<String> = None;
 
     while let Some(job) = queue.pop() {
         let idx = match job.speaker {
@@ -147,9 +150,15 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
             }
             None => {
                 let t0 = Instant::now();
-                let prompt = whisper_prompt(&glossary, &last_text[idx]);
-                let text = decode(&mut states[idx], job.utt.samples, prompt, job.partial, &base, cfg.stt.no_speech_thold, speaker);
-                (text, t0.elapsed().as_secs_f64() * 1000.0)
+                let mut opts = DecodeOptions { initial_prompt: whisper_prompt(&glossary, &last_text[idx]), ..base.clone() };
+                if job.partial && opts.language.is_none() {
+                    opts.language = lang.clone();
+                }
+                let out = decode(&mut states[idx], job.utt.samples, opts, job.partial, cfg.stt.no_speech_thold, speaker);
+                if let (Some((_, l)), false) = (&out, job.partial) {
+                    lang = Some(l.clone()).filter(|l| !l.is_empty());
+                }
+                (out.map(|(text, _)| text), t0.elapsed().as_secs_f64() * 1000.0)
             }
         };
         let mut text = raw.as_deref().and_then(|t| textproc::clean(t, &cfg.glossary));
@@ -159,6 +168,10 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
                 spec[idx] = Some((key, raw, decode_ms));
             }
             let Some(text) = text else { continue };
+            // Echo partials would flash the other side's words on our row until the final drops them.
+            if speaker == Speaker::Me && is_echo(shared, t, &text, &last_partial[1].1) {
+                continue;
+            }
             // A speculative decode is the final unless speech resumes: show all of it as settled.
             let prev = if job.speculative { text.as_str() } else { Some(&last_partial[idx]).filter(|(pt, _)| *pt == t).map_or("", |(_, s)| s) };
             let (stable, tail) = textproc::split_stable(prev, &text);
@@ -176,13 +189,7 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
         }
         // Without headphones the mic hears the speakers: drop "me" text that repeats recent "them" speech.
         if let (Speaker::Me, Some(tx)) = (speaker, &text) {
-            let transcript = shared.transcript.lock().unwrap();
-            let echo = transcript
-                .iter()
-                .rev()
-                .take_while(|f| t.abs_diff(f.t_ms) < 20_000)
-                .any(|f| f.speaker == Speaker::Them && textproc::is_echo(tx, &f.text));
-            if echo {
+            if is_echo(shared, t, tx, &last_partial[1].1) {
                 info!("[me] echo dropped: {tx}");
                 text = None;
             }
@@ -215,6 +222,19 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// True when "me" text at `t` repeats "them" speech of the last 20 s (or their live partial).
+fn is_echo(shared: &Shared, t: u64, text: &str, them_partial: &str) -> bool {
+    if !them_partial.is_empty() && textproc::is_echo(text, them_partial) {
+        return true;
+    }
+    let transcript = shared.transcript.lock().unwrap();
+    transcript
+        .iter()
+        .rev()
+        .take_while(|f| t.abs_diff(f.t_ms) < 20_000)
+        .any(|f| f.speaker == Speaker::Them && textproc::is_echo(text, &f.text))
+}
+
 /// Whisper initial prompt: the glossary (spelling) + the tail of the speaker's previous utterance (continuity).
 fn whisper_prompt(glossary: &str, last: &str) -> Option<String> {
     let chars: Vec<char> = last.chars().collect();
@@ -227,16 +247,8 @@ fn whisper_prompt(glossary: &str, last: &str) -> Option<String> {
     }
 }
 
-/// One whisper decode. None on failure; otherwise the confident segments joined (may be empty).
-fn decode(
-    state: &mut State,
-    mut samples: Vec<f32>,
-    prompt: Option<String>,
-    partial: bool,
-    base: &DecodeOptions,
-    no_speech_thold: f32,
-    speaker: Speaker,
-) -> Option<String> {
+/// One whisper decode: (confident segments joined, possibly empty; detected language). None on failure.
+fn decode(state: &mut State, mut samples: Vec<f32>, opts: DecodeOptions, partial: bool, no_speech_thold: f32, speaker: Speaker) -> Option<(String, String)> {
     // whisper ignores < 1 s of audio; pad short utterances with silence.
     if samples.len() < 17_600 {
         samples.resize(17_600, 0.0);
@@ -244,14 +256,14 @@ fn decode(
     let opts = if partial {
         // Partials: one segment, no temperature fallback. A shortened audio_ctx was tried and
         // loops on Russian ("-p-p-p...", 700+ ms), so the encoder keeps full context.
-        DecodeOptions { initial_prompt: prompt, timeout_ms: 1000, single_segment: true, temperature_inc: 0.0, ..base.clone() }
+        DecodeOptions { timeout_ms: 1000, single_segment: true, temperature_inc: 0.0, ..opts }
     } else {
         // Normal decodes take ≤ 0.5 s even for 20 s of audio; anything far beyond is a
         // temperature-fallback loop on noise. The shim aborts it so the queue keeps moving.
-        DecodeOptions { initial_prompt: prompt, timeout_ms: 1000 + samples.len() as u32 / 160, ..base.clone() }
+        DecodeOptions { timeout_ms: 1000 + samples.len() as u32 / 160, ..opts }
     };
     match state.transcribe(&samples, &opts, None) {
-        Ok(tr) => Some(
+        Ok(tr) => Some((
             tr.segments
                 .iter()
                 .filter(|s| !(s.no_speech_prob > no_speech_thold && s.avg_logprob < -1.0))
@@ -260,7 +272,8 @@ fn decode(
                 .filter(|t| !t.is_empty())
                 .collect::<Vec<_>>()
                 .join(" "),
-        ),
+            tr.language,
+        )),
         Err(e) => {
             warn!("transcribe {} ({:.1}s audio): {e:#}", speaker.as_str(), samples.len() as f32 / 16000.0);
             None
