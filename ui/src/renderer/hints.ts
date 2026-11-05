@@ -13,12 +13,13 @@ let metrics: Record<string, number> = {};
 
 // ---------- turn state chip: what the assistant is doing right now ----------
 
-type Phase = "idle" | "listening" | "recognizing" | "caught" | "answering" | "done" | "error";
+type Phase = "idle" | "listening" | "recognizing" | "caught" | "looking" | "answering" | "done" | "error";
 const PHASE_TEXT: Record<Phase, string> = {
   idle: "Слушаю",
   listening: "Собеседник говорит…",
   recognizing: "Распознаю…",
   caught: "Вопрос пойман",
+  looking: "Смотрю на экран…",
   answering: "Отвечаю…",
   done: "Готово",
   error: "Ошибка",
@@ -41,6 +42,8 @@ interface Turn {
 }
 
 const turns = new Map<number, Turn>();
+/** Screenshots arrive just before their turn's first answer_start. */
+const shots = new Map<number, { thumb: string; width: number; height: number }>();
 /** Answer id -> its turn and tier. */
 const answers = new Map<number, { turn: number; tier: "quick" | "full" }>();
 let current = -1;
@@ -55,13 +58,29 @@ function newTurn(id: number, question: string, trigger: string): Turn {
   const head = el("header", "q");
   const state = el("span", "state-word");
   head.append(
-    el("span", "qtext", question ? `«${question}»` : "Без вопроса: подсказка по разговору"),
-    el("span", "trigger", trigger === "auto" ? "авто" : trigger === "picked" ? "выбрано" : "вручную"),
+    el("span", "qtext", question ? `«${question}»` : trigger === "screen" ? "Вопрос с экрана" : "Без вопроса: подсказка по разговору"),
+    el("span", "trigger", trigger === "auto" ? "авто" : trigger === "picked" ? "выбрано" : trigger === "screen" ? "экран" : "вручную"),
     state,
   );
   const quick = el("p", "quick");
   const full = el("div", "full md");
-  card.append(head, quick, full);
+  card.append(head);
+  const shot = shots.get(id);
+  if (shot) {
+    shots.delete(id);
+    // What the model saw: a thumb that opens to the card's width on click.
+    const fig = el("figure", "shot");
+    const img = el("img");
+    img.src = shot.thumb;
+    img.alt = `Снимок экрана ${shot.width}×${shot.height}, отправлен вместе с вопросом`;
+    fig.append(img);
+    fig.addEventListener("click", (e) => {
+      e.stopPropagation();
+      fig.classList.toggle("big");
+    });
+    card.append(fig);
+  }
+  card.append(quick, full);
   card.tabIndex = 0;
   card.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target === card) {
@@ -151,6 +170,7 @@ function clearTurns(): void {
   answers.clear();
   current = -1;
   shown = -1;
+  shots.clear();
   setPhase("idle");
 }
 
@@ -176,6 +196,9 @@ api.onEvent((e: CoreEvent) => {
       if (e.speaker !== "them" || chip.dataset.phase === "answering") break;
       if (e.question) setPhase("caught", status?.auto ? "" : "Автоответ выключен, нажмите «Спросить»");
       else if (chip.dataset.phase === "recognizing") setPhase("idle");
+      break;
+    case "screenshot":
+      shots.set(e.turn, { thumb: e.thumb, width: e.width, height: e.height });
       break;
     case "answer_start": {
       const t = turns.get(e.turn) ?? newTurn(e.turn, e.question, e.trigger);
@@ -227,8 +250,11 @@ api.onEvent((e: CoreEvent) => {
 });
 
 $("btn-ask").onclick = () => api.send({ cmd: "ask", screenshot: false });
-$("btn-shot").onclick = () => api.send({ cmd: "ask", screenshot: true });
+$("btn-shot").onclick = () => {
+  setPhase("looking");
+  api.send({ cmd: "ask", screenshot: true });
+};
 modelBtn.onclick = () => api.send({ cmd: "set", model: "toggle" });
 $("btn-hide").onclick = () => api.hide();
 setPhase("idle");
-overlayUi((m) => (m.kind === "nav" ? nav(m.dir) : copyShown()));
+overlayUi((m) => (m.kind === "nav" ? nav(m.dir) : m.kind === "looking" ? setPhase("looking") : copyShown()));
