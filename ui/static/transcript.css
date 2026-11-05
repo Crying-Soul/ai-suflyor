@@ -81,3 +81,10 @@
 .owed .btn-ghost { color: var(--color-accent-2); box-shadow: inset 0 0 0 var(--rule-hair) color-mix(in oklab, var(--color-accent-2) 45%, transparent); }
 
 #metrics { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-size: var(--text-xs); text-align: right; }
+
+/* The open call: its title in the bar, a click opens «Звонки». Apricot while one is live. */
+.call-chip { -webkit-app-region: no-drag; flex: none; min-width: 0; max-width: 38%; min-height: 28px; padding: 0 var(--space-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: var(--radius-pill); background: color-mix(in oklab, var(--color-light) 4%, transparent); box-shadow: inset 0 0 0 1px var(--color-rule); color: var(--color-muted); font: 500 var(--text-xs)/1 var(--font-body); cursor: pointer; transition: color var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out); }
+.call-chip:hover { background: color-mix(in oklab, var(--color-light) 8%, transparent); color: var(--color-ink); }
+.call-chip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.call-chip.live { color: var(--color-accent-2); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-accent-2) 45%, transparent); }
+.call-chip.warn::after { content: " !"; color: var(--color-error); }

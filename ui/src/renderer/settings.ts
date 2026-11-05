@@ -39,15 +39,6 @@ const MODELS: [string, string][] = [
 // Adding a setting is one line here; main.ts writes any dotted key into config.json.
 const SECTIONS: Section[] = [
   {
-    id: "context",
-    title: "Контекст",
-    fields: [
-      { key: "userContext", label: "О вас", kind: "textarea", hint: "Роль, стек, вакансия. Claude читает это перед каждым ответом." },
-      { key: "language", label: "Язык речи", kind: "select", options: [["auto", "Определять"], ["ru", "Русский"], ["en", "Английский"]] },
-      { key: "glossary", label: "Глоссарий", kind: "list", hint: "Один термин на строку. Подсказка Whisper, как писать термины." },
-    ],
-  },
-  {
     id: "answers",
     title: "Ответы",
     note: "Сохранение перезапускает ядро.",
@@ -104,7 +95,9 @@ const SECTIONS: Section[] = [
   {
     id: "stt",
     title: "Распознавание",
+    note: "Контекст о вас и глоссарий теперь в окне «Звонки»: кнопка с названием звонка в окне транскрипта.",
     fields: [
+      { key: "language", label: "Язык речи", kind: "select", options: [["auto", "Определять"], ["ru", "Русский"], ["en", "Английский"]] },
       { key: "stt.useGpu", label: "Использовать GPU", kind: "bool" },
       { key: "stt.partialMs", label: "Живой текст каждые, мс", kind: "number", min: 0, max: 3000, step: 100, hint: "Показывает текст прямо во время речи. 0 выключает и освобождает GPU для финальных фраз." },
       { key: "stt.flashAttn", label: "Flash attention", kind: "bool" },
@@ -126,6 +119,13 @@ const SECTIONS: Section[] = [
       { key: "hotkeys.screenshotAsk", label: "Снимок экрана и вопрос", kind: "text" },
       { key: "hotkeys.toggleWindow", label: "Показать или скрыть окна", kind: "text" },
       { key: "hotkeys.toggleAuto", label: "Автоответы вкл./выкл.", kind: "text", hint: "Формат Electron, например CommandOrControl+Shift+Space." },
+    ],
+  },
+  {
+    id: "data",
+    title: "Данные",
+    fields: [
+      { key: "dataDir", label: "Папка звонков", kind: "text", hint: "Профиль, папки, транскрипты и итоги. Пусто: Документы\\Call Assistant." },
     ],
   },
   {

@@ -10,8 +10,10 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const status = { ev: "status", me: { state: "running", source: "mic: Focusrite USB (2- Focusrite USB Audio) [48000 Hz, 2 ch]" }, them: { state: "running", source: "system loopback: Speakers [192000 Hz, 2 ch]" }, stt: "ready (gpu)", auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", busy: false };
 const T = 1000;
 // Live phase: speech just started, then a partial with a settled prefix, then a question final.
+const callEv = { ev: "call", dir: "C:\\Users\\me\\Documents\\Call Assistant\\folders\\yandex\\calls\\2026-11-05-1200-sys", title: "Системный дизайн", folder: "Яндекс Маркет", tokens: 5320, parts: [], warnings: [] };
 const live = [
   status,
+  callEv,
   { ev: "level", speaker: "them", rms: 0.1, peak: 0.4 }, { ev: "level", speaker: "me", rms: 0.01, peak: 0.03 },
   { ev: "final", speaker: "them", t: T, text: "А какой у вас опыт с Kubernetes и PostgreSQL в продакшене?", question: true },
   { ev: "final", speaker: "me", t: T + 5000, text: "Да, около четырёх лет, в основном на EKS.", question: false },
@@ -68,5 +70,40 @@ app.whenReady().then(async () => {
   }
   await s.webContents.executeJavaScript(`document.querySelector('#f-vad-minSilenceMs').value='450'; document.querySelector('#form').dispatchEvent(new Event('input'))`);
   await shot(s, "settings-dirty.png");
+
+  // «Звонки» with mock storage.
+  const D = "C:\\Users\\me\\Documents\\Call Assistant";
+  const Y = `${D}\\folders\\yandex`;
+  const tree = {
+    dataDir: D,
+    profile: `${D}\\profile`,
+    folders: [
+      { dir: Y, title: "Яндекс Маркет", calls: [{ dir: callEv.dir, title: "Системный дизайн", hasSummary: false }, { dir: `${Y}\\calls\\2026-11-01-1000-hr`, title: "HR-скрининг", hasSummary: true }] },
+      { dir: `${D}\\folders\\ozon`, title: "Ozon, платформа", calls: [] },
+    ],
+  };
+  const nodes = {
+    [tree.profile]: { dir: tree.profile, kind: "profile", title: "Обо мне", context: "Backend на Go, 6 лет. Ozon: шардирование PostgreSQL, Kafka, 40k RPS.\nТинькофф: платёжный шлюз, p99 12 мс.", glossary: ["Go", "Kafka", "PostgreSQL"], files: [{ name: "cv.pdf", size: 44686, tokens: 1840 }] },
+    [callEv.dir]: {
+      dir: callEv.dir, kind: "call", title: "Системный дизайн", started: "2026-11-05T09:00:00Z", context: "Интервьюер: Анна, тимлид склада.\nСпросить про on-call и релизный цикл.", glossary: ["YDB"], files: [], summary: "", answers: 2,
+      transcript: [{ speaker: "them", t: 1, text: "Как бы вы шардировали заказы?" }, { speaker: "me", t: 2, text: "По user_id, с отдельной таблицей маршрутизации." }],
+    },
+    [`${Y}\\calls\\2026-11-01-1000-hr`]: { dir: `${Y}\\calls\\2026-11-01-1000-hr`, kind: "call", title: "HR-скрининг", started: "2026-11-01T07:00:00Z", context: "", glossary: [], files: [], answers: 4, transcript: [{ speaker: "them", t: 1, text: "Какие у вас ожидания по зарплате?" }], summary: "## Темы\n- Мотивация, переезд не нужен.\n\n## Вопросы и ответы\n- **Зарплата:** назвал 450k, готов обсуждать.\n\n## Договорённости\n- Техсекция на следующей неделе." },
+  };
+  let current = null;
+  ipcMain.handle("calls:tree", () => tree);
+  ipcMain.handle("calls:node", (_e, dir) => nodes[dir] ?? { dir, kind: "folder", title: "Яндекс Маркет", context: "", glossary: ["YDB"], files: [{ name: "vacancy.md", size: 1200, tokens: 410 }] });
+  ipcMain.handle("calls:current", () => current);
+  ipcMain.handle("calls:preview", () => "≈5320 токенов. Глоссарий: YDB, Go, Kafka\n\n<about_user>\nBackend на Go, 6 лет.\n</about_user>");
+  const c = new BrowserWindow({ width: 1040, height: 720, show: false, titleBarStyle: "hidden", backgroundColor: "#13151b", webPreferences: wp });
+  await c.loadFile(path.join(dist, "calls.html"));
+  await shot(c, "calls-profile.png");
+  await c.webContents.executeJavaScript(`document.querySelector('[data-dir$="2026-11-01-1000-hr"]').click()`);
+  await shot(c, "calls-summary.png");
+  c.webContents.send("core-event", callEv);
+  await c.webContents.executeJavaScript(`document.querySelector('[data-dir$="2026-11-05-1200-sys"]').click()`);
+  await shot(c, "calls-live.png");
+  await c.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(b => b.textContent === 'Предпросмотр контекста').click()`);
+  await shot(c, "calls-preview.png");
   app.quit();
 });

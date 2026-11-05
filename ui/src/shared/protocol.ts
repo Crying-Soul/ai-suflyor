@@ -81,6 +81,66 @@ export interface SaveResult {
   error?: string;
 }
 
+export type NodeKind = "profile" | "folder" | "call";
+
+export interface CallsTree {
+  dataDir: string;
+  profile: string;
+  folders: { dir: string; title: string; calls: { dir: string; title: string; hasSummary: boolean }[] }[];
+}
+
+export interface NodeFile {
+  name: string;
+  size: number;
+  /** null: a PDF whose text is not extracted yet. */
+  tokens: number | null;
+}
+
+export interface TranscriptLine {
+  speaker: Speaker;
+  t: number;
+  text: string;
+}
+
+/** One context node as the «Звонки» window edits it. Call-only fields are absent on the others. */
+export interface NodeData {
+  dir: string;
+  kind: NodeKind;
+  title: string;
+  context: string;
+  glossary: string[];
+  files: NodeFile[];
+  started?: string;
+  summary?: string;
+  transcript?: TranscriptLine[];
+  answers?: number;
+}
+
+export interface NodePatch {
+  title: string;
+  context: string;
+  glossary: string[];
+}
+
+export interface CallsApi {
+  tree(): Promise<CallsTree>;
+  node(dir: string): Promise<NodeData>;
+  save(dir: string, patch: NodePatch): Promise<void>;
+  createFolder(title: string): Promise<string>;
+  createCall(folder: string, title: string): Promise<string>;
+  /** No paths: a file dialog asks. */
+  addFiles(dir: string, paths?: string[]): Promise<void>;
+  fileText(dir: string, name: string): Promise<string>;
+  removeFile(dir: string, name: string): Promise<void>;
+  /** Moves a folder or a call to the recycle bin. */
+  remove(dir: string): Promise<void>;
+  /** The system prompt the core would build for this call (null: the profile alone). */
+  preview(dir: string | null): Promise<string>;
+  reveal(dir: string): void;
+  /** The last `call` event, so a freshly opened window knows the open call. */
+  current(): Promise<CallInfo | null>;
+}
+
 export interface RendererApi {
   send(cmd: Command): void;
   hide(): void;
@@ -91,4 +151,8 @@ export interface RendererApi {
   /** Dotted keys ("vad.minSilenceMs") to values; written into config.json, then the core restarts. */
   saveConfig(patch: Record<string, unknown>): Promise<SaveResult>;
   listMics(): Promise<string[]>;
+  openCalls(): void;
+  calls: CallsApi;
+  /** Disk path of a file dropped on the page. */
+  pathForFile(file: File): string;
 }

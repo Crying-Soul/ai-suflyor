@@ -216,6 +216,15 @@ api.onEvent((e: CoreEvent) => {
     case "cleared":
       clearRows();
       break;
+    case "call": {
+      const chip = $("btn-call");
+      chip.textContent = e.dir ? e.title : "Без звонка";
+      chip.classList.toggle("live", Boolean(e.dir));
+      chip.classList.toggle("warn", e.warnings.length > 0);
+      const where = e.dir ? `${e.folder ? `${e.folder}: ` : ""}${e.title}\n` : "";
+      chip.title = [`${where}Контекст ≈${e.tokens.toLocaleString("ru-RU")} токенов. Открыть «Звонки»`, ...e.warnings].join("\n");
+      break;
+    }
     case "error":
     case "core_down":
       statusEl.textContent = `⚠ ${e.message}`;
@@ -228,3 +237,4 @@ autoBtn.onclick = () => api.send({ cmd: "set", auto: !(status?.auto ?? true) });
 $("btn-clear").onclick = () => api.send({ cmd: "clear" });
 $("btn-hide").onclick = () => api.hide();
 $("btn-settings").onclick = () => api.openSettings();
+$("btn-call").onclick = () => api.openCalls();

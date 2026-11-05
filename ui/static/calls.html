@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'" />
+  <meta name="description" content="Папки звонков: контекст о вас, о компании и о каждом звонке для подсказок." />
+  <title>Звонки</title>
+  <link rel="stylesheet" href="calls.css" />
+</head>
+<body>
+  <header class="window-head">
+    <h1>Звонки</h1>
+    <button id="data-dir" class="path link" type="button" title="Открыть папку с данными"></button>
+  </header>
+  <div class="layout">
+    <nav aria-label="Папки и звонки">
+      <ul id="tree"></ul>
+      <button id="btn-new-folder" class="btn-ghost" type="button">Новая папка</button>
+    </nav>
+    <main id="pane">
+      <p class="loading">Загружаю…</p>
+    </main>
+  </div>
+  <dialog id="viewer" aria-labelledby="viewer-title">
+    <header>
+      <h2 id="viewer-title"></h2>
+      <button id="viewer-close" class="icon-btn" type="button" aria-label="Закрыть">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg>
+      </button>
+    </header>
+    <p id="viewer-note" class="hint"></p>
+    <pre id="viewer-text"></pre>
+  </dialog>
+  <script src="calls.js"></script>
+</body>
+</html>

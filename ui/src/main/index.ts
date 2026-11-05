@@ -1,8 +1,9 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen, type Rectangle } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, screen, shell, type Rectangle } from "electron";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { Command, ConfigSnapshot, CoreEvent, SaveResult, Status } from "../shared/protocol";
+import type { CallInfo, Command, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status } from "../shared/protocol";
+import * as calls from "./calls";
 import { CoreProcess, resolveCoreExe } from "./core";
 
 interface Hotkeys {
@@ -50,14 +51,29 @@ type OverlayName = "transcript" | "hints";
 
 const overlays: Partial<Record<OverlayName, BrowserWindow>> = {};
 let settingsWin: BrowserWindow | null = null;
+let callsWin: BrowserWindow | null = null;
 let lastStatus: Status | null = null;
+/** The context in use, from the core's last `call` event; its call is reopened after a core restart. */
+let lastCall: CallInfo | null = null;
 let configPath = findConfig();
+/** <dataDir> with the profile and the call folders; the core's effective value. */
+let dataDir = "";
 
 function emit(e: CoreEvent): void {
   if (e.ev === "status") lastStatus = e;
+  if (e.ev === "call") lastCall = e;
+  // A restarted core knows nothing of the open call: open it again (its transcript is replayed).
+  if (e.ev === "ready" && lastCall?.dir) openCall(lastCall.dir);
   // Level meters live in the transcript window only; ~20 events/s need not reach the hints.
-  const targets = e.ev === "level" ? [overlays.transcript] : Object.values(overlays);
+  const targets: (BrowserWindow | undefined)[] = e.ev === "level" ? [overlays.transcript] : Object.values(overlays);
+  if (e.ev === "call" || e.ev === "summary") targets.push(callsWin ?? undefined);
   for (const w of targets) w?.webContents.send("core-event", e);
+}
+
+/** Opening a call replays its transcript and answers: the windows drop what they show first. */
+function openCall(dir: string): void {
+  emit({ ev: "cleared" });
+  core.send({ cmd: "open_call", dir });
 }
 
 function loadHotkeys(): Hotkeys {
@@ -120,7 +136,10 @@ function createOverlay(name: OverlayName): void {
   w.loadFile(path.join(__dirname, `${name}.html`));
   w.once("ready-to-show", () => w.showInactive());
   // Replay the last status after a renderer (re)load.
-  w.webContents.on("did-finish-load", () => lastStatus && w.webContents.send("core-event", { ev: "status", ...lastStatus }));
+  w.webContents.on("did-finish-load", () => {
+    if (lastStatus) w.webContents.send("core-event", { ev: "status", ...lastStatus });
+    if (lastCall) w.webContents.send("core-event", { ev: "call", ...lastCall });
+  });
   let timer: NodeJS.Timeout | undefined;
   const save = () => {
     clearTimeout(timer);
@@ -161,6 +180,28 @@ function openSettings(): void {
   settingsWin.on("closed", () => (settingsWin = null));
 }
 
+function openCalls(): void {
+  if (callsWin) {
+    callsWin.focus();
+    return;
+  }
+  callsWin = new BrowserWindow({
+    width: 1040,
+    height: 720,
+    minWidth: 720,
+    minHeight: 480,
+    title: "Звонки",
+    backgroundColor: PAPER,
+    titleBarStyle: "hidden",
+    titleBarOverlay: { color: PAPER, symbolColor: "#e8e5df", height: 40 },
+    webPreferences: webPreferences(),
+  });
+  // CVs, notes and transcripts: never in a screen share.
+  callsWin.setContentProtection(true);
+  callsWin.loadFile(path.join(__dirname, "calls.html"));
+  callsWin.on("closed", () => (callsWin = null));
+}
+
 /** Hides both overlays if any is visible, otherwise shows both. */
 function toggleWindows(): void {
   const all = Object.values(overlays);
@@ -189,11 +230,11 @@ function registerHotkeys(): void {
   }
 }
 
-/** Runs the core with extra arguments and returns its stdout. */
-function runCore(args: string[]): Promise<string> {
+/** Runs the core with extra arguments and returns its stdout (and stderr). */
+function runCore(args: string[], timeout = 10_000): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) =>
-    execFile(coreExe, args, { cwd: rootDir(), windowsHide: true, timeout: 10_000 }, (err, stdout) =>
-      err ? reject(err) : resolve(stdout),
+    execFile(coreExe, args, { cwd: rootDir(), windowsHide: true, timeout, maxBuffer: 64 << 20 }, (err, stdout, stderr) =>
+      err ? reject(new Error(stderr.trim().split("\n").pop() || String(err))) : resolve({ stdout, stderr }),
     ),
   );
 }
@@ -202,7 +243,7 @@ async function loadConfig(): Promise<ConfigSnapshot> {
   const raw = readRaw(configPath);
   let effective: Record<string, unknown> = {};
   try {
-    effective = JSON.parse(await runCore(["--print-config", ...coreArgs()]));
+    effective = JSON.parse((await runCore(["--print-config", ...coreArgs()])).stdout);
   } catch (e) {
     console.warn(`[settings] core --print-config failed: ${e}`);
   }
@@ -211,7 +252,7 @@ async function loadConfig(): Promise<ConfigSnapshot> {
 }
 
 /** Writes dotted keys into the stored config, keeping every key the form does not know. */
-function saveConfig(patch: Record<string, unknown>): SaveResult {
+function writeConfig(patch: Record<string, unknown>): SaveResult {
   const target = configPath ?? newConfigPath();
   const raw = readRaw(configPath);
   for (const [key, value] of Object.entries(patch)) {
@@ -232,13 +273,110 @@ function saveConfig(patch: Record<string, unknown>): SaveResult {
     return { ok: false, error: String(e) };
   }
   configPath = target;
-  registerHotkeys();
-  core.restart(coreArgs());
   return { ok: true, path: target };
+}
+
+function saveConfig(patch: Record<string, unknown>): SaveResult {
+  const res = writeConfig(patch);
+  if (res.ok) {
+    registerHotkeys();
+    core.restart(coreArgs());
+    resolveDataDir();
+  }
+  return res;
+}
+
+/** Pins dataDir to the real Documents folder once: it may be redirected (F:\Documents, OneDrive),
+ *  which the core's %USERPROFILE%\Documents default does not know. */
+function pinDataDir(): void {
+  if (!readRaw(configPath).dataDir) writeConfig({ dataDir: path.join(app.getPath("documents"), "Call Assistant") });
+}
+
+/** The core's effective dataDir (it fills in the default), relative paths against the config's folder. */
+async function resolveDataDir(): Promise<void> {
+  const cfg = await loadConfig();
+  const dir = String(cfg.effective.dataDir ?? "") || path.join(app.getPath("documents"), "Call Assistant");
+  dataDir = path.resolve(path.dirname(cfg.path), dir);
+}
+
+/** userContext and glossary used to live in config.json; the profile node holds them now. */
+function migrateContext(): void {
+  const raw = readRaw(configPath);
+  const ctx = typeof raw.userContext === "string" ? raw.userContext : "";
+  const glossary = Array.isArray(raw.glossary) ? raw.glossary.map(String) : [];
+  try {
+    if (calls.migrate(dataDir, ctx, glossary)) writeConfig({ userContext: "", glossary: [] });
+  } catch (e) {
+    console.warn(`[calls] migration failed: ${e}`);
+  }
+}
+
+/** After the context of a node changed: rebuild the prompt if that node is part of it. */
+function contextChanged(dir: string): void {
+  const open = lastCall?.dir;
+  const inUse = calls.kindOf(dataDir, dir) === "profile" || (open && (open === dir || open.startsWith(dir + path.sep)));
+  if (inUse) core.send({ cmd: "reload_context" });
+}
+
+async function addFiles(dir: string, paths?: string[]): Promise<void> {
+  if (!paths?.length) {
+    const r = await dialog.showOpenDialog(callsWin ?? BrowserWindow.getFocusedWindow()!, {
+      title: "Файлы контекста",
+      properties: ["openFile", "multiSelections"],
+      filters: [{ name: "Документы", extensions: ["md", "txt", "pdf"] }],
+    });
+    if (r.canceled) return;
+    paths = r.filePaths;
+  }
+  const failed: string[] = [];
+  for (const pdf of calls.addFiles(dataDir, dir, paths)) {
+    await runCore(["--extract", pdf], 120_000).catch((e) => failed.push(`${path.basename(pdf)}: ${e.message}`));
+  }
+  contextChanged(dir);
+  if (failed.length) throw new Error(`Текст не извлечён. ${failed.join("; ")}`);
+}
+
+async function fileText(dir: string, name: string): Promise<string> {
+  const p = calls.filePath(dataDir, dir, name);
+  if (path.extname(p).toLowerCase() !== ".pdf") return fs.readFileSync(p, "utf8");
+  return (await runCore(["--extract", p], 120_000)).stdout;
+}
+
+async function removeNode(dir: string): Promise<void> {
+  if (calls.kindOf(dataDir, dir) === "profile") throw new Error("профиль не удаляется");
+  const open = lastCall?.dir;
+  if (open && (open === dir || open.startsWith(dir + path.sep))) throw new Error("сначала завершите звонок");
+  await shell.trashItem(dir);
+}
+
+function registerCallsIpc(): void {
+  ipcMain.on("calls:open", openCalls);
+  ipcMain.handle("calls:tree", () => calls.tree(dataDir));
+  ipcMain.handle("calls:node", (_e, dir: string) => calls.node(dataDir, dir));
+  ipcMain.handle("calls:save", (_e, dir: string, patch: NodePatch) => {
+    calls.save(dataDir, dir, patch);
+    contextChanged(dir);
+  });
+  ipcMain.handle("calls:create-folder", (_e, title: string) => calls.createFolder(dataDir, title));
+  ipcMain.handle("calls:create-call", (_e, folder: string, title: string) => calls.createCall(dataDir, folder, title));
+  ipcMain.handle("calls:add-files", (_e, dir: string, paths?: string[]) => addFiles(dir, paths));
+  ipcMain.handle("calls:file-text", (_e, dir: string, name: string) => fileText(dir, name));
+  ipcMain.handle("calls:remove-file", (_e, dir: string, name: string) => {
+    calls.removeFile(dataDir, dir, name);
+    contextChanged(dir);
+  });
+  ipcMain.handle("calls:remove", (_e, dir: string) => removeNode(dir));
+  ipcMain.handle("calls:preview", async (_e, dir: string | null) => {
+    const { stdout, stderr } = await runCore(["--print-context", dir ?? "", ...coreArgs()], 120_000);
+    return `${stderr.trim()}\n\n${stdout.trim()}`;
+  });
+  ipcMain.on("calls:reveal", (_e, dir: string) => shell.openPath(dir));
+  ipcMain.handle("calls:current", () => lastCall);
 }
 
 app.whenReady().then(() => {
   ipcMain.on("core-cmd", (_e, cmd: Command) => {
+    if (cmd.cmd === "open_call") return openCall(cmd.dir);
     core.send(cmd);
     if (cmd.cmd === "clear") emit({ ev: "cleared" });
   });
@@ -247,11 +385,16 @@ app.whenReady().then(() => {
   ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
   ipcMain.handle("config:load", loadConfig);
   ipcMain.handle("config:save", (_e, patch: Record<string, unknown>) => saveConfig(patch));
-  ipcMain.handle("config:mics", async () => (await runCore(["--list-mics"])).split(/\r?\n/).filter(Boolean));
+  ipcMain.handle("config:mics", async () => (await runCore(["--list-mics"])).stdout.split(/\r?\n/).filter(Boolean));
+  registerCallsIpc();
   createOverlay("transcript");
   createOverlay("hints");
   registerHotkeys();
-  core.start();
+  // The core reads the migrated profile, so it starts after the migration.
+  pinDataDir();
+  resolveDataDir()
+    .then(migrateContext)
+    .finally(() => core.start());
 });
 
 app.on("will-quit", () => {
