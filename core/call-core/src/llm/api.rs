@@ -35,6 +35,10 @@ impl ApiSession {
         std::mem::take(&mut self.fresh)
     }
 
+    pub fn set_system(&mut self, system: String) {
+        self.system = system;
+    }
+
     pub fn reset(&mut self) {
         self.messages.clear();
         self.fresh = true;

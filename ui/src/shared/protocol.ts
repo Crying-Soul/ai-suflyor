@@ -7,7 +7,26 @@ export type Command =
   | { cmd: "ask"; screenshot: boolean; question?: string }
   | { cmd: "set"; auto?: boolean; model?: string; answer_mode?: AnswerMode }
   | { cmd: "clear" }
+  | { cmd: "open_call"; dir: string }
+  | { cmd: "reload_context" }
+  | { cmd: "close_call" }
   | { cmd: "shutdown" };
+
+export interface ContextPart {
+  name: string;
+  tokens: number;
+  truncated: boolean;
+}
+
+/** The context in use; `dir` null = no call open, the profile alone. */
+export interface CallInfo {
+  dir: string | null;
+  title: string;
+  folder: string;
+  tokens: number;
+  parts: ContextPart[];
+  warnings: string[];
+}
 
 export interface CaptureStatus {
   state: "starting" | "running" | "error";
@@ -42,6 +61,8 @@ export type CoreEvent =
   | { ev: "answer_end"; id: number; error?: string }
   | { ev: "metrics"; name: string; ms: number }
   | { ev: "error"; message: string }
+  | ({ ev: "call" } & CallInfo)
+  | { ev: "summary"; dir: string; ok: boolean; error?: string }
   // Emitted by the UI main process itself, not the core:
   | { ev: "core_down"; message: string }
   /** A window sent "clear": every window drops its transcript and answers. */

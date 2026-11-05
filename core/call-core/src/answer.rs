@@ -27,10 +27,13 @@ struct Req {
 enum Msg {
     Ask(Req),
     Clear,
+    /// New system prompt (another call's context): the session restarts on it.
+    Reconfigure(String),
 }
 
 #[derive(Clone)]
 pub struct Answerer {
+    cfg: Arc<Config>,
     full: mpsc::UnboundedSender<Msg>,
     quick: Option<(mpsc::UnboundedSender<Msg>, String)>,
     next_id: Arc<AtomicU64>,
@@ -42,24 +45,14 @@ pub struct Answerer {
 const AUTO_SETTLE_MS: u64 = 250;
 
 impl Answerer {
-    pub fn start(cfg: &Config, shared: Arc<Shared>) -> Answerer {
-        let make = |quick: bool| {
-            let system = llm::system_prompt(quick, &cfg.user_context);
-            let tier = if quick { "quick" } else { "full" };
-            if cfg.llm.backend == Backend::ClaudeCode {
-                Session::Code(llm::claude_code::CodeSession::new(cfg.claude_code.command.clone(), system, cfg.effort.clone(), tier))
-            } else {
-                let key = Some(cfg.anthropic_api_key.clone())
-                    .filter(|k| !k.is_empty())
-                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-                    .unwrap_or_default();
-                Session::Api(llm::api::ApiSession::new(key, system, cfg.effort.clone(), if quick { 200 } else { 2048 }))
-            }
-        };
-        let full = spawn_tier("full", make(false), cfg.model.clone(), shared.clone());
-        let quick = cfg.two_tier.then(|| (spawn_tier("quick", make(true), cfg.quick_model.clone(), shared.clone()), cfg.quick_model.clone()));
+    /// `context`: the assembled context block (`context::assemble`) for the system prompt.
+    pub fn start(cfg: &Config, shared: Arc<Shared>, context: &str) -> Answerer {
+        let cfg = Arc::new(cfg.clone());
+        let make = |tier: &'static str| session(&cfg, tier, llm::system_prompt(tier == "quick", context));
+        let full = spawn_tier("full", make("full"), cfg.model.clone(), shared.clone());
+        let quick = cfg.two_tier.then(|| (spawn_tier("quick", make("quick"), cfg.quick_model.clone(), shared.clone()), cfg.quick_model.clone()));
         let (auto, auto_rx) = mpsc::unbounded_channel();
-        let a = Answerer { full, quick, next_id: Arc::new(AtomicU64::new(1)), auto };
+        let a = Answerer { cfg: cfg.clone(), full, quick, next_id: Arc::new(AtomicU64::new(1)), auto };
         tokio::spawn(auto_detect(a.clone(), shared, auto_rx));
         a
     }
@@ -74,9 +67,9 @@ impl Answerer {
         let segs = Arc::new(shared.transcript.lock().unwrap().clone());
         let (question, q_t) = question.unwrap_or_else(|| llm::question(&segs));
         let model = shared.status.lock().unwrap().model.clone();
-        let turn = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let turn = self.next_id();
         let req = |model: String| Req {
-            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            id: self.next_id(),
             turn,
             model,
             trigger: trigger.to_string(),
@@ -95,6 +88,52 @@ impl Answerer {
         if let Some((tx, _)) = &self.quick {
             let _ = tx.send(Msg::Clear);
         }
+    }
+
+    /// Both tiers restart on a system prompt with this context; the next ask resends the transcript.
+    pub fn reconfigure(&self, context: &str) {
+        let _ = self.full.send(Msg::Reconfigure(llm::system_prompt(false, context)));
+        if let Some((tx, _)) = &self.quick {
+            let _ = tx.send(Msg::Reconfigure(llm::system_prompt(true, context)));
+        }
+    }
+
+    /// A fresh answer/turn id (also used to replay saved answers).
+    pub fn next_id(&self) -> u64 {
+        self.next_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// One-off summary of `segs` with the quick model, through the configured backend.
+    pub async fn summarize(&self, context: &str, segs: &[FinalSegment]) -> anyhow::Result<String> {
+        let mut s = session(&self.cfg, "summary", llm::summary_system(context));
+        let model = &self.cfg.quick_model;
+        s.prepare(model).await?;
+        let mut out = String::new();
+        let text = format!("<transcript>\n{}\n</transcript>\nSummarize this call.", llm::render(segs));
+        s.ask(model, text, &mut |c| {
+            if let Chunk::Text(t) = c {
+                out.push_str(&t);
+            }
+        })
+        .await?;
+        Ok(out.trim().to_string())
+    }
+}
+
+fn session(cfg: &Config, tier: &'static str, system: String) -> Session {
+    if cfg.llm.backend == Backend::ClaudeCode {
+        Session::Code(llm::claude_code::CodeSession::new(cfg.claude_code.command.clone(), system, cfg.effort.clone(), tier))
+    } else {
+        let key = Some(cfg.anthropic_api_key.clone())
+            .filter(|k| !k.is_empty())
+            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
+            .unwrap_or_default();
+        let max_tokens = match tier {
+            "quick" => 200,
+            "summary" => 1500,
+            _ => 2048,
+        };
+        Session::Api(llm::api::ApiSession::new(key, system, cfg.effort.clone(), max_tokens))
     }
 }
 
@@ -142,6 +181,15 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                     sent = 0;
                     continue;
                 }
+                Msg::Reconfigure(system) => {
+                    session.set_system(system);
+                    session.reset().await;
+                    sent = 0;
+                    if let Err(e) = session.warm(&warm_model).await {
+                        warn!("[{tier}] warm-up failed: {e:#}");
+                    }
+                    continue;
+                }
                 Msg::Ask(r) => r,
             };
             let id = req.id;
@@ -158,6 +206,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                 shared.update_status(|s| s.busy = true);
             }
             let started = Instant::now();
+            let mut answer = String::new();
             let result = match session.prepare(&req.model).await {
                 Err(e) => Some(Err(e)),
                 Ok(fresh) => {
@@ -173,6 +222,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                                 let ms = started.elapsed().as_secs_f64() * 1000.0;
                                 let _ = ev.send(Event::Metrics { name: format!("answer_first_token_{tier}"), ms });
                             }
+                            answer.push_str(&t);
                             let _ = ev.send(Event::AnswerDelta { id, text: t });
                         }
                         Chunk::Usage { input, cache_read, cache_write, output } => {
@@ -189,7 +239,18 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                 }
             };
             let error = match result {
-                Some(Ok(())) => None,
+                Some(Ok(())) => {
+                    crate::call::save_answer(&shared, crate::call::AnswerRecord {
+                        turn: req.turn,
+                        tier: tier.into(),
+                        trigger: req.trigger.clone(),
+                        question: req.question.clone(),
+                        q_t: req.q_t,
+                        model: req.model.clone(),
+                        text: std::mem::take(&mut answer),
+                    });
+                    None
+                }
                 Some(Err(e)) => {
                     warn!("[{tier}] answer failed: {e:#}");
                     Some(format!("{e:#}"))

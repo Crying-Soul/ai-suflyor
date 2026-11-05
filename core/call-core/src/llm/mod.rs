@@ -53,6 +53,14 @@ impl Session {
         }
     }
 
+    /// Replaces the system prompt; call `reset` after it, the history was built on the old one.
+    pub fn set_system(&mut self, system: String) {
+        match self {
+            Session::Api(s) => s.set_system(system),
+            Session::Code(s) => s.set_system(system),
+        }
+    }
+
     pub async fn reset(&mut self) {
         match self {
             Session::Api(s) => s.reset(),
@@ -68,17 +76,33 @@ Help the user answer the question in <question>.\n\n\
 Format: the first line is a short answer the user can say out loud, at most 20 words. \
 Then at most 5 short bullets with the key points, facts or numbers. \
 Write code only if the question asks for code. No preamble, no headings, do not restate the question. \
-Answer in the language of the question.";
+Answer in the language of the question.\n\n\
+Context about the user, the company and this call may follow in <about_user>, <document>, <company>, <previous_calls> and <this_call>. \
+Answer from the user's real experience in <about_user> and the documents; never invent experience they do not have. \
+Stay consistent with what the user said earlier in this call and in previous calls. Use the company and call context.";
 
 const QUICK_SYSTEM: &str = "You are a silent assistant helping the user during a live call, often a job interview. \
 You receive a live transcript in <transcript> blocks: lines starting with \"Q:\" are the other side, lines starting with \"A:\" are the user. \
 It comes from speech recognition and may contain errors. \
 Reply with one line of at most 15 words: the key point the user should say in answer to <question>. \
-No preamble, no markdown. Answer in the language of the question.";
+No preamble, no markdown. Answer in the language of the question. \
+Base it on the user's real experience from the context below, if any.";
 
-pub fn system_prompt(quick: bool, user_context: &str) -> String {
+const SUMMARY_SYSTEM: &str = "You summarize a finished call for the user, who will read it before the next call with the same people. \
+The transcript comes from speech recognition: \"Q:\" lines are the other side, \"A:\" lines are the user. \
+Write markdown in the language of the call, at most 300 words, with these sections: \
+topics discussed; questions asked and how the user answered them; promises and follow-ups; facts learned about the other side. \
+Skip a section with nothing in it. No preamble.";
+
+/// Instructions, then the assembled context (`context::assemble`): the prefix stays the same
+/// for the whole call, so the prompt cache holds it.
+pub fn system_prompt(quick: bool, context: &str) -> String {
     let base = if quick { QUICK_SYSTEM } else { FULL_SYSTEM };
-    if user_context.trim().is_empty() { base.to_string() } else { format!("{base}\n\nAbout the user:\n{}", user_context.trim()) }
+    if context.trim().is_empty() { base.to_string() } else { format!("{base}\n\n{}", context.trim()) }
+}
+
+pub fn summary_system(context: &str) -> String {
+    if context.trim().is_empty() { SUMMARY_SYSTEM.to_string() } else { format!("{SUMMARY_SYSTEM}\n\n{}", context.trim()) }
 }
 
 /// Segments ordered by start time (the transcript vec is in decode order).

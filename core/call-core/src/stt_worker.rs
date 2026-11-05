@@ -116,7 +116,6 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
     let _ = shared.events.send(Event::Metrics { name: "stt_load".into(), ms: load_ms });
     shared.update_status(|s| s.stt = if cfg.stt.use_gpu { "ready (gpu)".into() } else { "ready (cpu)".into() });
 
-    let glossary = cfg.glossary.join(", ");
     // Per speaker: the text of its last final (whisper prompt context).
     let mut last_text: [String; 2] = Default::default();
     // Per speaker: (utterance t, text) of the last partial shown, for the stable/tail split.
@@ -150,6 +149,8 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
             }
             None => {
                 let t0 = Instant::now();
+                // Read per job: opening a call swaps the glossary without reloading whisper.
+                let glossary = shared.glossary.read().unwrap().join(", ");
                 let mut opts = DecodeOptions { initial_prompt: whisper_prompt(&glossary, &last_text[idx]), ..base.clone() };
                 if job.partial && opts.language.is_none() {
                     opts.language = lang.clone();
@@ -161,7 +162,7 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
                 (out.map(|(text, _)| text), t0.elapsed().as_secs_f64() * 1000.0)
             }
         };
-        let mut text = raw.as_deref().and_then(|t| textproc::clean(t, &cfg.glossary));
+        let mut text = raw.as_deref().and_then(|t| textproc::clean(t, &shared.glossary.read().unwrap()));
 
         if job.partial || job.speculative {
             if job.speculative {
@@ -206,12 +207,9 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
             let _ = shared.events.send(Event::Metrics { name: name.into(), ms });
         }
         info!("[{}] {:.1}s audio, decode {decode_ms:.0} ms, end->final {end_to_final:.0} ms: {text}", speaker.as_str(), key.1 as f32 / 16000.0);
-        shared.transcript.lock().unwrap().push(crate::FinalSegment {
-            speaker,
-            t_ms: t,
-            end_ms: t + (job.utt.speech_end_sample - start) / 16,
-            text: text.clone(),
-        });
+        let seg = crate::FinalSegment { speaker, t_ms: t, end_ms: t + (job.utt.speech_end_sample - start) / 16, text: text.clone() };
+        crate::call::save_final(shared, &seg);
+        shared.transcript.lock().unwrap().push(seg);
         last_text[idx] = text;
         if speaker == Speaker::Them {
             if let Some(a) = shared.answerer.get() {
