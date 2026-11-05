@@ -6,6 +6,7 @@ mod call;
 mod config;
 mod context;
 mod llm;
+mod screen;
 mod streams;
 mod stt_worker;
 
@@ -79,6 +80,25 @@ fn main() -> Result<()> {
             "--print-config" => print_config = true,
             // The exact system prompt a call would get: `--print-context <call dir>` (or "" for the profile alone).
             "--print-context" => print_context = Some(args.next().map(PathBuf::from).unwrap_or_default()),
+            // Screenshot as the answer would get it: `--snap <out.png> [--monitor]`.
+            "--snap" => {
+                let out = args.next().map(PathBuf::from).ok_or_else(|| anyhow::anyhow!("--snap <out.png> [--monitor]"))?;
+                let monitor = args.next().as_deref() == Some("--monitor");
+                screen::dpi_aware();
+                let t = std::time::Instant::now();
+                let shot = screen::capture(monitor)?;
+                std::fs::write(&out, &shot.png)?;
+                eprintln!("{}x{} за {} мс: {}", shot.width, shot.height, t.elapsed().as_millis(), shot.source);
+                return Ok(());
+            }
+            // Display affinity of windows (0x11 = hidden from capture): `--check-affinity <hwnd>...`.
+            "--check-affinity" => {
+                for h in args.by_ref() {
+                    let a = h.parse::<isize>().map_err(anyhow::Error::from).and_then(screen::affinity);
+                    println!("{h} {}", a.map_or_else(|e| format!("error {e}"), |a| format!("{a:#x}")));
+                }
+                return Ok(());
+            }
             // Text of a PDF (cached next to it in .text/), for the UI's preview.
             "--extract" => {
                 let pdf = args.next().map(PathBuf::from).ok_or_else(|| anyhow::anyhow!("--extract <pdf>"))?;
