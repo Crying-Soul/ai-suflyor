@@ -6,6 +6,7 @@ import path from "node:path";
 import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status, UiMessage } from "../shared/protocol";
 import * as calls from "./calls";
 import * as models from "./models";
+import { createTray } from "./tray";
 import { CoreProcess, resolveCoreExe } from "./core";
 
 interface Hotkeys {
@@ -77,10 +78,14 @@ let lastCall: CallInfo | null = null;
 let configPath = findConfig();
 /** <dataDir> with the profile and the call folders; the core's effective value. */
 let dataDir = "";
+let tray: ReturnType<typeof createTray> | null = null;
 
 function emit(e: CoreEvent): void {
   if (e.ev === "status") lastStatus = e;
-  if (e.ev === "call") lastCall = e;
+  if (e.ev === "call") {
+    lastCall = e;
+    tray?.setCall(e.dir ? e.title : null);
+  }
   if ((e.ev === "vad" && e.active) || e.ev === "partial" || (e.ev === "final" && e.text) || e.ev === "answer_start" || e.ev === "answer_delta") activity();
   // A restarted core knows nothing of the open call: open it again (its transcript is replayed).
   if (e.ev === "ready" && lastCall?.dir) openCall(lastCall.dir);
@@ -602,6 +607,7 @@ app.whenReady().then(() => {
   ipcMain.handle("privacy:test", privacyTest);
   createOverlay("transcript");
   createOverlay("hints");
+  tray = createTray({ toggleWindows, openCalls, openSettings, togglePreset, toggleClickThrough, quit: () => app.quit() });
   activity();
   setTimeout(checkProtection, 3000);
   registerHotkeys();
