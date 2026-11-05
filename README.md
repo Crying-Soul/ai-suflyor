@@ -68,6 +68,9 @@ Useful:
 | Ctrl+Alt+PageUp / PageDown | Older / newer answer |
 | Ctrl+Alt+C | Copy the answer on show |
 | Ctrl+Alt+= / Ctrl+Alt+- | Larger / smaller text |
+| Ctrl+Alt+Q | «Мои вопросы»: three questions to ask the other side now |
+
+The tray icon (it may sit in the `^` overflow) shows or hides the windows, opens «Звонки» and «Настройки», and quits. Logs go to `%APPDATA%\call-assistant-ui\logs\YYYY-MM-DD.log` and are kept 7 days (Settings → «Отладка» → «Открыть папку логов»).
 
 Ctrl+Shift+S and Ctrl+Shift+A are also Teams shortcuts; if you use Teams, rebind them in Settings → «Горячие клавиши». The overlays never take keyboard focus.
 
