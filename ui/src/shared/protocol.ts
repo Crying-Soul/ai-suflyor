@@ -178,6 +178,15 @@ export type UiMessage =
   /** The screen hotkey was pressed: a capture and an answer are coming. */
   | { kind: "looking" };
 
+export interface PrivacyReport {
+  /** PNG data URL of the display with the overlays, as other apps capture it. */
+  image: string;
+  /** Each window and whether Windows hides it from capture (display affinity 0x11). */
+  windows: { name: string; hidden: boolean }[];
+  /** Windows 10 2004+ (build 19041): older builds show protected windows as black boxes. */
+  osOk: boolean;
+}
+
 export interface RendererApi {
   send(cmd: Command): void;
   hide(): void;
@@ -195,6 +204,7 @@ export interface RendererApi {
   copy(text: string): void;
   calls: CallsApi;
   models: ModelsApi;
+  privacyTest(): Promise<PrivacyReport>;
   /** Disk path of a file dropped on the page. */
   pathForFile(file: File): string;
 }

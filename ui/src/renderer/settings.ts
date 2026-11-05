@@ -1,4 +1,5 @@
 import type { ConfigSnapshot, ModelInfo, RendererApi } from "../shared/protocol";
+import { askConfirm, guardPopups } from "./common";
 
 declare global {
   interface Window {
@@ -8,7 +9,7 @@ declare global {
 
 const api = window.api;
 
-type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models";
+type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "privacy";
 
 interface Field {
   /** Dotted config.json key. */
@@ -130,6 +131,12 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    id: "privacy",
+    title: "Приватность",
+    note: "Все окна ассистента скрыты от демонстрации экрана, записи и скриншотов (Windows 10 2004 и новее). Не скрывает: камеру телефона, направленную на экран, карты видеозахвата и системное окно выбора файлов.",
+    fields: [{ key: "privacy", label: "Проверка", kind: "privacy", hint: "Снимает экран с окнами ассистента так, как его видят Zoom, Teams и OBS. Окон на снимке быть не должно." }],
+  },
+  {
     id: "data",
     title: "Данные",
     fields: [
@@ -226,6 +233,26 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       sync();
       return [el("div", { className: "pair" }, s, exe), () => (s.value === "process" ? `process:${exe.value.trim()}` : "system")];
     }
+    case "privacy": {
+      const out = el("div", { className: "privacy-out" });
+      const run = el("button", { type: "button", className: "btn-ghost", textContent: "Проверить захват" });
+      run.onclick = async () => {
+        run.disabled = true;
+        out.replaceChildren(el("p", { className: "hint", textContent: "Снимаю экран…" }));
+        try {
+          const r = await api.privacyTest();
+          const list = el("ul", { className: "privacy-list" }, ...r.windows.map((w) => el("li", { className: w.hidden ? "ok" : "bad", textContent: `${w.name}: ${w.hidden ? "скрыто" : "ВИДНО в захвате"}` })));
+          if (!r.osOk) list.append(el("li", { className: "bad", textContent: "Windows старше 10 2004: окна видны чёрными прямоугольниками" }));
+          const img = el("img", { src: r.image, alt: "Экран так, как его видят другие программы" });
+          out.replaceChildren(list, img);
+        } catch (e) {
+          out.replaceChildren(el("p", { className: "hint error", textContent: `Не удалось: ${e}` }));
+        } finally {
+          run.disabled = false;
+        }
+      };
+      return [el("div", { className: "privacy" }, run, out), () => undefined];
+    }
     case "models": {
       const box = el("ul", { className: "models" });
       renderModels(box).catch(() => box.replaceChildren(el("li", { className: "hint", textContent: "Список моделей недоступен." })));
@@ -273,8 +300,8 @@ function modelRow(m: ModelInfo, box: HTMLElement): HTMLElement {
     await refresh();
   };
   const del = async () => {
-    if (!confirm(`Удалить модель ${m.label} с диска?`)) return;
-    await api.models.remove(m.id).catch((e) => alert(String(e)));
+    if (!(await askConfirm(`Удалить модель ${m.label} с диска?`, "Удалить"))) return;
+    await api.models.remove(m.id).catch((e) => askConfirm(String(e), "Понятно", null));
     await refresh();
   };
   if (m.active && m.state === "installed") {
@@ -380,13 +407,14 @@ form.addEventListener("submit", async (e) => {
   saveState.textContent = "Сохранено. Ядро перезапускается.";
 });
 
-$("btn-cancel").onclick = () => {
-  if (Object.keys(changes()).length && !confirm("Закрыть без сохранения изменений?")) return;
+$("btn-cancel").onclick = async () => {
+  if (Object.keys(changes()).length && !(await askConfirm("Закрыть без сохранения изменений?", "Закрыть"))) return;
   api.closeWindow();
 };
 
+guardPopups();
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") $("btn-cancel").click();
+  if (e.key === "Escape" && !document.querySelector("dialog[open]")) $("btn-cancel").click();
 });
 
 (async () => {

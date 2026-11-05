@@ -179,6 +179,14 @@ pub fn capture(monitor: bool) -> Result<Shot> {
     encode(&grab(r)?, source)
 }
 
+/// A rectangle in physical virtual-screen pixels (the privacy self-test passes a display's bounds).
+pub fn capture_rect(x: i32, y: i32, w: i32, h: i32) -> Result<Shot> {
+    if w < 1 || h < 1 {
+        bail!("empty rectangle");
+    }
+    encode(&grab(RECT { left: x, top: y, right: x + w, bottom: y + h })?, format!("{w}x{h} at {x},{y}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

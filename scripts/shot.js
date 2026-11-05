@@ -42,6 +42,11 @@ app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
   ipcMain.handle("config:load", () => ({ path: "C:\\dev\\interviewer\\config.json", raw: cfg, effective: cfg }));
   ipcMain.handle("config:mics", () => ["Focusrite USB (2- Focusrite USB Audio)", "Microphone (Realtek High Definition Audio)"]);
+  ipcMain.handle("privacy:test", () => ({
+    image: "data:image/png;base64," + fs.readFileSync(path.join(out, "privacy-capture.png")).toString("base64"),
+    windows: [{ name: "Транскрипт", hidden: true }, { name: "Подсказки", hidden: true }, { name: "Настройки", hidden: true }],
+    osOk: true,
+  }));
   ipcMain.handle("config:save", () => ({ ok: true, path: "C:\\dev\\interviewer\\config.json" }));
   const M = (id, label, sizeMb, note, state, extra = {}) => ({ id, label, sizeMb, note, state, received: 0, total: 0, active: false, ...extra });
   ipcMain.handle("models:list", () => [
@@ -85,6 +90,8 @@ app.whenReady().then(async () => {
   const s = new BrowserWindow({ width: 820, height: 640, show: false, titleBarStyle: "hidden", backgroundColor: "#13151b", webPreferences: wp });
   await s.loadFile(path.join(dist, "settings.html"));
   await shot(s, "settings-context.png");
+  await s.webContents.executeJavaScript(`document.querySelector('[data-section="privacy"]').click(); document.querySelector('.privacy button').click()`);
+  await shot(s, "settings-privacy.png");
   for (const id of ["answers", "speech", "stt"]) {
     await s.webContents.executeJavaScript(`document.querySelector('[data-section="${id}"]').click()`);
     await shot(s, `settings-${id}.png`);

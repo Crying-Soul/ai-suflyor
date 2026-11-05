@@ -1,5 +1,5 @@
 import type { CallInfo, CallsTree, NodeData, NodeKind } from "../shared/protocol";
-import { $, api, el } from "./common";
+import { $, api, askConfirm, el, guardPopups } from "./common";
 import { render as md } from "./md";
 
 const treeEl = $("tree");
@@ -73,7 +73,7 @@ function callDate(dir: string): string {
 // ---------- the node pane ----------
 
 async function select(dir: string): Promise<void> {
-  if (dirty && current?.dir !== dir && !confirm("Перейти без сохранения изменений?")) return;
+  if (dirty && current?.dir !== dir && !(await askConfirm("Перейти без сохранения изменений?", "Перейти"))) return;
   try {
     current = await api.calls.node(dir);
   } catch (e) {
@@ -202,7 +202,7 @@ function filesField(n: NodeData): HTMLElement {
       el("span", "meta num", `${fmtSize(f.size)}, ${f.tokens === null ? "текст не извлечён" : fmtTokens(f.tokens)}`),
       button("Текст", "btn-ghost small", () => showFile(n, f.name)),
       button("Удалить", "btn-ghost small", async () => {
-        if (!confirm(`Удалить ${f.name} из контекста?`)) return;
+        if (!(await askConfirm(`Удалить ${f.name} из контекста?`, "Удалить"))) return;
         await api.calls.removeFile(n.dir, f.name);
         await refreshFiles(n);
       }),
@@ -281,7 +281,7 @@ function callRecord(n: NodeData): HTMLElement[] {
 
 async function remove(n: NodeData): Promise<void> {
   const what = n.kind === "folder" ? `папку «${n.title}» со всеми звонками` : `звонок «${n.title}»`;
-  if (!confirm(`Переместить ${what} в корзину?`)) return;
+  if (!(await askConfirm(`Переместить ${what} в корзину?`, "В корзину"))) return;
   await api.calls.remove(n.dir);
   current = null;
   dirty = false;
@@ -339,6 +339,7 @@ $("btn-new-folder").onclick = () =>
       document.querySelector<HTMLInputElement>("#f-Название")?.select();
     })
     .catch(fail);
+guardPopups();
 $("data-dir").onclick = () => api.calls.reveal(tree.dataDir);
 
 (async () => {

@@ -42,6 +42,7 @@ const api: RendererApi = {
       ipcRenderer.on("models:changed", () => cb());
     },
   },
+  privacyTest: () => ipcRenderer.invoke("privacy:test"),
   pathForFile: (file) => webUtils.getPathForFile(file),
 };
 
