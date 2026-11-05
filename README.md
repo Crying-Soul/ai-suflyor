@@ -12,6 +12,7 @@ Architecture and roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - [x] Phase 4: Claude client (API key or local Claude Code login), two-tier answers, cancel on a new question. Not done yet: cache prewarm, frozen transcript blocks
 - [~] Phase 5: auto-answer in confirmed mode (question heuristic + 250 ms settle, one answer per question). Speculative mode still uses the confirmed path
 - [x] UI: separate transcript and hints windows, live rows from speech start with a stable/changing split, question marks, answer history, Russian UI
+- [x] Call folders with layered context, saved transcripts and summaries; whisper model manager; in-call window modes
 - [ ] Phase 6: screenshots + Windows OCR
 - [ ] Phase 7: rolling summary, NSIS installer
 
@@ -20,7 +21,7 @@ Architecture and roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ```powershell
 # one-time
 powershell -ExecutionPolicy Bypass -File scripts\get-whisper.ps1 -Cuda   # whisper.cpp DLLs + model -> .\whisper
-copy config.example.json config.json                                     # set anthropicApiKey, userContext
+copy config.example.json config.json                                     # set anthropicApiKey (userContext and glossary move to «Обо мне» on first run)
 
 # core
 cargo build --release --manifest-path core\Cargo.toml
@@ -35,7 +36,8 @@ Useful:
 
 - `core\target\release\call-core.exe --list-mics` lists microphone names for `audio.micDevice`, which matches on a substring.
 - `audio.themSource`: `"system"` (all system audio) or `"process:chrome.exe"` (one app only, Windows 10 2004+).
-- `glossary`: terms passed to whisper as a spelling hint (Kubernetes, PostgreSQL…).
+- Context per call: the chip in the transcript bar opens «Звонки». «Обо мне» (CV, stack) is shared by every call; a folder holds a company or project (vacancy, notes); a call holds its own notes. Each takes notes, a whisper glossary and md/txt/pdf files. «Начать звонок» puts that context into the prompt and saves the transcript, answers and, on «Завершить звонок», a summary that later calls of the folder see. Data lives in `dataDir` (default `Documents\Call Assistant`). `call-core.exe --print-context <call dir>` prints the exact prompt.
+- Whisper models: Settings → «Распознавание» downloads, resumes, checks and switches models.
 - `vad.minSilenceMs` (default 500): the pause that ends a phrase. Lower is faster, but phrases get cut at commas.
 - `vad.earlySilenceMs` (default 250, "them" only): after this much silence the final is decoded speculatively and reused if speech does not resume. It saves about 250 ms per phrase; 0 turns it off.
 - Claude connection (`llm.backend`): `api` uses `anthropicApiKey` (or `ANTHROPIC_API_KEY`). `claude-code` uses your Claude Code login and subscription limits, with no key. Install Claude Code natively (`irm https://claude.ai/install.ps1 | iex`, then `claude login`) and keep `claudeCode.command` = `["claude"]`. Or run it from WSL: `["wsl.exe", "-e", "/path/to/claude"]`.
@@ -60,5 +62,13 @@ Useful:
 | Ctrl+Shift+S | Screenshot + ask |
 | Ctrl+Shift+A | Toggle auto-answer |
 | Ctrl+Shift+H | Hide or show both windows |
+| Ctrl+Alt+M | «У камеры»: hints as a strip at the top centre, near the camera |
+| Ctrl+Alt+X | Clicks pass through the overlays (again to undo) |
+| Ctrl+Alt+O | Opacity 100 / 80 / 60 % (idle overlays fade further after 8 s) |
+| Ctrl+Alt+PageUp / PageDown | Older / newer answer |
+| Ctrl+Alt+C | Copy the answer on show |
+| Ctrl+Alt+= / Ctrl+Alt+- | Larger / smaller text |
+
+Ctrl+Shift+S and Ctrl+Shift+A are also Teams shortcuts; if you use Teams, rebind them in Settings → «Горячие клавиши». The overlays never take keyboard focus.
 
 Both windows are excluded from screen sharing and screenshots (`setContentProtection`). Use headphones, otherwise the mic picks up the other side. Recording calls may require the other participants' consent, depending on jurisdiction and platform rules.
