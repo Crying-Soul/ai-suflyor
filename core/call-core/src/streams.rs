@@ -260,7 +260,10 @@ fn drain(
             if partial_ms > 0 {
                 if let Some((start, cur)) = segmenter.current() {
                     let last = partial_at.filter(|(s, _)| *s == start).map_or(0, |(_, n)| n);
-                    if cur.len() >= FIRST_PARTIAL && cur.len() >= last + partial_ms * 16 {
+                    // Each partial re-decodes the whole utterance: on long phrases space them out
+                    // (a fifth of the audio so far), or GPU work grows with the square of the length.
+                    let step = (partial_ms * 16).max(cur.len() / 5);
+                    if cur.len() >= FIRST_PARTIAL && cur.len() >= last + step {
                         partial_at = Some((start, cur.len()));
                         let now = Instant::now();
                         queue.push(Job {
