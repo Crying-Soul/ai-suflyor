@@ -262,11 +262,21 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                     let turn = llm::Turn { text: llm::turn_text(&req.segs[sent.min(req.segs.len())..], &req.question, screen), image };
                     sent = req.segs.len();
                     let got_first = AtomicBool::new(false);
+                    // End of the other side's last phrase: for auto answers, the wait the user actually feels.
+                    let them_end = matches!(req.trigger.as_str(), "auto" | "early")
+                        .then(|| req.segs.iter().rev().find(|s| s.speaker == protocol::Speaker::Them).map(|s| s.end_ms))
+                        .flatten();
                     let mut emit = |c: Chunk| match c {
                         Chunk::Text(t) => {
                             if !got_first.swap(true, Ordering::Relaxed) {
                                 let ms = started.elapsed().as_secs_f64() * 1000.0;
                                 let _ = ev.send(Event::Metrics { name: format!("answer_first_token_{tier}"), ms });
+                                if let Some(end) = them_end {
+                                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+                                    let ms = now.saturating_sub(end) as f64;
+                                    info!("[{tier}] question to first token: {ms} ms");
+                                    let _ = ev.send(Event::Metrics { name: format!("question_to_first_token_{tier}"), ms });
+                                }
                             }
                             answer.push_str(&t);
                             let _ = ev.send(Event::AnswerDelta { id, text: t });
