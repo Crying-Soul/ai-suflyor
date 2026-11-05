@@ -141,6 +141,31 @@ export interface CallsApi {
   current(): Promise<CallInfo | null>;
 }
 
+export interface ModelInfo {
+  id: string;
+  label: string;
+  sizeMb: number;
+  note: string;
+  state: "installed" | "partial" | "absent" | "downloading";
+  /** Bytes on disk or downloaded so far; `total` is known while downloading. */
+  received: number;
+  total: number;
+  /** stt.model points at it. */
+  active: boolean;
+  error?: string;
+}
+
+export interface ModelsApi {
+  list(): Promise<ModelInfo[]>;
+  download(id: string): Promise<void>;
+  cancel(id: string): void;
+  remove(id: string): Promise<void>;
+  /** Writes stt.model and restarts the core. */
+  use(id: string): Promise<SaveResult>;
+  /** Called when a download moves or ends: list() again. */
+  onChange(cb: () => void): void;
+}
+
 export interface RendererApi {
   send(cmd: Command): void;
   hide(): void;
@@ -153,6 +178,7 @@ export interface RendererApi {
   listMics(): Promise<string[]>;
   openCalls(): void;
   calls: CallsApi;
+  models: ModelsApi;
   /** Disk path of a file dropped on the page. */
   pathForFile(file: File): string;
 }

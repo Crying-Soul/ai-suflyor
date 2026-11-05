@@ -43,6 +43,15 @@ app.whenReady().then(async () => {
   ipcMain.handle("config:load", () => ({ path: "C:\\dev\\interviewer\\config.json", raw: cfg, effective: cfg }));
   ipcMain.handle("config:mics", () => ["Focusrite USB (2- Focusrite USB Audio)", "Microphone (Realtek High Definition Audio)"]);
   ipcMain.handle("config:save", () => ({ ok: true, path: "C:\\dev\\interviewer\\config.json" }));
+  const M = (id, label, sizeMb, note, state, extra = {}) => ({ id, label, sizeMb, note, state, received: 0, total: 0, active: false, ...extra });
+  ipcMain.handle("models:list", () => [
+    M("large-v3-turbo", "Large v3 Turbo", 1620, "Лучшее соотношение: почти как Large v3, в разы быстрее. По умолчанию.", "installed", { active: true }),
+    M("large-v3-turbo-q8_0", "Large v3 Turbo, q8", 874, "Та же точность, вдвое меньше памяти.", "downloading", { received: 380e6, total: 874e6 }),
+    M("large-v3-turbo-q5_0", "Large v3 Turbo, q5", 574, "Для слабых GPU, точность чуть ниже.", "partial", { received: 120e6 }),
+    M("large-v3", "Large v3", 3100, "Самая точная и самая медленная. Нужен мощный GPU.", "absent", { error: "получено 1200 из 3100 байт" }),
+    M("small", "Small", 488, "Быстрая на CPU, ошибается в терминах.", "installed"),
+    M("base", "Base", 148, "Только проверить, что всё работает.", "absent"),
+  ]);
   const tr = new BrowserWindow({ width: 420, height: 640, frame: false, show: false, backgroundColor: "#13151b", webPreferences: wp });
   const hi = new BrowserWindow({ width: 460, height: 560, frame: false, show: false, backgroundColor: "#13151b", webPreferences: wp });
   await tr.loadFile(path.join(dist, "transcript.html"));
@@ -64,7 +73,7 @@ app.whenReady().then(async () => {
   const s = new BrowserWindow({ width: 820, height: 640, show: false, titleBarStyle: "hidden", backgroundColor: "#13151b", webPreferences: wp });
   await s.loadFile(path.join(dist, "settings.html"));
   await shot(s, "settings-context.png");
-  for (const id of ["answers", "speech"]) {
+  for (const id of ["answers", "speech", "stt"]) {
     await s.webContents.executeJavaScript(`document.querySelector('[data-section="${id}"]').click()`);
     await shot(s, `settings-${id}.png`);
   }

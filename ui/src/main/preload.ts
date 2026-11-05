@@ -27,6 +27,16 @@ const api: RendererApi = {
     reveal: (dir) => ipcRenderer.send("calls:reveal", dir),
     current: () => ipcRenderer.invoke("calls:current"),
   },
+  models: {
+    list: () => ipcRenderer.invoke("models:list"),
+    download: (id) => ipcRenderer.invoke("models:download", id),
+    cancel: (id) => ipcRenderer.send("models:cancel", id),
+    remove: (id) => ipcRenderer.invoke("models:remove", id),
+    use: (id) => ipcRenderer.invoke("models:use", id),
+    onChange: (cb) => {
+      ipcRenderer.on("models:changed", () => cb());
+    },
+  },
   pathForFile: (file) => webUtils.getPathForFile(file),
 };
 
