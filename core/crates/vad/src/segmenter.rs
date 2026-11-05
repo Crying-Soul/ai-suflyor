@@ -58,6 +58,8 @@ pub enum VadEvent {
     /// `early_silence_ms` of silence: the utterance as it will be finalized if speech does not
     /// resume. A later `SpeechEnd` with the same `start_sample` and length carries the same samples.
     Pause(Utterance),
+    /// Speech came back after a `Pause`: that snapshot is not the end of the utterance.
+    Resume { start_sample: u64 },
     /// Speech ended but was too short to keep (cough, click).
     Discarded { start_sample: u64 },
 }
@@ -81,6 +83,8 @@ pub struct Segmenter {
     last_speech_len: usize,
     /// Length of `cur` at the most recent low-probability window (cut point for forced splits).
     last_pause_len: Option<usize>,
+    /// A `Pause` was emitted and speech has not resumed since.
+    paused: bool,
 }
 
 impl Segmenter {
@@ -97,6 +101,7 @@ impl Segmenter {
             silence_windows: 0,
             last_speech_len: 0,
             last_pause_len: None,
+            paused: false,
         }
     }
 
@@ -165,6 +170,9 @@ impl Segmenter {
             self.speech_windows += 1;
             self.silence_windows = 0;
             self.last_speech_len = self.cur.len();
+            if std::mem::take(&mut self.paused) {
+                out.push(VadEvent::Resume { start_sample: self.cur_start });
+            }
         } else if p < self.cfg.neg_threshold {
             self.silence_windows += 1;
             self.last_pause_len = Some(self.cur.len());
@@ -175,6 +183,7 @@ impl Segmenter {
         if self.cfg.early_silence_ms > 0 && self.silence_windows == early && early < ms_to_windows(self.cfg.min_silence_ms) {
             if self.speech_windows >= ms_to_windows(self.cfg.min_speech_ms) {
                 out.push(VadEvent::Pause(self.snapshot(false)));
+                self.paused = true;
             }
         }
         if self.silence_windows >= ms_to_windows(self.cfg.min_silence_ms) {
@@ -218,6 +227,7 @@ impl Segmenter {
             out.push(VadEvent::Discarded { start_sample: self.cur_start });
         }
         self.in_speech = false;
+        self.paused = false;
         self.speech_windows = 0;
         self.silence_windows = 0;
         self.pre_roll.clear();
@@ -325,6 +335,7 @@ mod tests {
         let pauses = ev.iter().filter(|e| matches!(e, VadEvent::Pause(_))).count();
         let end = ends(&ev);
         assert_eq!((pauses, end.len()), (2, 1));
+        assert_eq!(ev.iter().filter(|e| matches!(e, VadEvent::Resume { .. })).count(), 1);
         let VadEvent::Pause(first) = ev.iter().find(|e| matches!(e, VadEvent::Pause(_))).unwrap() else { unreachable!() };
         assert_ne!(first.samples.len(), end[0].samples.len());
     }
