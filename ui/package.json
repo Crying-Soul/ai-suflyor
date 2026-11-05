@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p .",
-    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/renderer/md.test.ts src/main/calls.test.ts",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/renderer/md.test.ts src/main/calls.test.ts src/main/log.test.ts",
     "core": "cargo build --release --manifest-path ../core/Cargo.toml",
     "start": "npm run build && electron .",
     "dist": "npm run core && npm run build && electron-builder --win nsis"

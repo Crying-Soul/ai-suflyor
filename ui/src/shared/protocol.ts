@@ -205,6 +205,7 @@ export interface RendererApi {
   calls: CallsApi;
   models: ModelsApi;
   privacyTest(): Promise<PrivacyReport>;
+  openLogs(): void;
   /** Disk path of a file dropped on the page. */
   pathForFile(file: File): string;
 }
