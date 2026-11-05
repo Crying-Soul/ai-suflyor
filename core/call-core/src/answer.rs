@@ -3,8 +3,8 @@
 //! A newer request cancels the one in progress.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use protocol::Event;
 use tokio::sync::mpsc;
@@ -171,6 +171,20 @@ async fn auto_detect(a: Answerer, shared: Arc<Shared>, mut rx: mpsc::UnboundedRe
     }
 }
 
+/// A hung backend (a stuck `claude -p`, a stalled stream) must not block its tier forever.
+const FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(30);
+const ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Resolves when the answer is overdue: no first token in time, or too long in total.
+async fn overdue(got_first: &AtomicBool, first: Duration, total: Duration) -> u64 {
+    tokio::time::sleep(first).await;
+    if !got_first.load(Ordering::Relaxed) {
+        return first.as_secs();
+    }
+    tokio::time::sleep(total.saturating_sub(first)).await;
+    total.as_secs()
+}
+
 fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shared: Arc<Shared>) -> mpsc::UnboundedSender<Msg> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Msg>();
     tokio::spawn(async move {
@@ -225,6 +239,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
             }
             let started = Instant::now();
             let mut answer = String::new();
+            let mut stuck = false;
             let result = match session.prepare(&req.model).await {
                 Err(e) => Some(Err(e)),
                 Ok(fresh) => {
@@ -246,10 +261,10 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                     let image = (screen == llm::Screen::Attached).then(|| req.shot.as_ref().map(|s| Arc::new(s.png.clone()))).flatten();
                     let turn = llm::Turn { text: llm::turn_text(&req.segs[sent.min(req.segs.len())..], &req.question, screen), image };
                     sent = req.segs.len();
-                    let mut first = true;
+                    let got_first = AtomicBool::new(false);
                     let mut emit = |c: Chunk| match c {
                         Chunk::Text(t) => {
-                            if std::mem::take(&mut first) {
+                            if !got_first.swap(true, Ordering::Relaxed) {
                                 let ms = started.elapsed().as_secs_f64() * 1000.0;
                                 let _ = ev.send(Event::Metrics { name: format!("answer_first_token_{tier}"), ms });
                             }
@@ -262,6 +277,10 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                     };
                     tokio::select! {
                         r = session.ask(&req.model, &turn, &mut emit) => Some(r),
+                        secs = overdue(&got_first, FIRST_TOKEN_TIMEOUT, ANSWER_TIMEOUT) => {
+                            stuck = true;
+                            Some(Err(anyhow::anyhow!("Claude не ответил за {secs} с")))
+                        }
                         m = rx.recv() => {
                             pending = m;
                             None
@@ -285,6 +304,12 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                 }
                 Some(Err(e)) => {
                     warn!("[{tier}] answer failed: {e:#}");
+                    if stuck {
+                        // The backend's state is unknown: start a new session (claude-code restarts).
+                        session.reset().await;
+                        sent = 0;
+                        last_screen = None;
+                    }
                     Some(format!("{e:#}"))
                 }
                 None => {
@@ -300,4 +325,23 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
         }
     });
     tx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn overdue_waits_for_first_token_then_total() {
+        let first = Duration::from_millis(40);
+        let total = Duration::from_millis(160);
+        let none = AtomicBool::new(false);
+        let t = Instant::now();
+        overdue(&none, first, total).await;
+        assert!(t.elapsed() < Duration::from_millis(120), "no first token: gives up at the first deadline");
+        let got = AtomicBool::new(true);
+        let t = Instant::now();
+        overdue(&got, first, total).await;
+        assert!(t.elapsed() >= total, "first token seen: waits for the total deadline");
+    }
 }
