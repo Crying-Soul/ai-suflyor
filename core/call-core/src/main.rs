@@ -58,6 +58,30 @@ impl Shared {
         };
         let _ = self.events.send(Event::Status(snapshot));
     }
+
+    #[cfg(test)]
+    pub fn for_test() -> (Arc<Shared>, mpsc::UnboundedReceiver<Event>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let shared = Shared {
+            status: Mutex::new(Status {
+                me: Default::default(),
+                them: Default::default(),
+                stt: "off".into(),
+                auto: false,
+                model: "test".into(),
+                answer_mode: Default::default(),
+                busy: false,
+                recording_dir: None,
+            }),
+            events: tx,
+            transcript: Default::default(),
+            them_speaking: Default::default(),
+            answerer: Default::default(),
+            glossary: Default::default(),
+            call: Default::default(),
+        };
+        (Arc::new(shared), rx)
+    }
 }
 
 fn main() -> Result<()> {
