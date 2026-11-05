@@ -217,6 +217,13 @@ fn drain(
                         set_speaking(shared, speaker, true);
                         let _ = shared.events.send(Event::Vad { speaker, active: true, t: t_of(start_sample) });
                     }
+                    VadEvent::Resume { .. } => {
+                        if speaker == Speaker::Them {
+                            if let Some(a) = shared.answerer.get() {
+                                a.on_them_resumed();
+                            }
+                        }
+                    }
                     VadEvent::Discarded { start_sample } => {
                         set_speaking(shared, speaker, false);
                         let t = t_of(start_sample);

@@ -59,7 +59,7 @@ function newTurn(id: number, question: string, trigger: string): Turn {
   const state = el("span", "state-word");
   head.append(
     el("span", "qtext", question ? `«${question}»` : trigger === "screen" ? "Вопрос с экрана" : "Без вопроса: подсказка по разговору"),
-    el("span", "trigger", trigger === "auto" ? "авто" : trigger === "picked" ? "выбрано" : trigger === "screen" ? "экран" : "вручную"),
+    el("span", "trigger", trigger === "auto" || trigger === "early" ? "авто" : trigger === "picked" ? "выбрано" : trigger === "screen" ? "экран" : "вручную"),
     state,
   );
   const quick = el("p", "quick");
@@ -90,7 +90,7 @@ function newTurn(id: number, question: string, trigger: string): Turn {
   });
   // Older cards collapse to the question and the quick line; a click opens the full answer.
   card.addEventListener("click", (e) => {
-    if (card.classList.contains("current") || (e.target as Element).closest("pre, code")) return;
+    if ((card.classList.contains("current") && !card.classList.contains("retracted")) || (e.target as Element).closest("pre, code")) return;
     card.classList.toggle("open");
   });
   turnsEl.prepend(card);
@@ -129,10 +129,11 @@ function paint(t: Turn): void {
 }
 
 /** The pane's own status: answering (open, apricot), done (periwinkle check) or failed. */
-function setTurnState(t: Turn, st: "answering" | "done" | "error"): void {
+function setTurnState(t: Turn, st: "answering" | "done" | "error" | "retracted"): void {
   t.state.dataset.state = st;
   t.state.replaceChildren();
-  t.state.append(st === "done" ? icon("check") : el("span", "mark"), st === "done" ? "готово" : st === "answering" ? "отвечаю" : "ошибка");
+  const label = { done: "готово", answering: "отвечаю", error: "ошибка", retracted: "отменено, собеседник продолжил" }[st];
+  t.state.append(st === "done" ? icon("check") : el("span", "mark"), label);
 }
 
 function show(id: number): void {
@@ -230,6 +231,14 @@ api.onEvent((e: CoreEvent) => {
       const t = a && turns.get(a.turn);
       answers.delete(e.id);
       if (!a || !t) break;
+      // An early answer whose question went on: the card stays, folded, with a note.
+      if (e.error === "retracted") {
+        t.card.classList.add("retracted");
+        t.card.classList.remove("open");
+        setTurnState(t, "retracted");
+        if (a.turn === current) setPhase("listening");
+        break;
+      }
       if (e.error && e.error !== "cancelled") {
         t.error[a.tier] = e.error;
         schedule(t);

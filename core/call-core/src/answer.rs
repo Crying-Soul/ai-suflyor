@@ -33,7 +33,22 @@ enum Msg {
     Clear,
     /// New system prompt (another call's context): the session restarts on it.
     Reconfigure(String),
+    /// Drop answer turn `turn` (an early answer whose question went on); other turns ignore it.
+    Cancel { turn: u64 },
 }
+
+/// What the STT side tells auto-detect about the other side.
+enum Auto {
+    /// A confirmed final.
+    Final,
+    /// Speculative decode at the first pause (speculative mode): the final unless speech resumes.
+    Early(FinalSegment),
+    /// Speech came back after that pause.
+    Resumed,
+}
+
+/// Error of an answer dropped because the other side kept talking.
+pub const RETRACTED: &str = "retracted";
 
 #[derive(Clone)]
 pub struct Answerer {
@@ -41,8 +56,8 @@ pub struct Answerer {
     full: mpsc::UnboundedSender<Msg>,
     quick: Option<(mpsc::UnboundedSender<Msg>, String)>,
     next_id: Arc<AtomicU64>,
-    /// "them" finals for auto-detect.
-    auto: mpsc::UnboundedSender<()>,
+    /// "them" finals, early decodes and resumes for auto-detect.
+    auto: mpsc::UnboundedSender<Auto>,
 }
 
 /// After a "them" final, wait this long for more speech before deciding the turn is over.
@@ -63,12 +78,27 @@ impl Answerer {
 
     /// Called by the STT worker for every "them" final.
     pub fn on_them_final(&self) {
-        let _ = self.auto.send(());
+        let _ = self.auto.send(Auto::Final);
+    }
+
+    /// Called by the STT worker for a "them" speculative decode (text at the first pause).
+    pub fn on_them_early(&self, seg: FinalSegment) {
+        let _ = self.auto.send(Auto::Early(seg));
+    }
+
+    /// Called when the other side's speech resumes after a pause.
+    pub fn on_them_resumed(&self) {
+        let _ = self.auto.send(Auto::Resumed);
     }
 
     /// Starts both tiers. `question`: (text, start of its transcript run); None = the latest "them" run.
     pub fn ask(&self, shared: &Shared, trigger: &str, question: Option<(String, Option<u64>)>, shot: Option<Shot>) {
         let segs = Arc::new(shared.transcript.lock().unwrap().clone());
+        self.ask_on(shared, trigger, question, shot, segs);
+    }
+
+    /// `ask` on the given transcript; returns the turn id.
+    fn ask_on(&self, shared: &Shared, trigger: &str, question: Option<(String, Option<u64>)>, shot: Option<Shot>, segs: Arc<Vec<FinalSegment>>) -> u64 {
         let (question, q_t) = question.unwrap_or_else(|| llm::question(&segs));
         let model = shared.status.lock().unwrap().model.clone();
         let turn = self.next_id();
@@ -95,6 +125,15 @@ impl Answerer {
             let _ = tx.send(Msg::Ask(req(quick_model.clone())));
         }
         let _ = self.full.send(Msg::Ask(req(model)));
+        turn
+    }
+
+    /// Both tiers drop answer turn `turn` with the error `RETRACTED`.
+    fn retract(&self, turn: u64) {
+        let _ = self.full.send(Msg::Cancel { turn });
+        if let Some((tx, _)) = &self.quick {
+            let _ = tx.send(Msg::Cancel { turn });
+        }
     }
 
     pub fn clear(&self) {
@@ -151,23 +190,88 @@ fn session(cfg: &Config, tier: &'static str, system: String) -> Session {
     }
 }
 
-/// Confirmed mode: answer once the other side stops talking and the last "them" run is a question.
-// shortcut: speculative mode takes the same path; starting at the early pause (VAD Pause event) is still to do.
-async fn auto_detect(a: Answerer, shared: Arc<Shared>, mut rx: mpsc::UnboundedReceiver<()>) {
-    let mut last_asked = String::new();
-    while rx.recv().await.is_some() {
-        tokio::time::sleep(std::time::Duration::from_millis(AUTO_SETTLE_MS)).await;
-        while rx.try_recv().is_ok() {} // later finals are covered by this check
-        if !shared.status.lock().unwrap().auto || shared.them_speaking.load(Ordering::Relaxed) {
-            continue;
+/// Auto-detect state: the last question asked and an early answer still in doubt.
+#[derive(Default)]
+struct AutoState {
+    last_asked: String,
+    /// (turn, its question) of an early answer not yet confirmed by the final.
+    early: Option<(u64, String)>,
+}
+
+impl AutoState {
+    fn retract_early(&mut self, a: &Answerer, why: &str) {
+        if let Some((turn, question)) = self.early.take() {
+            info!("auto: early answer {turn} cancelled, {why}");
+            a.retract(turn);
+            // The same words may come back as part of a longer question: allow asking again.
+            if self.last_asked == question {
+                self.last_asked.clear();
+            }
         }
+    }
+
+    /// Speculative mode: answer at the first pause, before the final is confirmed.
+    fn on_early(&mut self, a: &Answerer, shared: &Shared, seg: FinalSegment) {
+        let mut segs = shared.transcript.lock().unwrap().clone();
+        segs.push(seg);
+        let (question, q_t) = llm::question(&segs);
+        if question == self.last_asked || !textproc::is_question(&question) {
+            return;
+        }
+        self.retract_early(a, "a newer early question");
+        info!("auto: early question: {question}");
+        self.last_asked = question.clone();
+        let turn = a.ask_on(shared, "early", Some((question.clone(), q_t)), None, Arc::new(segs));
+        self.early = Some((turn, question));
+    }
+
+    /// After a final: keep a matching early answer, or ask once their turn is over.
+    fn on_final(&mut self, a: &Answerer, shared: &Shared) {
         let (question, q_t) = llm::question(&shared.transcript.lock().unwrap());
-        if question == last_asked || !textproc::is_question(&question) {
-            continue;
+        if let Some((turn, q)) = &self.early {
+            if *q == question {
+                info!("auto: early answer {turn} confirmed by the final");
+                self.early = None;
+                return;
+            }
+            self.retract_early(a, "the final differs");
+        }
+        if shared.them_speaking.load(Ordering::Relaxed) || question == self.last_asked || !textproc::is_question(&question) {
+            return;
         }
         info!("auto: question detected: {question}");
-        last_asked = question.clone();
-        a.ask(&shared, "auto", Some((question, q_t)), None);
+        self.last_asked = question.clone();
+        a.ask(shared, "auto", Some((question, q_t)), None);
+    }
+}
+
+/// Confirmed mode: answer once the other side stops talking and the last "them" run is a question.
+/// Speculative mode also answers at the first pause (`Auto::Early`) and drops that answer if they go on.
+async fn auto_detect(a: Answerer, shared: Arc<Shared>, mut rx: mpsc::UnboundedReceiver<Auto>) {
+    let mut st = AutoState::default();
+    let handle = |st: &mut AutoState, ev: Auto| -> bool {
+        let (auto, mode) = {
+            let s = shared.status.lock().unwrap();
+            (s.auto, s.answer_mode)
+        };
+        match ev {
+            Auto::Resumed => st.retract_early(&a, "speech resumed"),
+            Auto::Early(seg) if auto && mode == protocol::AnswerMode::Speculative => st.on_early(&a, &shared, seg),
+            Auto::Early(_) => {}
+            Auto::Final => return auto,
+        }
+        false
+    };
+    while let Some(ev) = rx.recv().await {
+        if !handle(&mut st, ev) {
+            continue;
+        }
+        // A final: wait for more speech, then decide on everything heard so far.
+        tokio::time::sleep(std::time::Duration::from_millis(AUTO_SETTLE_MS)).await;
+        while let Ok(ev) = rx.try_recv() {
+            handle(&mut st, ev);
+        }
+        st.on_final(&a, &shared);
     }
 }
 
@@ -222,6 +326,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                     }
                     continue;
                 }
+                Msg::Cancel { .. } => continue, // that turn is over already
                 Msg::Ask(r) => r,
             };
             let id = req.id;
@@ -240,6 +345,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
             let started = Instant::now();
             let mut answer = String::new();
             let mut stuck = false;
+            let mut sent_before = sent;
             let result = match session.prepare(&req.model).await {
                 Err(e) => Some(Err(e)),
                 Ok(fresh) => {
@@ -260,6 +366,8 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                     };
                     let image = (screen == llm::Screen::Attached).then(|| req.shot.as_ref().map(|s| Arc::new(s.png.clone()))).flatten();
                     let turn = llm::Turn { text: llm::turn_text(&req.segs[sent.min(req.segs.len())..], &req.question, screen), image };
+                    // A cancelled turn resends its segments: an early one may hold a text the final changed.
+                    sent_before = sent;
                     sent = req.segs.len();
                     let got_first = AtomicBool::new(false);
                     // End of the other side's last phrase: for auto answers, the wait the user actually feels.
@@ -285,15 +393,23 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                             info!("[{tier}] tokens: input {input}, cache read {cache_read}, cache write {cache_write}, output {output}")
                         }
                     };
-                    tokio::select! {
-                        r = session.ask(&req.model, &turn, &mut emit) => Some(r),
-                        secs = overdue(&got_first, FIRST_TOKEN_TIMEOUT, ANSWER_TIMEOUT) => {
-                            stuck = true;
-                            Some(Err(anyhow::anyhow!("Claude не ответил за {secs} с")))
-                        }
-                        m = rx.recv() => {
-                            pending = m;
-                            None
+                    let ask = session.ask(&req.model, &turn, &mut emit);
+                    let timer = overdue(&got_first, FIRST_TOKEN_TIMEOUT, ANSWER_TIMEOUT);
+                    tokio::pin!(ask, timer);
+                    loop {
+                        tokio::select! {
+                            r = &mut ask => break Some(r),
+                            secs = &mut timer => {
+                                stuck = true;
+                                break Some(Err(anyhow::anyhow!("Claude не ответил за {secs} с")));
+                            }
+                            m = rx.recv() => match m {
+                                Some(Msg::Cancel { turn }) if turn != req.turn => {}
+                                m => {
+                                    pending = m;
+                                    break None;
+                                }
+                            }
                         }
                     }
                 }
@@ -324,12 +440,14 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                 }
                 None => {
                     session.cancel().await;
-                    Some("cancelled".into())
+                    sent = sent_before;
+                    let retracted = matches!(pending, Some(Msg::Cancel { turn }) if turn == req.turn);
+                    Some(if retracted { RETRACTED } else { "cancelled" }.into())
                 }
             };
             let _ = ev.send(Event::Metrics { name: format!("answer_total_{tier}"), ms: started.elapsed().as_secs_f64() * 1000.0 });
             let _ = ev.send(Event::AnswerEnd { id, error });
-            if tier == "full" && pending.is_none() {
+            if tier == "full" && !matches!(pending, Some(Msg::Ask(_))) {
                 shared.update_status(|s| s.busy = false);
             }
         }
@@ -412,6 +530,83 @@ mod tests {
         assert_eq!(end(&mut rx, 1).await, None);
         let saved = std::fs::read_to_string(dir.path().join("answers.jsonl")).unwrap();
         assert!(saved.contains("\"text\":\"Лёгкий поток\""), "{saved}");
+    }
+
+    #[tokio::test]
+    async fn cancel_drops_only_its_turn() {
+        let (mock, _) = MockSession::new(Duration::from_millis(30), vec!["a", "b"], 0);
+        let (tx, _shared, mut rx) = tier(mock);
+        tx.send(ask(1, None)).unwrap();
+        tx.send(Msg::Cancel { turn: 7 }).unwrap();
+        assert_eq!(end(&mut rx, 1).await, None, "another turn's cancel is ignored");
+        tx.send(ask(2, None)).unwrap();
+        tx.send(Msg::Cancel { turn: 2 }).unwrap();
+        assert_eq!(end(&mut rx, 2).await.as_deref(), Some(RETRACTED));
+    }
+
+    /// An answerer on one mock tier, as auto-detect drives it.
+    fn answerer(delay: Duration) -> (Answerer, Arc<Shared>, mpsc::UnboundedReceiver<Event>) {
+        let (mock, _) = MockSession::new(delay, vec!["ok"], 0);
+        let (full, shared, rx) = tier(mock);
+        let (auto, _) = mpsc::unbounded_channel();
+        let a = Answerer { cfg: Arc::new(Config::default()), full, quick: None, next_id: Arc::new(AtomicU64::new(1)), auto };
+        (a, shared, rx)
+    }
+
+    fn them(t_ms: u64, text: &str) -> FinalSegment {
+        FinalSegment { speaker: Speaker::Them, t_ms, end_ms: t_ms + 1000, text: text.into() }
+    }
+
+    /// (turn, trigger) of each answer start, and the error of each end, in order.
+    fn drain(rx: &mut mpsc::UnboundedReceiver<Event>) -> (Vec<String>, Vec<Option<String>>) {
+        let (mut starts, mut ends) = (vec![], vec![]);
+        while let Ok(e) = rx.try_recv() {
+            match e {
+                Event::AnswerStart { turn, trigger, .. } => starts.push(format!("{turn} {trigger}")),
+                Event::AnswerEnd { error, .. } => ends.push(error),
+                _ => {}
+            }
+        }
+        (starts, ends)
+    }
+
+    #[tokio::test]
+    async fn early_answer_kept_when_the_final_matches() {
+        let (a, shared, mut rx) = answerer(Duration::ZERO);
+        let mut st = AutoState::default();
+        st.on_early(&a, &shared, them(0, "Что такое горутина?"));
+        shared.transcript.lock().unwrap().push(them(0, "Что такое горутина?"));
+        st.on_final(&a, &shared);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(drain(&mut rx), (vec!["1 early".to_string()], vec![None]));
+    }
+
+    #[tokio::test]
+    async fn early_answer_dropped_when_speech_resumes() {
+        let (a, shared, mut rx) = answerer(Duration::from_millis(100));
+        let mut st = AutoState::default();
+        st.on_early(&a, &shared, them(0, "Что такое горутина?"));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        st.retract_early(&a, "speech resumed");
+        shared.transcript.lock().unwrap().push(them(0, "Что такое горутина и чем она отличается от потока?"));
+        st.on_final(&a, &shared);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (starts, ends) = drain(&mut rx);
+        assert_eq!(starts, vec!["1 early".to_string(), "3 auto".to_string()]);
+        assert_eq!(ends, vec![Some(RETRACTED.to_string()), None]);
+    }
+
+    #[tokio::test]
+    async fn early_answer_dropped_when_the_final_differs() {
+        let (a, shared, mut rx) = answerer(Duration::from_millis(100));
+        let mut st = AutoState::default();
+        st.on_early(&a, &shared, them(0, "Что такое горутина?"));
+        shared.transcript.lock().unwrap().push(them(0, "Что такое горутина в Go?"));
+        st.on_final(&a, &shared);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (starts, ends) = drain(&mut rx);
+        assert_eq!(starts, vec!["1 early".to_string(), "3 auto".to_string()]);
+        assert_eq!(ends, vec![Some(RETRACTED.to_string()), None]);
     }
 
     #[tokio::test(start_paused = true)]

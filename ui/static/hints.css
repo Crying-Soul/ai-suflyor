@@ -48,6 +48,9 @@
 .turn.open::before { content: ""; position: absolute; left: var(--space-2xs); top: calc(var(--space-sm) + 0.45em); width: 6px; height: 6px; border-radius: var(--radius-pill); background: var(--color-accent); }
 .turn:not(.current):not(.open) .full { display: none; }
 .turn:not(.current):not(.open) .qtext { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* An early answer the other side talked past: folded to its question until clicked. */
+.turn.retracted:not(.open) :is(.quick, .full, .shot) { display: none; }
+.turn.retracted .qtext { color: var(--color-muted); }
 
 /* Answer text (md.ts). */
 .full { color: var(--color-ink-2); line-height: 1.55; display: grid; gap: var(--space-xs); }
