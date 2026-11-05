@@ -164,6 +164,13 @@ pub enum Event {
     Error {
         message: String,
     },
+    /// A screenshot goes with answer turn `turn`; `thumb` is a small JPEG data URL for the card.
+    Screenshot {
+        turn: u64,
+        width: u32,
+        height: u32,
+        thumb: String,
+    },
     /// The context now in use. `dir` is null when no call is open (profile only).
     Call {
         dir: Option<String>,

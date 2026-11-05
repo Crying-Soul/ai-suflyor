@@ -8,7 +8,7 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tracing::warn;
 
-use super::Chunk;
+use super::{Chunk, Turn};
 
 pub struct ApiSession {
     client: reqwest::Client,
@@ -67,12 +67,12 @@ impl ApiSession {
         b
     }
 
-    pub async fn ask(&mut self, model: &str, text: String, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
+    pub async fn ask(&mut self, model: &str, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
         if self.key.is_empty() {
             bail!("no Anthropic API key: set anthropicApiKey or ANTHROPIC_API_KEY, or switch to the Claude Code connection");
         }
         // The user turn stays in history even if the answer fails: consecutive user turns are merged by the API.
-        self.messages.push(json!({"role": "user", "content": [{"type": "text", "text": text}]}));
+        self.messages.push(json!({"role": "user", "content": turn.content()}));
         let body = self.body(model);
         let mut attempt = 0;
         let resp = loop {

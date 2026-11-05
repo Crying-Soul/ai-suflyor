@@ -143,6 +143,7 @@ fn main() -> Result<()> {
 }
 
 async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
+    screen::dpi_aware();
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
 
     // stdout writer: the only place that writes to stdout.
@@ -232,12 +233,30 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
 fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::Answerer) {
     match cmd {
         Command::Ask { screenshot, question } => {
-            if screenshot {
-                // shortcut: screenshots arrive in phase 6; the question is answered without one for now.
-                info!("screenshot requested; not implemented yet, answering without it");
-            }
             let picked = question.filter(|q| !q.trim().is_empty()).map(|q| (q, None));
-            answerer.ask(shared, if picked.is_some() { "picked" } else { "hotkey" }, picked);
+            if !screenshot {
+                answerer.ask(shared, if picked.is_some() { "picked" } else { "hotkey" }, picked, None);
+                return;
+            }
+            let (shared, answerer) = (shared.clone(), answerer.clone());
+            tokio::spawn(async move {
+                let t = std::time::Instant::now();
+                let shot = match tokio::task::spawn_blocking(|| screen::capture(false)).await {
+                    Ok(Ok(s)) => {
+                        info!("screenshot {}x{}, {} KB in {} ms: {}", s.width, s.height, s.png.len() / 1024, t.elapsed().as_millis(), s.source);
+                        Some(s)
+                    }
+                    Ok(Err(e)) => {
+                        let _ = shared.events.send(Event::Error { message: format!("не удалось снять экран: {e:#}") });
+                        None
+                    }
+                    Err(e) => {
+                        warn!("screenshot task: {e}");
+                        None
+                    }
+                };
+                answerer.ask(&shared, "screen", picked, shot);
+            });
         }
         Command::Set { auto, model, answer_mode } => shared.update_status(|s| {
             if let Some(a) = auto {
