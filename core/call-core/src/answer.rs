@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::config::{Backend, Config};
+use crate::context;
 use crate::llm::{self, Chunk, Session};
 use crate::screen::Shot;
 use crate::{FinalSegment, Shared};
@@ -35,6 +36,8 @@ enum Msg {
     Reconfigure(String),
     /// Drop answer turn `turn` (an early answer whose question went on); other turns ignore it.
     Cancel { turn: u64 },
+    /// New notes stand in for the old transcript: restart the session on them once the current answer is done.
+    Compact,
 }
 
 /// What the STT side tells auto-detect about the other side.
@@ -58,6 +61,43 @@ pub struct Answerer {
     next_id: Arc<AtomicU64>,
     /// "them" finals, early decodes and resumes for auto-detect.
     auto: mpsc::UnboundedSender<Auto>,
+}
+
+/// Rolling summary of a long call: the transcript before `upto` is replaced by `text` in new sessions.
+#[derive(Default)]
+pub struct Notes {
+    pub text: String,
+    /// Index into `Shared::transcript` of the first segment still sent verbatim.
+    pub upto: usize,
+    /// A summary is being made.
+    busy: bool,
+    /// Bumped when the transcript is replaced; a summary of the old one is dropped.
+    generation: u64,
+}
+
+/// Once the verbatim transcript passes this, its older part is summarized (one cache reset per step).
+const COMPACT_TOKENS: u64 = 25_000;
+/// The newest part stays verbatim.
+const KEEP_TOKENS: u64 = 5_000;
+
+const NOTES_SYSTEM: &str = "You compress the earlier part of a live call (often a job interview) into notes for an assistant \
+that keeps helping the user in the same call. Lines starting with \"Q:\" are the other side, \"A:\" the user; \
+the transcript comes from speech recognition. Keep: topics covered, each question asked and the gist of the user's answer, \
+facts about the user, the company and the role, numbers and names, promises and open threads. \
+Merge the previous notes in. Terse bullet points in the language of the call, at most 500 words, no preamble.";
+
+/// Where to cut `segs` (the verbatim part) for a summary: None while it is short enough.
+fn compact_cut(segs: &[FinalSegment]) -> Option<usize> {
+    if context::tokens(&llm::render(segs)) < COMPACT_TOKENS {
+        return None;
+    }
+    let mut kept = 0;
+    let mut cut = segs.len();
+    while cut > 0 && kept < KEEP_TOKENS {
+        cut -= 1;
+        kept += context::tokens(&segs[cut].text);
+    }
+    (cut > 0).then_some(cut)
 }
 
 /// After a "them" final, wait this long for more speech before deciding the turn is over.
@@ -92,13 +132,63 @@ impl Answerer {
     }
 
     /// Starts both tiers. `question`: (text, start of its transcript run); None = the latest "them" run.
-    pub fn ask(&self, shared: &Shared, trigger: &str, question: Option<(String, Option<u64>)>, shot: Option<Shot>) {
+    pub fn ask(&self, shared: &Arc<Shared>, trigger: &str, question: Option<(String, Option<u64>)>, shot: Option<Shot>) {
         let segs = Arc::new(shared.transcript.lock().unwrap().clone());
         self.ask_on(shared, trigger, question, shot, segs);
     }
 
+    /// Starts a summary of the older transcript once the verbatim part is too long.
+    fn maybe_compact(&self, shared: &Arc<Shared>, segs: &[FinalSegment]) {
+        let (upto, prev, generation) = {
+            let n = shared.notes.lock().unwrap();
+            if n.busy {
+                return;
+            }
+            (n.upto.min(segs.len()), n.text.clone(), n.generation)
+        };
+        let Some(cut) = compact_cut(&segs[upto..]).map(|c| upto + c) else { return };
+        shared.notes.lock().unwrap().busy = true;
+        info!("notes: summarizing segments {upto}..{cut} of {}", segs.len());
+        let (a, shared, old) = (self.clone(), shared.clone(), segs[upto..cut].to_vec());
+        tokio::spawn(async move {
+            let started = Instant::now();
+            let r = a.notes(&prev, &old).await;
+            let mut n = shared.notes.lock().unwrap();
+            n.busy = false;
+            match r {
+                Ok(text) if n.generation == generation => {
+                    info!("notes: {} tokens in {} ms, the next turns start a session on them", context::tokens(&text), started.elapsed().as_millis());
+                    n.text = text;
+                    n.upto = cut;
+                    drop(n);
+                    a.send_all(|| Msg::Compact);
+                }
+                Ok(_) => info!("notes: transcript replaced meanwhile, dropped"),
+                Err(e) => warn!("notes: summary failed: {e:#}"),
+            }
+        });
+    }
+
+    /// The notes summary with the quick model.
+    async fn notes(&self, prev: &str, segs: &[FinalSegment]) -> anyhow::Result<String> {
+        let mut s = session(&self.cfg, "summary", NOTES_SYSTEM.to_string());
+        let model = &self.cfg.quick_model;
+        s.prepare(model).await?;
+        let mut out = String::new();
+        let prev = if prev.is_empty() { String::new() } else { format!("<earlier_notes>\n{prev}\n</earlier_notes>\n") };
+        let text = format!("{prev}<transcript>\n{}\n</transcript>\nWrite the notes.", llm::render(segs));
+        s.ask(model, &llm::Turn { text, image: None }, &mut |c| {
+            if let Chunk::Text(t) = c {
+                out.push_str(&t);
+            }
+        })
+        .await?;
+        Ok(out.trim().to_string())
+    }
+
     /// `ask` on the given transcript; returns the turn id.
-    fn ask_on(&self, shared: &Shared, trigger: &str, question: Option<(String, Option<u64>)>, shot: Option<Shot>, segs: Arc<Vec<FinalSegment>>) -> u64 {
+    fn ask_on(&self, shared: &Arc<Shared>, trigger: &str, question: Option<(String, Option<u64>)>, shot: Option<Shot>, segs: Arc<Vec<FinalSegment>>) -> u64 {
+        self.maybe_compact(shared, &segs);
         let (question, q_t) = question.unwrap_or_else(|| llm::question(&segs));
         let model = shared.status.lock().unwrap().model.clone();
         let turn = self.next_id();
@@ -130,10 +220,21 @@ impl Answerer {
 
     /// Both tiers drop answer turn `turn` with the error `RETRACTED`.
     fn retract(&self, turn: u64) {
-        let _ = self.full.send(Msg::Cancel { turn });
+        self.send_all(|| Msg::Cancel { turn });
+    }
+
+    fn send_all(&self, msg: impl Fn() -> Msg) {
+        let _ = self.full.send(msg());
         if let Some((tx, _)) = &self.quick {
-            let _ = tx.send(Msg::Cancel { turn });
+            let _ = tx.send(msg());
         }
+    }
+
+    /// The transcript was replaced or cleared: its notes no longer apply.
+    pub fn forget_notes(shared: &Shared) {
+        let mut n = shared.notes.lock().unwrap();
+        let generation = n.generation + 1;
+        *n = Notes { generation, ..Default::default() };
     }
 
     pub fn clear(&self) {
@@ -211,7 +312,7 @@ impl AutoState {
     }
 
     /// Speculative mode: answer at the first pause, before the final is confirmed.
-    fn on_early(&mut self, a: &Answerer, shared: &Shared, seg: FinalSegment) {
+    fn on_early(&mut self, a: &Answerer, shared: &Arc<Shared>, seg: FinalSegment) {
         let mut segs = shared.transcript.lock().unwrap().clone();
         segs.push(seg);
         let (question, q_t) = llm::question(&segs);
@@ -226,7 +327,7 @@ impl AutoState {
     }
 
     /// After a final: keep a matching early answer, or ask once their turn is over.
-    fn on_final(&mut self, a: &Answerer, shared: &Shared) {
+    fn on_final(&mut self, a: &Answerer, shared: &Arc<Shared>) {
         let (question, q_t) = llm::question(&shared.transcript.lock().unwrap());
         if let Some((turn, q)) = &self.early {
             if *q == question {
@@ -327,6 +428,13 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                     continue;
                 }
                 Msg::Cancel { .. } => continue, // that turn is over already
+                Msg::Compact => {
+                    session.reset().await;
+                    if let Err(e) = session.warm(&warm_model).await {
+                        warn!("[{tier}] warm-up failed: {e:#}");
+                    }
+                    continue;
+                }
                 Msg::Ask(r) => r,
             };
             let id = req.id;
@@ -346,11 +454,17 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
             let mut answer = String::new();
             let mut stuck = false;
             let mut sent_before = sent;
+            let mut compact = false;
             let result = match session.prepare(&req.model).await {
                 Err(e) => Some(Err(e)),
                 Ok(fresh) => {
+                    let mut earlier = String::new();
                     if fresh {
-                        sent = 0;
+                        let n = shared.notes.lock().unwrap();
+                        sent = n.upto.min(req.segs.len());
+                        if sent > 0 {
+                            earlier = format!("<earlier_notes>\n{}\n</earlier_notes>\n", n.text);
+                        }
                         last_screen = None;
                     }
                     let screen = match &req.shot {
@@ -365,7 +479,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                         }
                     };
                     let image = (screen == llm::Screen::Attached).then(|| req.shot.as_ref().map(|s| Arc::new(s.png.clone()))).flatten();
-                    let turn = llm::Turn { text: llm::turn_text(&req.segs[sent.min(req.segs.len())..], &req.question, screen), image };
+                    let turn = llm::Turn { text: earlier + &llm::turn_text(&req.segs[sent.min(req.segs.len())..], &req.question, screen), image };
                     // A cancelled turn resends its segments: an early one may hold a text the final changed.
                     sent_before = sent;
                     sent = req.segs.len();
@@ -405,6 +519,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                             }
                             m = rx.recv() => match m {
                                 Some(Msg::Cancel { turn }) if turn != req.turn => {}
+                                Some(Msg::Compact) => compact = true,
                                 m => {
                                     pending = m;
                                     break None;
@@ -447,6 +562,13 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
             };
             let _ = ev.send(Event::Metrics { name: format!("answer_total_{tier}"), ms: started.elapsed().as_secs_f64() * 1000.0 });
             let _ = ev.send(Event::AnswerEnd { id, error });
+            if compact {
+                if pending.is_none() {
+                    pending = Some(Msg::Compact); // reset and warm while idle
+                } else {
+                    session.reset().await; // a newer ask waits: no time to warm
+                }
+            }
             if tier == "full" && !matches!(pending, Some(Msg::Ask(_))) {
                 shared.update_status(|s| s.busy = false);
             }
@@ -607,6 +729,33 @@ mod tests {
         let (starts, ends) = drain(&mut rx);
         assert_eq!(starts, vec!["1 early".to_string(), "3 auto".to_string()]);
         assert_eq!(ends, vec![Some(RETRACTED.to_string()), None]);
+    }
+
+    #[test]
+    fn compact_cut_keeps_the_newest_part() {
+        let seg = |i: u64| them(i * 1000, &"слово ".repeat(500)); // ~1000 tokens each
+        let short: Vec<_> = (0..10).map(seg).collect();
+        assert_eq!(compact_cut(&short), None);
+        let long: Vec<_> = (0..30).map(seg).collect();
+        assert_eq!(compact_cut(&long), Some(25), "the last ~5k tokens stay verbatim");
+    }
+
+    #[tokio::test]
+    async fn compact_restarts_the_session_on_the_notes() {
+        let (mock, seen) = MockSession::new(Duration::ZERO, vec!["ok"], 0);
+        let (tx, shared, mut rx) = tier(mock);
+        tx.send(ask(1, None)).unwrap();
+        assert_eq!(end(&mut rx, 1).await, None);
+        *shared.notes.lock().unwrap() = Notes { text: "- спросили про горутины".into(), upto: 1, ..Default::default() };
+        tx.send(Msg::Compact).unwrap();
+        let mut segs = (*segs()).clone();
+        segs.push(them(5000, "А каналы?"));
+        tx.send(Msg::Ask(Req { segs: Arc::new(segs), ..match ask(2, None) { Msg::Ask(r) => r, _ => unreachable!() } })).unwrap();
+        assert_eq!(end(&mut rx, 2).await, None);
+        let seen = seen.lock().unwrap();
+        let t = &seen[1].0;
+        assert!(t.contains("<earlier_notes>") && t.contains("спросили про горутины"), "{t}");
+        assert!(t.contains("А каналы?") && !t.contains("Q: Что такое горутина?"), "old segments are left to the notes: {t}");
     }
 
     #[tokio::test(start_paused = true)]

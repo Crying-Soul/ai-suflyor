@@ -47,6 +47,8 @@ pub struct Shared {
     pub glossary: RwLock<Vec<String>>,
     /// Directory of the open call; finals and answers are appended to it.
     pub call: Mutex<Option<PathBuf>>,
+    /// Notes standing in for the early transcript of a long call.
+    pub notes: Mutex<answer::Notes>,
 }
 
 impl Shared {
@@ -79,6 +81,7 @@ impl Shared {
             answerer: Default::default(),
             glossary: Default::default(),
             call: Default::default(),
+            notes: Default::default(),
         };
         (Arc::new(shared), rx)
     }
@@ -219,6 +222,7 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
         answerer: Default::default(),
         glossary: Default::default(),
         call: Default::default(),
+        notes: Default::default(),
     });
     // Until a call is opened: the profile alone.
     let profile = context::assemble(&cfg.profile_dir(), None, &cfg.user_context, &cfg.glossary);
@@ -308,6 +312,7 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
         }),
         Command::Clear => {
             shared.transcript.lock().unwrap().clear();
+            answer::Answerer::forget_notes(shared);
             answerer.clear();
         }
         // shortcut: assembly runs on the command loop; a large uncached PDF stalls commands for a second or two.
