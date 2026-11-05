@@ -1,0 +1,10 @@
+node_modules/
+dist/
+release/
+whisper/
+config.json
+recordings/
+core/target/
+ui/node_modules/
+ui/dist/
+ui/release/

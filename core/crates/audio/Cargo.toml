@@ -1,0 +1,16 @@
+[package]
+name = "audio"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tracing.workspace = true
+wasapi.workspace = true
+rtrb.workspace = true
+sysinfo.workspace = true
+rubato.workspace = true
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[dev-dependencies]
+hound.workspace = true

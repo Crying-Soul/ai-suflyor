@@ -1,0 +1,20 @@
+[package]
+name = "call-core"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+hound.workspace = true
+protocol.workspace = true
+audio.workspace = true
+vad.workspace = true
+stt.workspace = true
+textproc.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2"] }
+futures-util = "0.3"

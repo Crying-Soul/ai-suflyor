@@ -1,0 +1,74 @@
+{
+  "anthropicApiKey": "",
+  "model": "claude-sonnet-5-5",
+  "altModel": "claude-opus-5-5",
+  "quickModel": "claude-haiku-5-5",
+  "effort": "low",
+  "language": "auto",
+  "userContext": "I am a backend developer (Go, PostgreSQL, Kubernetes). Interview for a Senior Backend position.",
+  "autoDetect": true,
+  "answerMode": "confirmed",
+  "twoTier": true,
+  "llm": {
+    "backend": "api"
+  },
+  "claudeCode": {
+    "command": [
+      "claude"
+    ]
+  },
+  "audio": {
+    "micDevice": "",
+    "themSource": "system"
+  },
+  "vad": {
+    "model": "models/silero_vad.onnx",
+    "threshold": 0.5,
+    "negThreshold": 0.35,
+    "minSilenceMs": 500,
+    "earlySilenceMs": 250,
+    "preRollMs": 300,
+    "minSpeechMs": 250,
+    "maxUtteranceMs": 20000
+  },
+  "stt": {
+    "dll": "whisper/whisper.dll",
+    "model": "whisper/ggml-large-v3-turbo.bin",
+    "useGpu": true,
+    "gpuDevice": 0,
+    "flashAttn": true,
+    "threads": 4,
+    "beamSize": 1,
+    "temperatureInc": 0.2,
+    "noSpeechThold": 0.6,
+    "audioCtx": 0,
+    "verbose": false,
+    "partialMs": 700
+  },
+  "glossary": [
+    "Go",
+    "Java",
+    "Python",
+    "Kubernetes",
+    "Docker",
+    "PostgreSQL",
+    "Kafka",
+    "Redis",
+    "gRPC",
+    "REST",
+    "CI/CD",
+    "микросервисы",
+    "горутины",
+    "сборщик мусора"
+  ],
+  "debug": {
+    "recordWav": false,
+    "recordDir": "recordings"
+  },
+  "hotkeys": {
+    "ask": "CommandOrControl+Shift+Space",
+    "screenshotAsk": "CommandOrControl+Shift+S",
+    "toggleWindow": "CommandOrControl+Shift+H",
+    "toggleAuto": "CommandOrControl+Shift+A"
+  }
+}

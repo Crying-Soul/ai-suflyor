@@ -1,0 +1,62 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Dusk (by request) · redesign: full
+ * nav: a ruled section list, the chosen one marked by a periwinkle dot · signature: the section list beside one form pane · states: loading, unsaved, saving, saved, error, invalid · dusk: fog/periwinkle-apricot/glass
+ * axes: dark/grotesk-sans/cool · posture: committed · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P3 H2 E3 S3 R3 V3 · weakest: H, a settings form has no hero; the section head carries the scale */
+@import url("./tokens.css");
+@import url("./base.css");
+@import url("./fonts.css");
+@import url("./controls.css");
+
+html, body { height: 100%; }
+body { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
+
+/* The native window buttons sit over the right 140px of this bar (--space-4xl is 144px). */
+.window-head { display: flex; align-items: baseline; gap: var(--space-sm); min-height: 40px; padding: var(--space-xs) var(--space-4xl) 0 var(--space-lg); -webkit-app-region: drag; user-select: none; }
+.window-head h1 { font-size: var(--text-md); max-width: none; }
+.path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-size: var(--text-xs); }
+
+.layout { display: grid; grid-template-columns: 12rem minmax(0, 1fr); min-height: 0; border-top: 1px solid var(--color-rule); }
+
+/* Section list: ruled rows, the current one marked by a dot. */
+nav { padding: var(--space-md) var(--space-sm); background: var(--color-paper-2); overflow-y: auto; }
+nav ul { margin: 0; padding: 0; list-style: none; }
+nav li + li { border-top: 1px solid var(--color-rule); }
+nav button {
+  display: flex; align-items: center; gap: var(--space-xs); width: 100%; min-height: 40px; padding: 0 var(--space-xs);
+  border: 0; border-radius: var(--radius-inner); background: transparent; color: var(--color-ink-2);
+  font: 400 var(--text-sm)/1 var(--font-body); text-align: left; cursor: pointer;
+  transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+}
+nav button::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: var(--radius-pill); background: transparent; }
+nav button:hover { background: color-mix(in oklab, var(--color-light) 5%, transparent); color: var(--color-ink); }
+nav button:active { background: color-mix(in oklab, var(--color-light) 8%, transparent); }
+nav button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; transition: none; }
+nav button[aria-current="true"] { color: var(--color-ink); font-weight: 500; }
+nav button[aria-current="true"]::before { background: var(--color-accent); }
+
+form { overflow-y: auto; padding: var(--space-lg) var(--space-xl) var(--space-xl); }
+fieldset { margin: 0; padding: 0; border: 0; min-width: 0; max-width: 46rem; }
+legend { padding: 0; margin-bottom: var(--space-md); }
+legend h2 { font-size: var(--text-xl); }
+.note { margin-bottom: var(--space-md); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-inner); background: var(--color-paper-2); color: var(--color-ink-2); font-size: var(--text-sm); box-shadow: inset 2px 0 0 var(--color-accent-2); }
+.loading { color: var(--color-muted); }
+
+.field { display: grid; grid-template-columns: 13rem minmax(0, 1fr); gap: var(--space-xs) var(--space-lg); align-items: start; padding: var(--space-sm) 0; border-top: 1px solid var(--color-rule); }
+.field > label { padding-top: var(--space-xs); color: var(--color-ink-2); font-size: var(--text-sm); font-weight: 500; }
+.control { display: grid; gap: var(--space-2xs); min-width: 0; }
+.control > .switch { justify-self: start; }
+.control .input.num { max-width: 10rem; }
+.hint { color: var(--color-muted); font-size: var(--text-xs); line-height: 1.45; }
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-xs); }
+
+.actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-xs); padding: var(--space-sm) var(--space-lg); border-top: 1px solid var(--color-rule); background: var(--color-paper); }
+#save-state { flex: 1; color: var(--color-muted); font-size: var(--text-sm); }
+#save-state.pending { color: var(--color-accent-2); }
+#save-state.done { color: var(--color-ink-2); }
+#save-state.error { color: var(--color-error); }
+
+@media (max-width: 44rem) {
+  .field { grid-template-columns: minmax(0, 1fr); }
+  .field > label { padding-top: 0; }
+  form { padding-inline: var(--space-lg); }
+}
