@@ -110,19 +110,20 @@ pub fn render(segs: &[FinalSegment]) -> String {
 /// A pause this long inside "them" speech starts a new question.
 const QUESTION_GAP_MS: u64 = 1500;
 
-/// The last run of "them" speech: what the user is most likely being asked. The run ends
-/// at a "me" segment or at a pause over `QUESTION_GAP_MS` (echo-dropped answers leave no "me" line).
-pub fn question(segs: &[FinalSegment]) -> String {
+/// The last run of "them" speech: what the user is most likely being asked, and the start (`t_ms`)
+/// of its first segment. The run ends at a "me" segment or at a pause over `QUESTION_GAP_MS`
+/// (echo-dropped answers leave no "me" line).
+pub fn question(segs: &[FinalSegment]) -> (String, Option<u64>) {
     let v = sorted(segs);
-    let end = v.iter().rposition(|s| s.speaker == Speaker::Them).map_or(0, |i| i + 1);
-    let mut start = end.saturating_sub(1);
+    let Some(last) = v.iter().rposition(|s| s.speaker == Speaker::Them) else {
+        return (String::new(), None);
+    };
+    let mut start = last;
     while start > 0 && v[start - 1].speaker == Speaker::Them && v[start].t_ms.saturating_sub(v[start - 1].end_ms) <= QUESTION_GAP_MS {
         start -= 1;
     }
-    if end == 0 {
-        return String::new();
-    }
-    v[start..end].iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ")
+    let text = v[start..=last].iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+    (text, Some(v[start].t_ms))
 }
 
 /// User turn: the transcript since the previous turn, then the question.
@@ -159,13 +160,13 @@ mod tests {
             seg(Speaker::Them, 5, "Расскажите о себе."),
         ];
         assert_eq!(render(&segs), "Q: Привет.\nA: Здравствуйте.\nQ: Расскажите о себе. Почему Go?");
-        assert_eq!(question(&segs), "Расскажите о себе. Почему Go?");
+        assert_eq!(question(&segs), ("Расскажите о себе. Почему Go?".into(), Some(5)));
         let me_last = vec![seg(Speaker::Them, 1, "Вопрос?"), seg(Speaker::Me, 2, "Ответ")];
-        assert_eq!(question(&me_last), "Вопрос?");
-        assert_eq!(question(&[]), "");
+        assert_eq!(question(&me_last), ("Вопрос?".into(), Some(1)));
+        assert_eq!(question(&[]), (String::new(), None));
         // Pause over 1.5 s: a new question, even without a "me" line in between.
         let gap = vec![seg(Speaker::Them, 0, "Первый?"), seg(Speaker::Them, 9_000, "Второй?")];
-        assert_eq!(question(&gap), "Второй?");
+        assert_eq!(question(&gap), ("Второй?".into(), Some(9_000)));
         assert!(turn_text(&[], "").contains("No question yet"));
     }
 }

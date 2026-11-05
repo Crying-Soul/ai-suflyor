@@ -59,7 +59,7 @@ pub enum VadEvent {
     /// resume. A later `SpeechEnd` with the same `start_sample` and length carries the same samples.
     Pause(Utterance),
     /// Speech ended but was too short to keep (cough, click).
-    Discarded,
+    Discarded { start_sample: u64 },
 }
 
 fn ms_to_windows(ms: u32) -> usize {
@@ -215,7 +215,7 @@ impl Segmenter {
                 forced,
             }));
         } else {
-            out.push(VadEvent::Discarded);
+            out.push(VadEvent::Discarded { start_sample: self.cur_start });
         }
         self.in_speech = false;
         self.speech_windows = 0;
@@ -289,7 +289,7 @@ mod tests {
         let probs: Vec<f32> = [vec![0.0; 5], vec![0.9; 3], vec![0.0; 20]].concat();
         let ev = run(SegmenterConfig::default(), &probs);
         assert!(ends(&ev).is_empty());
-        assert!(matches!(ev.last(), Some(VadEvent::Discarded)));
+        assert!(matches!(ev.last(), Some(VadEvent::Discarded { .. })));
     }
 
     #[test]

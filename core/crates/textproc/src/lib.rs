@@ -146,6 +146,16 @@ pub fn is_echo(me: &str, them: &str) -> bool {
     normalize(me).split_whitespace().count() >= 3 && echo_overlap(me, them) > 0.6
 }
 
+/// LocalAgreement-2 for live text: splits the current hypothesis `cur` into the word prefix the
+/// previous hypothesis `prev` agrees with (stable, shown as settled) and the rest (may still change).
+/// Words compare by [`word_key`], so "Go" and "Go?" agree.
+pub fn split_stable(prev: &str, cur: &str) -> (String, String) {
+    let prev: Vec<String> = prev.split_whitespace().map(word_key).collect();
+    let words: Vec<&str> = cur.split_whitespace().collect();
+    let n = words.iter().zip(&prev).take_while(|(w, k)| !k.is_empty() && word_key(w) == **k).count();
+    (words[..n].join(" "), words[n..].join(" "))
+}
+
 /// Words that open a question or a request to talk ("Расскажите о себе.", "Walk me through...").
 const QUESTION_STARTS: &[&str] = &[
     "как", "что", "почему", "зачем", "когда", "где", "куда", "откуда", "какой", "какая", "какое", "какие", "каким", "какого", "каком",
@@ -224,6 +234,14 @@ mod tests {
         assert!(!is_question("Хорошо, спасибо."));
         assert!(!is_question("Мы используем Kubernetes в продакшене."));
         assert!(!is_question("Somewhat interesting."));
+    }
+
+    #[test]
+    fn stable_split() {
+        assert_eq!(split_stable("", "как работает"), (String::new(), "как работает".into()));
+        assert_eq!(split_stable("Как работает сбор", "Как работает сборщик мусора?"), ("Как работает".into(), "сборщик мусора?".into()));
+        assert_eq!(split_stable("Почему Go", "Почему Go?"), ("Почему Go?".into(), String::new()));
+        assert_eq!(split_stable("Какой у вас", "А какой у вас"), (String::new(), "А какой у вас".into()));
     }
 
     #[test]

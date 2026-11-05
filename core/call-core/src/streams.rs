@@ -26,6 +26,9 @@ struct VadSetup {
 
 const RETRY_DELAY: Duration = Duration::from_secs(3);
 const LEVEL_WINDOW: usize = SAMPLE_RATE as usize / 10; // 100 ms
+/// First live partial once the utterance (300 ms pre-roll included) is 0.8 s long: ~0.5 s of
+/// speech is the least whisper turns into words; shorter gives empty or invented text.
+const FIRST_PARTIAL: usize = SAMPLE_RATE as usize * 8 / 10;
 
 pub struct StreamSet {
     stop: Arc<AtomicBool>,
@@ -206,22 +209,27 @@ fn drain(
                 silero = None;
             }
             let pos = segmenter.position();
+            // Utterance key shared by the vad, partial and final events: epoch ms of its start.
+            let t_of = |start_sample: u64| epoch_ms + start_sample / 16;
             for ev in events.drain(..) {
                 match ev {
-                    VadEvent::SpeechStart { .. } => {
+                    VadEvent::SpeechStart { start_sample } => {
                         set_speaking(shared, speaker, true);
-                        let _ = shared.events.send(Event::Vad { speaker, active: true });
+                        let _ = shared.events.send(Event::Vad { speaker, active: true, t: t_of(start_sample) });
                     }
-                    VadEvent::Discarded => {
+                    VadEvent::Discarded { start_sample } => {
                         set_speaking(shared, speaker, false);
-                        let _ = shared.events.send(Event::Vad { speaker, active: false });
+                        let t = t_of(start_sample);
+                        let _ = shared.events.send(Event::Vad { speaker, active: false, t });
+                        // The UI shows a row from speech start on; an empty final removes it.
+                        let _ = shared.events.send(Event::Final { speaker, t, text: String::new(), question: false });
                     }
                     VadEvent::SpeechEnd(_) | VadEvent::Pause(_) => {
                         let (utt, speculative) = match ev {
                             VadEvent::SpeechEnd(u) => {
                                 // A forced split (max utterance length) happens mid-speech.
                                 set_speaking(shared, speaker, u.forced);
-                                let _ = shared.events.send(Event::Vad { speaker, active: false });
+                                let _ = shared.events.send(Event::Vad { speaker, active: false, t: t_of(u.start_sample) });
                                 (u, false)
                             }
                             VadEvent::Pause(u) => (u, true),
@@ -231,7 +239,7 @@ fn drain(
                         let now = Instant::now();
                         queue.push(Job {
                             speaker,
-                            t_ms: epoch_ms + utt.start_sample / 16,
+                            t_ms: t_of(utt.start_sample),
                             speech_end: now.checked_sub(Duration::from_millis(behind_ms)).unwrap_or(now),
                             queued: now,
                             utt,
@@ -241,16 +249,16 @@ fn drain(
                     }
                 }
             }
-            // Live text: re-decode the utterance in progress every `partial_ms` of new audio (≥ 1 s total).
+            // Live text: re-decode the utterance in progress every `partial_ms` of new audio.
             if partial_ms > 0 {
                 if let Some((start, cur)) = segmenter.current() {
                     let last = partial_at.filter(|(s, _)| *s == start).map_or(0, |(_, n)| n);
-                    if cur.len() >= SAMPLE_RATE as usize && cur.len() >= last + partial_ms * 16 {
+                    if cur.len() >= FIRST_PARTIAL && cur.len() >= last + partial_ms * 16 {
                         partial_at = Some((start, cur.len()));
                         let now = Instant::now();
                         queue.push(Job {
                             speaker,
-                            t_ms: epoch_ms + start / 16,
+                            t_ms: t_of(start),
                             speech_end: now,
                             queued: now,
                             utt: Utterance { start_sample: start, samples: cur.to_vec(), speech_end_sample: pos, forced: false },

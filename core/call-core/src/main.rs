@@ -177,12 +177,13 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
 
 fn handle(cmd: Command, cfg: &Config, shared: &Shared, answerer: &answer::Answerer) {
     match cmd {
-        Command::Ask { screenshot } => {
+        Command::Ask { screenshot, question } => {
             if screenshot {
                 // shortcut: screenshots arrive in phase 6; the question is answered without one for now.
                 info!("screenshot requested; not implemented yet, answering without it");
             }
-            answerer.ask(shared, "hotkey");
+            let picked = question.filter(|q| !q.trim().is_empty()).map(|q| (q, None));
+            answerer.ask(shared, if picked.is_some() { "picked" } else { "hotkey" }, picked);
         }
         Command::Set { auto, model, answer_mode } => shared.update_status(|s| {
             if let Some(a) = auto {
