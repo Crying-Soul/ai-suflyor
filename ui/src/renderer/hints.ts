@@ -1,5 +1,5 @@
 import type { CoreEvent, Status } from "../shared/protocol";
-import { $, api, el, icon, modelLabel } from "./common";
+import { $, api, el, icon, modelLabel, overlayUi } from "./common";
 import { render } from "./md";
 
 const turnsEl = $("turns");
@@ -44,6 +44,8 @@ const turns = new Map<number, Turn>();
 /** Answer id -> its turn and tier. */
 const answers = new Map<number, { turn: number; tier: "quick" | "full" }>();
 let current = -1;
+/** The turn on show: the newest, or an older one picked with Ctrl+Alt+PageUp. */
+let shown = -1;
 const HISTORY_LIMIT = 50;
 
 function newTurn(id: number, question: string, trigger: string): Turn {
@@ -76,6 +78,7 @@ function newTurn(id: number, question: string, trigger: string): Turn {
   const turn: Turn = { card, state, quick, full, text: { quick: "", full: "" }, error: { quick: "", full: "" } };
   turns.set(id, turn);
   current = id;
+  show(id);
   metrics = {};
   latencyEl.textContent = "";
   while (turns.size > HISTORY_LIMIT) {
@@ -113,11 +116,41 @@ function setTurnState(t: Turn, st: "answering" | "done" | "error"): void {
   t.state.append(st === "done" ? icon("check") : el("span", "mark"), st === "done" ? "готово" : st === "answering" ? "отвечаю" : "ошибка");
 }
 
+function show(id: number): void {
+  turns.get(shown)?.card.classList.remove("shown");
+  shown = id;
+  const t = turns.get(id);
+  if (!t) return;
+  t.card.classList.add("shown");
+  if (id !== current) t.card.classList.add("open");
+  t.card.scrollIntoView({ block: "nearest" });
+}
+
+/** -1: an older answer, 1: a newer one. Turns are kept in the order they were asked. */
+function nav(dir: -1 | 1): void {
+  const ids = [...turns.keys()];
+  const i = ids.indexOf(shown);
+  if (i < 0) return;
+  show(ids[Math.min(ids.length - 1, Math.max(0, i + dir))]);
+}
+
+function copyShown(): void {
+  const t = turns.get(shown);
+  const text = t && (t.text.full.trim() || t.text.quick.trim());
+  if (!text) return;
+  api.copy(text);
+  const before = chip.textContent;
+  const phase = chip.dataset.phase;
+  chip.textContent = "Ответ скопирован";
+  setTimeout(() => chip.dataset.phase === phase && chip.textContent === "Ответ скопирован" && (chip.textContent = before), 1500);
+}
+
 function clearTurns(): void {
   for (const t of turns.values()) t.card.remove();
   turns.clear();
   answers.clear();
   current = -1;
+  shown = -1;
   setPhase("idle");
 }
 
@@ -198,3 +231,4 @@ $("btn-shot").onclick = () => api.send({ cmd: "ask", screenshot: true });
 modelBtn.onclick = () => api.send({ cmd: "set", model: "toggle" });
 $("btn-hide").onclick = () => api.hide();
 setPhase("idle");
+overlayUi((m) => (m.kind === "nav" ? nav(m.dir) : copyShown()));

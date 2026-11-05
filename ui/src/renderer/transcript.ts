@@ -1,5 +1,5 @@
 import type { CaptureStatus, CoreEvent, Speaker, Status } from "../shared/protocol";
-import { $, api, el, follow, icon, sttLabel } from "./common";
+import { $, api, el, follow, icon, overlayUi, sttLabel } from "./common";
 
 const list = $("transcript");
 const statusEl = $("status");
@@ -238,3 +238,4 @@ $("btn-clear").onclick = () => api.send({ cmd: "clear" });
 $("btn-hide").onclick = () => api.hide();
 $("btn-settings").onclick = () => api.openSettings();
 $("btn-call").onclick = () => api.openCalls();
+overlayUi();

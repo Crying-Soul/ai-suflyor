@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, net, screen, shell, type Rectangle } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, net, screen, shell, type Rectangle } from "electron";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { CallInfo, Command, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status } from "../shared/protocol";
+import type { CallInfo, Command, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status, UiMessage } from "../shared/protocol";
 import * as calls from "./calls";
 import * as models from "./models";
 import { CoreProcess, resolveCoreExe } from "./core";
@@ -12,6 +12,14 @@ interface Hotkeys {
   screenshotAsk: string;
   toggleWindow: string;
   toggleAuto: string;
+  clickThrough: string;
+  cameraMode: string;
+  opacity: string;
+  prevAnswer: string;
+  nextAnswer: string;
+  copyAnswer: string;
+  zoomIn: string;
+  zoomOut: string;
 }
 
 const DEFAULT_HOTKEYS: Hotkeys = {
@@ -19,6 +27,15 @@ const DEFAULT_HOTKEYS: Hotkeys = {
   screenshotAsk: "CommandOrControl+Shift+S",
   toggleWindow: "CommandOrControl+Shift+H",
   toggleAuto: "CommandOrControl+Shift+A",
+  // In-call keys live under Ctrl+Alt: Ctrl+Shift combos collide with call apps (Teams answers on Ctrl+Shift+S/A).
+  clickThrough: "CommandOrControl+Alt+X",
+  cameraMode: "CommandOrControl+Alt+M",
+  opacity: "CommandOrControl+Alt+O",
+  prevAnswer: "CommandOrControl+Alt+PageUp",
+  nextAnswer: "CommandOrControl+Alt+PageDown",
+  copyAnswer: "CommandOrControl+Alt+C",
+  zoomIn: "CommandOrControl+Alt+=",
+  zoomOut: "CommandOrControl+Alt+-",
 };
 
 /** Window background before the page paints (Dusk paper, approximated in sRGB). */
@@ -63,6 +80,7 @@ let dataDir = "";
 function emit(e: CoreEvent): void {
   if (e.ev === "status") lastStatus = e;
   if (e.ev === "call") lastCall = e;
+  if ((e.ev === "vad" && e.active) || e.ev === "partial" || (e.ev === "final" && e.text) || e.ev === "answer_start" || e.ev === "answer_delta") activity();
   // A restarted core knows nothing of the open call: open it again (its transcript is replayed).
   if (e.ev === "ready" && lastCall?.dir) openCall(lastCall.dir);
   // Level meters live in the transcript window only; ~20 events/s need not reach the hints.
@@ -91,23 +109,63 @@ function webPreferences(): Electron.WebPreferences {
 
 // ---------- overlay windows: positions survive restarts ----------
 
-const boundsFile = () => path.join(app.getPath("userData"), "windows.json");
+const stateFile = () => path.join(app.getPath("userData"), "windows.json");
 
-function savedBounds(): Partial<Record<OverlayName, Rectangle>> {
+/** Two position presets (at the desk, by the camera), the chosen opacity and the text zoom. */
+type Preset = "normal" | "camera";
+interface WinState {
+  preset: Preset;
+  normal: Partial<Record<OverlayName, Rectangle>>;
+  camera: Partial<Record<OverlayName, Rectangle>>;
+  opacity: number;
+  zoom: number;
+}
+
+function loadState(): WinState {
+  let raw: Record<string, unknown> = {};
   try {
-    return JSON.parse(fs.readFileSync(boundsFile(), "utf8"));
-  } catch {
-    return {};
-  }
+    raw = JSON.parse(fs.readFileSync(stateFile(), "utf8"));
+  } catch {}
+  // The first version stored {transcript, hints} only: that is the normal preset.
+  const normal = (raw.normal ?? { transcript: raw.transcript, hints: raw.hints }) as WinState["normal"];
+  return { preset: raw.preset === "camera" ? "camera" : "normal", normal, camera: (raw.camera ?? {}) as WinState["camera"], opacity: Number(raw.opacity) || 1, zoom: Number(raw.zoom) || 1 };
+}
+
+const win = loadState();
+let saveTimer: NodeJS.Timeout | undefined;
+function saveState(): void {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      fs.writeFileSync(stateFile(), JSON.stringify(win));
+    } catch (e) {
+      console.warn(`[windows] cannot save positions: ${e}`);
+    }
+  }, 500);
 }
 
 /** A saved rectangle is usable only if a good part of it is on a connected display. */
-function onScreen(r: Rectangle): boolean {
-  return screen.getAllDisplays().some(({ workArea: a }) => {
-    const w = Math.min(r.x + r.width, a.x + a.width) - Math.max(r.x, a.x);
-    const h = Math.min(r.y + r.height, a.y + a.height) - Math.max(r.y, a.y);
+function onScreen(r: Rectangle | undefined): r is Rectangle {
+  return Boolean(r) && screen.getAllDisplays().some(({ workArea: a }) => {
+    const w = Math.min(r!.x + r!.width, a.x + a.width) - Math.max(r!.x, a.x);
+    const h = Math.min(r!.y + r!.height, a.y + a.height) - Math.max(r!.y, a.y);
     return w >= 120 && h >= 80;
   });
+}
+
+/** By the camera the hints shrink to a strip at the top centre of their display: eyes stay near the lens. */
+function cameraStrip(): Rectangle {
+  const near = overlays.hints ? screen.getDisplayMatching(overlays.hints.getBounds()) : screen.getPrimaryDisplay();
+  const a = near.workArea;
+  const width = Math.min(640, a.width - 40);
+  return { x: Math.round(a.x + (a.width - width) / 2), y: a.y + 8, width, height: 168 };
+}
+
+function boundsFor(name: OverlayName, preset: Preset): Rectangle {
+  const saved = win[preset][name];
+  if (onScreen(saved)) return saved;
+  if (preset === "camera") return name === "hints" ? cameraStrip() : boundsFor(name, "normal");
+  return defaultBounds(name);
 }
 
 function defaultBounds(name: OverlayName): Rectangle {
@@ -118,12 +176,14 @@ function defaultBounds(name: OverlayName): Rectangle {
 }
 
 function createOverlay(name: OverlayName): void {
-  const saved = savedBounds()[name];
+  const mini = win.preset === "camera" && name === "hints";
   const w = new BrowserWindow({
-    ...(saved && onScreen(saved) ? saved : defaultBounds(name)),
+    ...boundsFor(name, win.preset),
     minWidth: 320,
-    minHeight: 260,
+    minHeight: mini ? 120 : 260,
     frame: false,
+    // Clicks work, but the keyboard stays in the call app: typing in chat is never stolen.
+    focusable: false,
     // Opaque: a transparent frameless window loses edge resizing on Windows.
     backgroundColor: PAPER,
     alwaysOnTop: true,
@@ -138,24 +198,83 @@ function createOverlay(name: OverlayName): void {
   w.once("ready-to-show", () => w.showInactive());
   // Replay the last status after a renderer (re)load.
   w.webContents.on("did-finish-load", () => {
+    w.webContents.setZoomFactor(win.zoom);
+    sendUi(w);
     if (lastStatus) w.webContents.send("core-event", { ev: "status", ...lastStatus });
     if (lastCall) w.webContents.send("core-event", { ev: "call", ...lastCall });
   });
-  let timer: NodeJS.Timeout | undefined;
   const save = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      try {
-        fs.writeFileSync(boundsFile(), JSON.stringify({ ...savedBounds(), [name]: w.getBounds() }));
-      } catch (e) {
-        console.warn(`[windows] cannot save positions: ${e}`);
-      }
-    }, 500);
+    win[win.preset][name] = w.getBounds();
+    saveState();
   };
   w.on("moved", save);
   w.on("resized", save);
   w.on("closed", () => delete overlays[name]);
   overlays[name] = w;
+  applyOpacity();
+}
+
+// ---------- in-call comfort: presets, click-through, opacity and idle dimming, zoom ----------
+
+let clickThrough = false;
+let dimmed = false;
+let idleTimer: NodeJS.Timeout | undefined;
+/** No speech and no answer for this long: the overlays fade to IDLE_DIM of their opacity. */
+const IDLE_MS = 8000;
+const IDLE_DIM = 0.45;
+
+function sendUi(w: BrowserWindow | undefined, m?: UiMessage): void {
+  w?.webContents.send("ui", m ?? { kind: "mode", mini: win.preset === "camera", clickThrough });
+}
+
+function applyOpacity(): void {
+  for (const w of Object.values(overlays)) w.setOpacity(win.opacity * (dimmed ? IDLE_DIM : 1));
+}
+
+function activity(): void {
+  if (dimmed) {
+    dimmed = false;
+    applyOpacity();
+  }
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    dimmed = true;
+    applyOpacity();
+  }, IDLE_MS);
+}
+
+function togglePreset(): void {
+  win.preset = win.preset === "camera" ? "normal" : "camera";
+  for (const [name, w] of Object.entries(overlays) as [OverlayName, BrowserWindow][]) {
+    w.setMinimumSize(320, win.preset === "camera" && name === "hints" ? 120 : 260);
+    w.setBounds(boundsFor(name, win.preset));
+    sendUi(w);
+  }
+  saveState();
+  activity();
+}
+
+function toggleClickThrough(): void {
+  clickThrough = !clickThrough;
+  for (const w of Object.values(overlays)) {
+    w.setIgnoreMouseEvents(clickThrough, { forward: true });
+    sendUi(w);
+  }
+}
+
+function cycleOpacity(): void {
+  const steps = [1, 0.8, 0.6];
+  win.opacity = steps[(steps.indexOf(win.opacity) + 1) % steps.length] ?? 1;
+  dimmed = false;
+  applyOpacity();
+  saveState();
+  activity();
+}
+
+function zoom(delta: number): void {
+  win.zoom = Math.round(Math.min(1.6, Math.max(0.7, win.zoom + delta)) * 10) / 10;
+  for (const w of Object.values(overlays)) w.webContents.setZoomFactor(win.zoom);
+  saveState();
 }
 
 function openSettings(): void {
@@ -221,6 +340,14 @@ function registerHotkeys(): void {
     [hotkeys.screenshotAsk, () => core.send({ cmd: "ask", screenshot: true })],
     [hotkeys.toggleWindow, toggleWindows],
     [hotkeys.toggleAuto, () => core.send({ cmd: "set", auto: !(lastStatus?.auto ?? true) })],
+    [hotkeys.clickThrough, toggleClickThrough],
+    [hotkeys.cameraMode, togglePreset],
+    [hotkeys.opacity, cycleOpacity],
+    [hotkeys.prevAnswer, () => (activity(), sendUi(overlays.hints, { kind: "nav", dir: -1 }))],
+    [hotkeys.nextAnswer, () => (activity(), sendUi(overlays.hints, { kind: "nav", dir: 1 }))],
+    [hotkeys.copyAnswer, () => sendUi(overlays.hints, { kind: "copy" })],
+    [hotkeys.zoomIn, () => zoom(0.1)],
+    [hotkeys.zoomOut, () => zoom(-0.1)],
   ];
   for (const [accel, fn] of map) {
     try {
@@ -408,6 +535,8 @@ app.whenReady().then(() => {
   });
   ipcMain.on("hide", (e) => BrowserWindow.fromWebContents(e.sender)?.hide());
   ipcMain.on("settings:open", openSettings);
+  ipcMain.on("ui:active", activity);
+  ipcMain.on("ui:copy", (_e, text: string) => clipboard.writeText(text));
   ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
   ipcMain.handle("config:load", loadConfig);
   ipcMain.handle("config:save", (_e, patch: Record<string, unknown>) => saveConfig(patch));
@@ -416,6 +545,7 @@ app.whenReady().then(() => {
   registerModelsIpc();
   createOverlay("transcript");
   createOverlay("hints");
+  activity();
   registerHotkeys();
   // The core reads the migrated profile, so it starts after the migration.
   pinDataDir();

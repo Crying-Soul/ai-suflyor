@@ -166,6 +166,14 @@ export interface ModelsApi {
   onChange(cb: () => void): void;
 }
 
+/** Main -> overlay messages that are not core events: window mode and hotkey actions. */
+export type UiMessage =
+  | { kind: "mode"; mini: boolean; clickThrough: boolean }
+  /** Show an older (-1) or newer (1) answer. */
+  | { kind: "nav"; dir: -1 | 1 }
+  /** Copy the answer on show. */
+  | { kind: "copy" };
+
 export interface RendererApi {
   send(cmd: Command): void;
   hide(): void;
@@ -177,6 +185,10 @@ export interface RendererApi {
   saveConfig(patch: Record<string, unknown>): Promise<SaveResult>;
   listMics(): Promise<string[]>;
   openCalls(): void;
+  onUi(cb: (m: UiMessage) => void): void;
+  /** The pointer is over an overlay: it must not be dimmed. */
+  uiActive(): void;
+  copy(text: string): void;
   calls: CallsApi;
   models: ModelsApi;
   /** Disk path of a file dropped on the page. */
