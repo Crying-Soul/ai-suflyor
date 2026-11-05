@@ -1,5 +1,5 @@
 import type { CaptureStatus, CoreEvent, Speaker, Status } from "../shared/protocol";
-import { $, api, el, follow, sttLabel } from "./common";
+import { $, api, el, follow, icon, sttLabel } from "./common";
 
 const list = $("transcript");
 const statusEl = $("status");
@@ -19,28 +19,51 @@ const rows = new Map<string, HTMLElement>();
 /** Utterances the core dropped: late partials for them must not bring the row back. */
 const dropped = new Set<string>();
 
+/** The row's state word on the right: what happens to this utterance now. */
+type RowState = "live" | "waiting" | "question" | "asked" | "";
+const STATE_WORD: Record<RowState, string> = { live: "говорит", waiting: "распознаю", question: "вопрос", asked: "отвечено", "": "" };
+
+function setState(r: HTMLElement, st: RowState): void {
+  r.dataset.state = st;
+  const word = r.querySelector<HTMLElement>(".state-word")!;
+  word.replaceChildren();
+  if (st === "asked") word.append(icon("check"));
+  else if (st) word.append(el("span", "mark"));
+  if (st) word.append(STATE_WORD[st]);
+}
+
+function askAbout(r: HTMLElement): void {
+  const q = r.querySelector(".text")!.textContent!.trim();
+  if (!q) return;
+  setState(r, "asked");
+  hideOwed();
+  api.send({ cmd: "ask", screenshot: false, question: q });
+}
+
 function row(speaker: Speaker, t: number): HTMLElement | null {
   const key = `${speaker}-${t}`;
   if (dropped.has(key)) return null;
   let r = rows.get(key);
   if (r) return r;
-  r = el("div", `row ${speaker} live`);
+  r = el("div", `row ${speaker}`);
   r.dataset.t = String(t);
+  const who = el("span", "who");
+  who.title = WHO[speaker];
+  who.append(el("span", "initial", WHO[speaker][0]), el("span", "visually-hidden", WHO[speaker]));
   const text = el("p", "text");
   text.append(el("span", "stable"), el("span", "tail"));
-  r.append(el("span", "who", WHO[speaker]), text);
+  const side = el("div", "side");
+  side.append(el("span", "state-word"));
   if (speaker === "them") {
-    const ask = el("button", "ask btn-ghost", "Спросить");
+    const ask = el("button", "ask btn-ghost small", "Спросить");
     ask.type = "button";
     ask.title = "Ответить на эту реплику";
-    ask.onclick = () => {
-      const q = r!.querySelector(".text")!.textContent!.trim();
-      if (!q) return;
-      r!.classList.add("asked");
-      api.send({ cmd: "ask", screenshot: false, question: q });
-    };
-    r.append(ask);
+    const self = r;
+    ask.onclick = () => askAbout(self);
+    side.append(ask);
   }
+  r.append(who, text, side);
+  setState(r, "live");
   // Rows are chronological; the two speakers' events interleave, so insert by start time.
   let next: Element | null = null;
   for (let o = list.lastElementChild as HTMLElement | null; o?.classList.contains("row") && Number(o.dataset.t) > t; o = o.previousElementSibling as HTMLElement | null) {
@@ -66,25 +89,55 @@ function onFinal(speaker: Speaker, t: number, text: string, question: boolean): 
     return;
   }
   const r = row(speaker, t)!;
-  r.classList.remove("live", "partial", "waiting");
-  r.classList.toggle("question", question);
+  r.classList.remove("partial");
+  if (r.dataset.state !== "asked") setState(r, question ? "question" : "");
   setText(r, text, "");
   scrolled();
+  if (question) owe(r, text);
+  else if (speaker === "me") hideOwed(); // the user answered it themselves
 }
 
 /** Marks the "them" rows a question was taken from: the run that starts at `qt`. */
 function markAsked(qt: number): void {
-  let r = rows.get(`them-${qt}`) as Element | null | undefined;
-  while (r && r.classList.contains("them")) {
-    r.classList.add("asked");
-    r = r.nextElementSibling;
+  let r = rows.get(`them-${qt}`) as HTMLElement | null | undefined;
+  while (r?.classList.contains("them")) {
+    setState(r, "asked");
+    if (r === owedRow) hideOwed();
+    r = r.nextElementSibling as HTMLElement | null;
   }
 }
+
+// ---------- the owed question: a caught question nobody asked about yet ----------
+
+const owedEl = $("owed");
+let owedRow: HTMLElement | null = null;
+let owedTimer: number | undefined;
+/** With auto-answer on, the answer usually starts within half a second; the strip waits longer than that. */
+const OWED_AFTER_MS = 1500;
+
+function owe(r: HTMLElement, text: string): void {
+  hideOwed();
+  owedRow = r;
+  owedTimer = window.setTimeout(() => {
+    if (owedRow !== r || r.dataset.state !== "question") return;
+    $("owed-text").textContent = `«${text}»`;
+    owedEl.hidden = false;
+  }, OWED_AFTER_MS);
+}
+
+function hideOwed(): void {
+  clearTimeout(owedTimer);
+  owedRow = null;
+  owedEl.hidden = true;
+}
+
+$("btn-owed").onclick = () => owedRow && askAbout(owedRow);
 
 function clearRows(): void {
   for (const r of rows.values()) r.remove();
   rows.clear();
   dropped.clear();
+  hideOwed();
 }
 
 // ---------- status ----------
@@ -101,9 +154,7 @@ function renderStatus(s: Status): void {
   autoBtn.setAttribute("aria-checked", String(s.auto));
   renderCapture("me", s.me);
   renderCapture("them", s.them);
-  const parts = [sttLabel(s.stt)];
-  if (s.recording_dir) parts.push("запись WAV");
-  statusEl.textContent = parts.join(" · ");
+  statusEl.textContent = s.recording_dir ? `${sttLabel(s.stt)}, пишу WAV` : sttLabel(s.stt);
   statusEl.classList.toggle("error", s.stt.startsWith("error"));
 }
 
@@ -115,8 +166,11 @@ function setMeter(speaker: Speaker, peak: number): void {
 
 const metrics: Record<string, number> = {};
 function renderMetrics(): void {
-  const f = (k: string) => (metrics[k] !== undefined ? `${metrics[k].toFixed(0)} мс` : "–");
-  metricsEl.textContent = `конец фразы → текст ${f("speech_end_to_final")} · декод ${f("stt_decode")}`;
+  const { speech_end_to_final: e2f, stt_decode: dec } = metrics;
+  // Both arrive with every final; until the pair is in, show nothing rather than half a sentence.
+  if (e2f === undefined || dec === undefined) return;
+  metricsEl.textContent = `Текст за ${e2f.toFixed(0)}\u00a0мс, декод ${dec.toFixed(0)}\u00a0мс`;
+  metricsEl.title = `Текст пришёл через ${e2f.toFixed(0)}\u00a0мс после конца фразы, распознавание заняло ${dec.toFixed(0)}\u00a0мс`;
 }
 
 // ---------- events ----------
@@ -137,13 +191,13 @@ api.onEvent((e: CoreEvent) => {
       labels[e.speaker].classList.toggle("speaking", e.active);
       // The row appears the moment speech starts: the user sees at once that nothing was missed.
       const r = row(e.speaker, e.t);
-      if (r && !e.active && r.classList.contains("live")) r.classList.add("waiting");
+      if (r && !e.active && r.dataset.state === "live") setState(r, "waiting");
       break;
     }
     case "partial": {
       const r = row(e.speaker, e.t);
       if (!r) break;
-      r.classList.remove("live", "waiting");
+      if (r.dataset.state === "live" || r.dataset.state === "waiting") setState(r, "");
       r.classList.add("partial");
       setText(r, e.stable, e.tail);
       scrolled();

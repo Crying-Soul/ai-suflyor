@@ -1,5 +1,5 @@
 import type { CoreEvent, Status } from "../shared/protocol";
-import { $, api, el, modelLabel } from "./common";
+import { $, api, el, icon, modelLabel } from "./common";
 import { render } from "./md";
 
 const turnsEl = $("turns");
@@ -26,13 +26,14 @@ const PHASE_TEXT: Record<Phase, string> = {
 
 function setPhase(p: Phase, detail = ""): void {
   chip.dataset.phase = p;
-  chip.textContent = detail ? `${PHASE_TEXT[p]} · ${detail}` : PHASE_TEXT[p];
+  chip.textContent = detail ? `${PHASE_TEXT[p]}. ${detail}` : PHASE_TEXT[p];
 }
 
 // ---------- answers: one card per ask, newest on top ----------
 
 interface Turn {
   card: HTMLElement;
+  state: HTMLElement;
   quick: HTMLElement;
   full: HTMLElement;
   text: Record<"quick" | "full", string>;
@@ -50,18 +51,29 @@ function newTurn(id: number, question: string, trigger: string): Turn {
   prev?.card.classList.remove("current");
   const card = el("article", "turn current");
   const head = el("header", "q");
-  head.append(el("span", "trigger", trigger === "auto" ? "авто" : trigger === "picked" ? "выбрано" : "вручную"));
-  head.append(el("span", "qtext", question ? `«${question}»` : "Без вопроса: подсказка по разговору"));
+  const state = el("span", "state-word");
+  head.append(
+    el("span", "qtext", question ? `«${question}»` : "Без вопроса: подсказка по разговору"),
+    el("span", "trigger", trigger === "auto" ? "авто" : trigger === "picked" ? "выбрано" : "вручную"),
+    state,
+  );
   const quick = el("p", "quick");
   const full = el("div", "full md");
   card.append(head, quick, full);
+  card.tabIndex = 0;
+  card.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && e.target === card) {
+      e.preventDefault();
+      card.click();
+    }
+  });
   // Older cards collapse to the question and the quick line; a click opens the full answer.
   card.addEventListener("click", (e) => {
     if (card.classList.contains("current") || (e.target as Element).closest("pre, code")) return;
     card.classList.toggle("open");
   });
   turnsEl.prepend(card);
-  const turn: Turn = { card, quick, full, text: { quick: "", full: "" }, error: { quick: "", full: "" } };
+  const turn: Turn = { card, state, quick, full, text: { quick: "", full: "" }, error: { quick: "", full: "" } };
   turns.set(id, turn);
   current = id;
   metrics = {};
@@ -94,6 +106,13 @@ function paint(t: Turn): void {
   if (t.error.full) t.full.append(el("p", "error", `Ошибка: ${t.error.full}`));
 }
 
+/** The pane's own status: answering (open, apricot), done (periwinkle check) or failed. */
+function setTurnState(t: Turn, st: "answering" | "done" | "error"): void {
+  t.state.dataset.state = st;
+  t.state.replaceChildren();
+  t.state.append(st === "done" ? icon("check") : el("span", "mark"), st === "done" ? "готово" : st === "answering" ? "отвечаю" : "ошибка");
+}
+
 function clearTurns(): void {
   for (const t of turns.values()) t.card.remove();
   turns.clear();
@@ -106,7 +125,7 @@ function clearTurns(): void {
 
 function renderLatency(): void {
   const first = Math.min(metrics.answer_first_token_quick ?? Infinity, metrics.answer_first_token_full ?? Infinity);
-  latencyEl.textContent = Number.isFinite(first) ? `первое слово ${(first / 1000).toFixed(1)} с` : "";
+  latencyEl.textContent = Number.isFinite(first) ? `Первое слово через ${(first / 1000).toFixed(1).replace(".", ",")}\u00a0с` : "";
 }
 
 api.onEvent((e: CoreEvent) => {
@@ -122,7 +141,7 @@ api.onEvent((e: CoreEvent) => {
       break;
     case "final":
       if (e.speaker !== "them" || chip.dataset.phase === "answering") break;
-      if (e.question) setPhase("caught", status?.auto ? "" : "авто выкл. — нажмите «Спросить»");
+      if (e.question) setPhase("caught", status?.auto ? "" : "Автоответ выключен, нажмите «Спросить»");
       else if (chip.dataset.phase === "recognizing") setPhase("idle");
       break;
     case "answer_start": {
@@ -131,6 +150,7 @@ api.onEvent((e: CoreEvent) => {
       t.text[e.tier] = "";
       t.error[e.tier] = "";
       schedule(t);
+      setTurnState(t, "answering");
       setPhase("answering");
       break;
     }
@@ -152,7 +172,10 @@ api.onEvent((e: CoreEvent) => {
         schedule(t);
       }
       // The full answer decides the chip; a cancelled one was replaced by a newer ask.
-      if (a.tier === "full" && a.turn === current && e.error !== "cancelled") setPhase(e.error ? "error" : "done");
+      if (a.tier === "full" && e.error !== "cancelled") {
+        setTurnState(t, e.error ? "error" : "done");
+        if (a.turn === current) setPhase(e.error ? "error" : "done");
+      }
       break;
     }
     case "metrics":

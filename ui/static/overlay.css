@@ -1,31 +1,48 @@
-/* Shared frame of the two overlay windows (transcript, hints): an opaque Dusk sheet with a drag bar on top. */
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: Dusk (by request) · redesign: full
+ * nav: kept (a drag bar per window) · signature: the apricot strip for a question nobody asked about yet · states: empty, live, recognizing, partial, question owed, answered, answering, error, core down · dusk: fog/periwinkle-apricot/glass
+ * axes: dark/grotesk-sans/cool · posture: committed · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, the same Dusk system as the last run by request; the composition moved to a ledger of utterances and one glass pane */
+/* Hallmark · finish-review: subagent · 6 findings · 5 resolved 1 partial (thin scrollbar keeps Chromium arrows on Windows) · gap: error and core-down states not captured */
+/* Shared frame of the two overlay windows: slate paper, a drag bar, a footer of controls. */
 @import url("./tokens.css");
 @import url("./base.css");
 @import url("./fonts.css");
 @import url("./controls.css");
 
 html, body { height: 100%; }
-body { overflow: hidden; }
+body { overflow: hidden; font-size: var(--text-sm); }
 
 #app {
   display: flex; flex-direction: column; gap: var(--space-sm);
   height: 100%; padding: 0 var(--space-md) var(--space-sm);
-  border: 1px solid var(--color-rule);
+  border: var(--rule-hair) solid var(--color-rule);
 }
 
 /* Top bar: the whole strip drags the frameless window; its buttons stay clickable. */
-#bar { display: flex; align-items: center; gap: var(--space-xs); min-height: 40px; -webkit-app-region: drag; user-select: none; }
+#bar { display: flex; align-items: center; gap: var(--space-xs); min-height: 44px; -webkit-app-region: drag; user-select: none; }
 #bar button { -webkit-app-region: no-drag; }
-.title { font: var(--display-weight) var(--text-md)/1 var(--font-display); letter-spacing: var(--tracking-display); }
+.title { flex: none; font: var(--display-weight) var(--text-md)/1 var(--font-display); letter-spacing: var(--tracking-display); }
+.spacer { flex: 1; }
 
-footer { display: flex; align-items: center; gap: var(--space-xs); min-height: 40px; }
-footer .spacer { flex: 1; }
+footer { display: flex; align-items: center; gap: var(--space-xs); min-height: 44px; }
 footer .btn, footer .btn-ghost { padding-inline: var(--space-sm); }
 footer .switch { padding-right: var(--space-sm); }
 .btn-ghost.small { min-height: 28px; padding-inline: var(--space-sm); font-size: var(--text-xs); }
 
-.empty { display: none; color: var(--color-muted); font-size: var(--text-sm); padding: var(--space-xs) 0; }
+.empty { display: none; max-width: 40ch; padding: var(--space-md) 0; color: var(--color-muted); }
 
-/* Live-state motion; base.css cuts it to nothing under prefers-reduced-motion. */
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
-@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+/* Status words with their mark: apricot only when the user owes something, periwinkle while working and when done. */
+.state-word { display: inline-flex; align-items: center; gap: var(--space-2xs); white-space: nowrap; color: var(--color-muted); font-size: var(--text-xs); font-weight: 500; }
+.state-word .mark { flex: none; width: 6px; height: 6px; border-radius: var(--radius-pill); background: currentColor; }
+.icon { flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+[data-state="question"] .state-word { color: var(--color-accent-2); }
+[data-state="asked"] .state-word, .state-word[data-state="done"] { color: var(--color-accent); }
+[data-state="live"] .mark, [data-state="waiting"] .mark, .state-word[data-state="answering"] .mark { background: var(--color-accent); }
+.state-word[data-state="error"] { color: var(--color-error); }
+/* Something is being worked on: the open mark breathes, the loader of this system. Still under reduced motion (base.css). */
+[data-state="live"] .mark, [data-state="waiting"] .mark, .state-word[data-state="answering"] .mark { animation: breathe 1.6s var(--ease-in-out) infinite; }
+/* The floor stays at 0.55: lower, a working periwinkle mark reads as the grey idle one. */
+@keyframes breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.55; transform: scale(0.7); } }
+
+/* Scroll areas: a thin thumb in the rule colour, no native arrows. */
+#transcript, #turns { scrollbar-width: thin; scrollbar-color: var(--color-rule) transparent; }

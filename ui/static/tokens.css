@@ -20,6 +20,7 @@
   --glass-hi: inset 0 1px 0 oklch(100% 0 0 / 0.10), inset 0 0 0 1px oklch(100% 0 0 / 0.06);
   --shadow-card: 0 1px 0 oklch(100% 0 0 / 0.06) inset, 0 40px 80px -32px oklch(8% 0.02 268 / 0.7);
   --font-display: "Wix Madefor Display", ui-sans-serif, system-ui, sans-serif; --font-body: "Wix Madefor Text", ui-sans-serif, system-ui, sans-serif;
+  --font-code: ui-monospace, "Cascadia Mono", Consolas, monospace;
   --radius-card: 18px; --radius-inner: 10px; --radius-pill: 999px; --rule-hair: 1px;
   --tracking-display: -0.022em; --display-weight: 500;
 }

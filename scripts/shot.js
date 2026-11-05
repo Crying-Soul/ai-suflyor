@@ -54,6 +54,11 @@ app.whenReady().then(async () => {
   await wait(500);
   await shot(tr, "transcript-full.png");
   await shot(hi, "hints-full.png");
+  // A question with no answer: the transcript's apricot strip shows after 1.5 s.
+  send([tr, hi], [{ ev: "vad", speaker: "them", active: true, t: T + 15000 }, { ev: "final", speaker: "them", t: T + 15000, text: "А как вы бы спроектировали rate limiter?", question: true }]);
+  await wait(1800);
+  await shot(tr, "transcript-owed.png");
+  await shot(hi, "hints-caught.png");
   const s = new BrowserWindow({ width: 820, height: 640, show: false, titleBarStyle: "hidden", backgroundColor: "#13151b", webPreferences: wp });
   await s.loadFile(path.join(dist, "settings.html"));
   await shot(s, "settings-context.png");

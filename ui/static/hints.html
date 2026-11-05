@@ -11,22 +11,25 @@
   <div id="app">
     <header id="bar">
       <span class="title">Подсказки</span>
-      <span id="chip" class="chip" role="status" data-phase="idle">Слушаю</span>
+      <span class="spacer"></span>
       <button id="btn-model" class="btn-ghost small" type="button" title="Переключить модель">модель</button>
-      <button id="btn-hide" class="icon-btn" type="button" title="Скрыть (Ctrl+Shift+H — оба окна)" aria-label="Скрыть">
+      <button id="btn-hide" class="icon-btn" type="button" title="Скрыть это окно. Ctrl+Shift+H скрывает оба" aria-label="Скрыть">
         <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg>
       </button>
     </header>
 
+    <div class="state">
+      <span id="chip" class="chip" role="status" data-phase="idle">Слушаю</span>
+      <span id="latency" class="num"></span>
+    </div>
+
     <section id="turns" aria-label="Подсказки" aria-live="polite">
-      <p class="empty">Подсказка к вопросу собеседника появится здесь. Ctrl+Shift+Space — спросить вручную.</p>
+      <p class="empty">Здесь появится подсказка, как только собеседник задаст вопрос. Спросить вручную: Ctrl+Shift+Space.</p>
     </section>
 
     <footer>
       <button id="btn-ask" class="btn" type="button" title="Ctrl+Shift+Space">Спросить</button>
       <button id="btn-shot" class="btn-ghost" type="button" title="Ctrl+Shift+S">Экран + вопрос</button>
-      <span class="spacer"></span>
-      <span id="latency" class="num"></span>
     </footer>
   </div>
   <script src="hints.js"></script>

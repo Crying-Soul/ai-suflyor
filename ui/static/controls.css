@@ -2,6 +2,7 @@
  * nav: kept (overlay top bar, settings section list) · signature: the answer card in smoked glass · states: hover, active, focus, disabled, checked · dusk: fog/periwinkle-apricot/glass
  * axes: dark/grotesk-sans/cool · posture: committed · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P2 H2 E3 S3 R2 V3 · weakest: R, shared controls only; each screen composes them */
+/* Hallmark · dismissed F4 · settings section list marks the current section by a 6px dot, never a filled button */
 /* Controls shared by the overlay and the settings window. */
 
 .btn, .btn-ghost, .icon-btn, .switch {
