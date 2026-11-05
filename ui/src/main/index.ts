@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain } from "electron";
+import { app, BrowserWindow, globalShortcut, ipcMain, screen, type Rectangle } from "electron";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -46,14 +46,18 @@ function readRaw(p: string | null): Record<string, unknown> {
   }
 }
 
-let win: BrowserWindow | null = null;
+type OverlayName = "transcript" | "hints";
+
+const overlays: Partial<Record<OverlayName, BrowserWindow>> = {};
 let settingsWin: BrowserWindow | null = null;
 let lastStatus: Status | null = null;
 let configPath = findConfig();
 
 function emit(e: CoreEvent): void {
   if (e.ev === "status") lastStatus = e;
-  win?.webContents.send("core-event", e);
+  // Level meters live in the transcript window only; ~20 events/s need not reach the hints.
+  const targets = e.ev === "level" ? [overlays.transcript] : Object.values(overlays);
+  for (const w of targets) w?.webContents.send("core-event", e);
 }
 
 function loadHotkeys(): Hotkeys {
@@ -68,27 +72,70 @@ function webPreferences(): Electron.WebPreferences {
   return { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true };
 }
 
-function createWindow(): void {
-  win = new BrowserWindow({
-    width: 460,
-    height: 720,
-    minWidth: 360,
-    minHeight: 480,
-    x: 40,
-    y: 40,
+// ---------- overlay windows: positions survive restarts ----------
+
+const boundsFile = () => path.join(app.getPath("userData"), "windows.json");
+
+function savedBounds(): Partial<Record<OverlayName, Rectangle>> {
+  try {
+    return JSON.parse(fs.readFileSync(boundsFile(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/** A saved rectangle is usable only if a good part of it is on a connected display. */
+function onScreen(r: Rectangle): boolean {
+  return screen.getAllDisplays().some(({ workArea: a }) => {
+    const w = Math.min(r.x + r.width, a.x + a.width) - Math.max(r.x, a.x);
+    const h = Math.min(r.y + r.height, a.y + a.height) - Math.max(r.y, a.y);
+    return w >= 120 && h >= 80;
+  });
+}
+
+function defaultBounds(name: OverlayName): Rectangle {
+  const a = screen.getPrimaryDisplay().workArea;
+  return name === "transcript"
+    ? { x: a.x + 40, y: a.y + 40, width: 420, height: Math.min(640, a.height - 80) }
+    : { x: a.x + a.width - 500, y: a.y + 40, width: 460, height: Math.min(560, a.height - 80) };
+}
+
+function createOverlay(name: OverlayName): void {
+  const saved = savedBounds()[name];
+  const w = new BrowserWindow({
+    ...(saved && onScreen(saved) ? saved : defaultBounds(name)),
+    minWidth: 320,
+    minHeight: 260,
     frame: false,
-    transparent: true,
+    // Opaque: a transparent frameless window loses edge resizing on Windows.
+    backgroundColor: PAPER,
     alwaysOnTop: true,
-    resizable: true,
+    show: false,
+    title: name === "transcript" ? "Транскрипт" : "Подсказки",
     webPreferences: webPreferences(),
   });
-  win.setAlwaysOnTop(true, "screen-saver");
+  w.setAlwaysOnTop(true, "screen-saver");
   // Hides the overlay from screen sharing and screenshots (WDA_EXCLUDEFROMCAPTURE).
-  win.setContentProtection(true);
-  win.loadFile(path.join(__dirname, "index.html"));
-  // Replay the last status after a renderer reload.
-  win.webContents.on("did-finish-load", () => lastStatus && emit({ ev: "status", ...lastStatus }));
-  win.on("closed", () => (win = null));
+  w.setContentProtection(true);
+  w.loadFile(path.join(__dirname, `${name}.html`));
+  w.once("ready-to-show", () => w.showInactive());
+  // Replay the last status after a renderer (re)load.
+  w.webContents.on("did-finish-load", () => lastStatus && w.webContents.send("core-event", { ev: "status", ...lastStatus }));
+  let timer: NodeJS.Timeout | undefined;
+  const save = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      try {
+        fs.writeFileSync(boundsFile(), JSON.stringify({ ...savedBounds(), [name]: w.getBounds() }));
+      } catch (e) {
+        console.warn(`[windows] cannot save positions: ${e}`);
+      }
+    }, 500);
+  };
+  w.on("moved", save);
+  w.on("resized", save);
+  w.on("closed", () => delete overlays[name]);
+  overlays[name] = w;
 }
 
 function openSettings(): void {
@@ -101,7 +148,7 @@ function openSettings(): void {
     height: 640,
     minWidth: 640,
     minHeight: 480,
-    title: "Settings",
+    title: "Настройки",
     backgroundColor: PAPER,
     titleBarStyle: "hidden",
     titleBarOverlay: { color: PAPER, symbolColor: "#e8e5df", height: 40 },
@@ -114,10 +161,14 @@ function openSettings(): void {
   settingsWin.on("closed", () => (settingsWin = null));
 }
 
-function toggleWindow(): void {
-  if (!win) return;
-  if (win.isVisible()) win.hide();
-  else win.showInactive();
+/** Hides both overlays if any is visible, otherwise shows both. */
+function toggleWindows(): void {
+  const all = Object.values(overlays);
+  const anyVisible = all.some((w) => w.isVisible());
+  for (const w of all) {
+    if (anyVisible) w.hide();
+    else w.showInactive();
+  }
 }
 
 function registerHotkeys(): void {
@@ -126,7 +177,7 @@ function registerHotkeys(): void {
   const map: [string, () => void][] = [
     [hotkeys.ask, () => core.send({ cmd: "ask", screenshot: false })],
     [hotkeys.screenshotAsk, () => core.send({ cmd: "ask", screenshot: true })],
-    [hotkeys.toggleWindow, toggleWindow],
+    [hotkeys.toggleWindow, toggleWindows],
     [hotkeys.toggleAuto, () => core.send({ cmd: "set", auto: !(lastStatus?.auto ?? true) })],
   ];
   for (const [accel, fn] of map) {
@@ -187,14 +238,18 @@ function saveConfig(patch: Record<string, unknown>): SaveResult {
 }
 
 app.whenReady().then(() => {
-  ipcMain.on("core-cmd", (_e, cmd: Command) => core.send(cmd));
-  ipcMain.on("hide", () => win?.hide());
+  ipcMain.on("core-cmd", (_e, cmd: Command) => {
+    core.send(cmd);
+    if (cmd.cmd === "clear") emit({ ev: "cleared" });
+  });
+  ipcMain.on("hide", (e) => BrowserWindow.fromWebContents(e.sender)?.hide());
   ipcMain.on("settings:open", openSettings);
   ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
   ipcMain.handle("config:load", loadConfig);
   ipcMain.handle("config:save", (_e, patch: Record<string, unknown>) => saveConfig(patch));
   ipcMain.handle("config:mics", async () => (await runCore(["--list-mics"])).split(/\r?\n/).filter(Boolean));
-  createWindow();
+  createOverlay("transcript");
+  createOverlay("hints");
   registerHotkeys();
   core.start();
 });

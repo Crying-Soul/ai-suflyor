@@ -40,101 +40,101 @@ const MODELS: [string, string][] = [
 const SECTIONS: Section[] = [
   {
     id: "context",
-    title: "Context",
+    title: "Контекст",
     fields: [
-      { key: "userContext", label: "About you", kind: "textarea", hint: "Role, stack, the position. Claude reads it before every answer." },
-      { key: "language", label: "Speech language", kind: "select", options: [["auto", "Detect"], ["ru", "Russian"], ["en", "English"]] },
-      { key: "glossary", label: "Glossary", kind: "list", hint: "One term per line. Whisper uses it as a spelling hint." },
+      { key: "userContext", label: "О вас", kind: "textarea", hint: "Роль, стек, вакансия. Claude читает это перед каждым ответом." },
+      { key: "language", label: "Язык речи", kind: "select", options: [["auto", "Определять"], ["ru", "Русский"], ["en", "Английский"]] },
+      { key: "glossary", label: "Глоссарий", kind: "list", hint: "Один термин на строку. Подсказка Whisper, как писать термины." },
     ],
   },
   {
     id: "answers",
-    title: "Answers",
-    note: "Saving restarts the core. Answers come on the ask hotkey; automatic answers arrive in phase 5.",
+    title: "Ответы",
+    note: "Сохранение перезапускает ядро.",
     fields: [
       {
         key: "llm.backend",
-        label: "Connect through",
+        label: "Подключение",
         kind: "select",
-        options: [["api", "API key"], ["claude-code", "Claude Code login"]],
-        hint: "Claude Code uses your claude.ai subscription and its limits. Run claude login once.",
+        options: [["api", "API-ключ"], ["claude-code", "Вход Claude Code"]],
+        hint: "Claude Code использует подписку claude.ai и её лимиты. Один раз выполните claude login.",
       },
-      { key: "anthropicApiKey", label: "Anthropic API key", kind: "secret", hint: "Only for the API key connection." },
+      { key: "anthropicApiKey", label: "API-ключ Anthropic", kind: "secret", hint: "Только для подключения по API-ключу." },
       {
         key: "claudeCode.command",
-        label: "Claude Code command",
+        label: "Команда Claude Code",
         kind: "list",
-        hint: "One argument per line. Default: claude. From WSL: wsl.exe, -e, then the path to claude.",
+        hint: "Один аргумент на строку. По умолчанию: claude. Из WSL: wsl.exe, -e, затем путь к claude.",
       },
-      { key: "model", label: "Model", kind: "select", options: MODELS },
-      { key: "altModel", label: "Second model", kind: "select", options: MODELS, hint: "The model button in the overlay switches to it." },
-      { key: "quickModel", label: "Quick hint model", kind: "select", options: MODELS },
-      { key: "twoTier", label: "Quick hint first", kind: "bool", hint: "A one-line hint arrives first, the full answer follows." },
-      { key: "effort", label: "Effort", kind: "select", options: [["low", "Low"], ["medium", "Medium"], ["high", "High"]] },
-      { key: "autoDetect", label: "Answer automatically", kind: "bool", hint: "Answer when the other side asks a question." },
+      { key: "model", label: "Модель", kind: "select", options: MODELS },
+      { key: "altModel", label: "Вторая модель", kind: "select", options: MODELS, hint: "Кнопка модели в окне подсказок переключает на неё." },
+      { key: "quickModel", label: "Модель быстрой подсказки", kind: "select", options: MODELS },
+      { key: "twoTier", label: "Сначала быстрая подсказка", kind: "bool", hint: "Сначала приходит одна строка, затем полный ответ." },
+      { key: "effort", label: "Усилие", kind: "select", options: [["low", "Низкое"], ["medium", "Среднее"], ["high", "Высокое"]] },
+      { key: "autoDetect", label: "Отвечать автоматически", kind: "bool", hint: "Отвечать, когда собеседник задаёт вопрос." },
       {
         key: "answerMode",
-        label: "When to answer",
+        label: "Когда отвечать",
         kind: "select",
-        options: [["confirmed", "After the question ends"], ["speculative", "Start early, cancel if they keep talking"]],
+        options: [["confirmed", "Когда вопрос закончен"], ["speculative", "Начинать раньше, отменять, если собеседник продолжит"]],
       },
     ],
   },
   {
     id: "audio",
-    title: "Audio",
+    title: "Звук",
     fields: [
-      { key: "audio.micDevice", label: "Microphone", kind: "mic" },
-      { key: "audio.themSource", label: "Other side", kind: "source", hint: "One app only needs Windows 10 2004 or later." },
+      { key: "audio.micDevice", label: "Микрофон", kind: "mic" },
+      { key: "audio.themSource", label: "Собеседник", kind: "source", hint: "Захват одного приложения требует Windows 10 2004 или новее." },
     ],
   },
   {
     id: "speech",
-    title: "Speech detection",
+    title: "Детектор речи",
     fields: [
-      { key: "vad.minSilenceMs", label: "Pause that ends a phrase, ms", kind: "number", min: 200, max: 2000, step: 50, hint: "Lower is faster, but phrases get cut at commas." },
-      { key: "vad.earlySilenceMs", label: "Early decode after, ms", kind: "number", min: 0, max: 1000, step: 50, hint: "Starts recognition before the pause is confirmed. 0 turns it off." },
-      { key: "vad.threshold", label: "Speech threshold", kind: "number", min: 0.05, max: 0.95, step: 0.05 },
-      { key: "vad.negThreshold", label: "Silence threshold", kind: "number", min: 0.05, max: 0.95, step: 0.05, hint: "Below the speech threshold." },
-      { key: "vad.minSpeechMs", label: "Shortest phrase, ms", kind: "number", min: 50, max: 2000, step: 50 },
-      { key: "vad.preRollMs", label: "Audio kept before speech, ms", kind: "number", min: 0, max: 1000, step: 50 },
-      { key: "vad.maxUtteranceMs", label: "Longest phrase, ms", kind: "number", min: 5000, max: 30000, step: 1000 },
+      { key: "vad.minSilenceMs", label: "Пауза конца фразы, мс", kind: "number", min: 200, max: 2000, step: 50, hint: "Меньше — быстрее, но фразы режутся на запятых." },
+      { key: "vad.earlySilenceMs", label: "Раннее распознавание через, мс", kind: "number", min: 0, max: 1000, step: 50, hint: "Начинает распознавание до подтверждения паузы. 0 — выключено." },
+      { key: "vad.threshold", label: "Порог речи", kind: "number", min: 0.05, max: 0.95, step: 0.05 },
+      { key: "vad.negThreshold", label: "Порог тишины", kind: "number", min: 0.05, max: 0.95, step: 0.05, hint: "Ниже порога речи." },
+      { key: "vad.minSpeechMs", label: "Самая короткая фраза, мс", kind: "number", min: 50, max: 2000, step: 50 },
+      { key: "vad.preRollMs", label: "Звук до начала речи, мс", kind: "number", min: 0, max: 1000, step: 50 },
+      { key: "vad.maxUtteranceMs", label: "Самая длинная фраза, мс", kind: "number", min: 5000, max: 30000, step: 1000 },
     ],
   },
   {
     id: "stt",
-    title: "Recognition",
+    title: "Распознавание",
     fields: [
-      { key: "stt.useGpu", label: "Use the GPU", kind: "bool" },
-      { key: "stt.partialMs", label: "Live text every, ms", kind: "number", min: 0, max: 3000, step: 100, hint: "Shows text while someone speaks. 0 turns it off and frees the GPU for finals." },
+      { key: "stt.useGpu", label: "Использовать GPU", kind: "bool" },
+      { key: "stt.partialMs", label: "Живой текст каждые, мс", kind: "number", min: 0, max: 3000, step: 100, hint: "Показывает текст прямо во время речи. 0 — выключено, GPU свободен для финальных фраз." },
       { key: "stt.flashAttn", label: "Flash attention", kind: "bool" },
-      { key: "stt.gpuDevice", label: "GPU index", kind: "number", min: 0, max: 7, step: 1 },
-      { key: "stt.beamSize", label: "Beam size", kind: "number", min: 1, max: 8, step: 1, hint: "1 is greedy and fastest." },
-      { key: "stt.threads", label: "CPU threads", kind: "number", min: 1, max: 32, step: 1 },
-      { key: "stt.noSpeechThold", label: "No-speech threshold", kind: "number", min: 0, max: 1, step: 0.05 },
-      { key: "stt.temperatureInc", label: "Temperature fallback step", kind: "number", min: 0, max: 1, step: 0.1, hint: "0 turns re-decoding on low confidence off." },
-      { key: "stt.audioCtx", label: "Audio context", kind: "number", min: 0, max: 1500, step: 1, hint: "0 is the full context and the best quality." },
-      { key: "stt.model", label: "Model file", kind: "text" },
+      { key: "stt.gpuDevice", label: "Номер GPU", kind: "number", min: 0, max: 7, step: 1 },
+      { key: "stt.beamSize", label: "Beam size", kind: "number", min: 1, max: 8, step: 1, hint: "1 — жадный поиск, быстрее всего." },
+      { key: "stt.threads", label: "Потоки CPU", kind: "number", min: 1, max: 32, step: 1 },
+      { key: "stt.noSpeechThold", label: "Порог «нет речи»", kind: "number", min: 0, max: 1, step: 0.05 },
+      { key: "stt.temperatureInc", label: "Шаг температуры при повторе", kind: "number", min: 0, max: 1, step: 0.1, hint: "0 — не перераспознавать при низкой уверенности." },
+      { key: "stt.audioCtx", label: "Аудиоконтекст", kind: "number", min: 0, max: 1500, step: 1, hint: "0 — полный контекст и лучшее качество." },
+      { key: "stt.model", label: "Файл модели", kind: "text" },
       { key: "stt.dll", label: "whisper.dll", kind: "text" },
     ],
   },
   {
     id: "hotkeys",
-    title: "Hotkeys",
+    title: "Горячие клавиши",
     fields: [
-      { key: "hotkeys.ask", label: "Ask", kind: "text" },
-      { key: "hotkeys.screenshotAsk", label: "Screenshot and ask", kind: "text" },
-      { key: "hotkeys.toggleWindow", label: "Show or hide the overlay", kind: "text" },
-      { key: "hotkeys.toggleAuto", label: "Automatic answers on or off", kind: "text", hint: "Electron accelerators, e.g. CommandOrControl+Shift+Space." },
+      { key: "hotkeys.ask", label: "Спросить", kind: "text" },
+      { key: "hotkeys.screenshotAsk", label: "Снимок экрана и вопрос", kind: "text" },
+      { key: "hotkeys.toggleWindow", label: "Показать или скрыть окна", kind: "text" },
+      { key: "hotkeys.toggleAuto", label: "Автоответы вкл./выкл.", kind: "text", hint: "Формат Electron, например CommandOrControl+Shift+Space." },
     ],
   },
   {
     id: "debug",
-    title: "Debug",
+    title: "Отладка",
     fields: [
-      { key: "debug.recordWav", label: "Record WAV of both sides", kind: "bool" },
-      { key: "debug.recordDir", label: "Recording folder", kind: "text" },
-      { key: "stt.verbose", label: "Verbose whisper log", kind: "bool" },
+      { key: "debug.recordWav", label: "Записывать WAV обеих сторон", kind: "bool" },
+      { key: "debug.recordDir", label: "Папка записей", kind: "text" },
+      { key: "stt.verbose", label: "Подробный лог whisper", kind: "bool" },
     ],
   },
 ];
@@ -164,13 +164,13 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string,
 function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLElement, () => unknown] {
   switch (f.kind) {
     case "bool": {
-      const b = el("button", { type: "button", className: "switch", id, textContent: value ? "On" : "Off" });
+      const b = el("button", { type: "button", className: "switch", id, textContent: value ? "Вкл." : "Выкл." });
       b.setAttribute("role", "switch");
       b.setAttribute("aria-checked", String(Boolean(value)));
       b.onclick = () => {
         const on = b.getAttribute("aria-checked") !== "true";
         b.setAttribute("aria-checked", String(on));
-        b.textContent = on ? "On" : "Off";
+        b.textContent = on ? "Вкл." : "Выкл.";
         markDirty();
       };
       return [b, () => b.getAttribute("aria-checked") === "true"];
@@ -191,7 +191,7 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
     }
     case "select":
     case "mic": {
-      const opts: [string, string][] = f.kind === "mic" ? [["", "System default"], ...mics.map((m): [string, string] => [m, m])] : f.options!;
+      const opts: [string, string][] = f.kind === "mic" ? [["", "Системный по умолчанию"], ...mics.map((m): [string, string] => [m, m])] : f.options!;
       const v = String(value ?? "");
       // A stored value the list does not have (a renamed mic, a newer model) stays selectable.
       if (!opts.some(([o]) => o === v)) opts.push([v, v]);
@@ -203,12 +203,12 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       const v = String(value ?? "system");
       const isProc = v.startsWith("process:");
       const s = el("select", { className: "select", id, name: f.key },
-        el("option", { value: "system", textContent: "All system audio" }),
-        el("option", { value: "process", textContent: "One app" }),
+        el("option", { value: "system", textContent: "Весь звук системы" }),
+        el("option", { value: "process", textContent: "Одно приложение" }),
       );
       s.value = isProc ? "process" : "system";
       const exe = el("input", { type: "text", className: "input", name: `${f.key}.exe`, placeholder: "chrome.exe", value: isProc ? v.slice(8) : "" });
-      exe.setAttribute("aria-label", "App executable");
+      exe.setAttribute("aria-label", "Исполняемый файл приложения");
       exe.pattern = ".*\\.exe";
       const sync = () => {
         exe.hidden = s.value !== "process";
@@ -275,7 +275,7 @@ function changes(): Record<string, unknown> {
 function markDirty(): void {
   const n = Object.keys(changes()).length;
   saveState.className = n ? "pending" : "";
-  saveState.textContent = n ? `${n} unsaved ${n === 1 ? "change" : "changes"}` : "";
+  saveState.textContent = n ? `Несохранённых изменений: ${n}` : "";
 }
 
 form.addEventListener("input", markDirty);
@@ -293,27 +293,27 @@ form.addEventListener("submit", async (e) => {
   const patch = changes();
   if (!Object.keys(patch).length) {
     saveState.className = "";
-    saveState.textContent = "Nothing to save.";
+    saveState.textContent = "Нечего сохранять.";
     return;
   }
   saveBtn.disabled = true;
   saveState.className = "";
-  saveState.textContent = "Saving…";
+  saveState.textContent = "Сохраняю…";
   const res = await api.saveConfig(patch);
   saveBtn.disabled = false;
   if (!res.ok) {
     saveState.className = "error";
-    saveState.textContent = `Not saved: ${res.error}`;
+    saveState.textContent = `Не сохранено: ${res.error}`;
     return;
   }
   for (const [k, v] of Object.entries(patch)) initial.set(k, JSON.stringify(v));
   pathEl.textContent = res.path ?? "";
   saveState.className = "done";
-  saveState.textContent = "Saved. The core is restarting.";
+  saveState.textContent = "Сохранено. Ядро перезапускается.";
 });
 
 $("btn-cancel").onclick = () => {
-  if (Object.keys(changes()).length && !confirm("Close without saving your changes?")) return;
+  if (Object.keys(changes()).length && !confirm("Закрыть без сохранения изменений?")) return;
   api.closeWindow();
 };
 

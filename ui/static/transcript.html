@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'" />
+  <meta name="description" content="Живой транскрипт звонка: обе стороны, текст появляется прямо во время речи." />
+  <title>Транскрипт</title>
+  <link rel="stylesheet" href="transcript.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="bar">
+      <span class="title">Транскрипт</span>
+      <span id="status" role="status">запускаю ядро…</span>
+      <button id="btn-settings" class="icon-btn" type="button" title="Настройки" aria-label="Настройки">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M3 6h9M15 6h2M3 14h2M8 14h9" /><circle cx="13.5" cy="6" r="1.8" /><circle cx="6.5" cy="14" r="1.8" /></svg>
+      </button>
+      <button id="btn-hide" class="icon-btn" type="button" title="Скрыть (Ctrl+Shift+H — оба окна)" aria-label="Скрыть">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg>
+      </button>
+    </header>
+
+    <div class="sources">
+      <div class="src"><span id="lbl-me" class="lbl">Я</span><div class="meter"><div id="meter-me"></div></div><span id="src-me" class="srcname">…</span></div>
+      <div class="src"><span id="lbl-them" class="lbl">Собеседник</span><div class="meter"><div id="meter-them"></div></div><span id="src-them" class="srcname">…</span></div>
+    </div>
+
+    <div class="scroll-wrap">
+      <section id="transcript" aria-label="Транскрипт">
+        <p class="empty">Текст появится, как только кто-то заговорит.</p>
+      </section>
+      <button id="jump" class="pill" type="button" hidden>↓ Новые реплики</button>
+    </div>
+
+    <footer>
+      <button id="btn-auto" class="switch" type="button" role="switch" aria-checked="false" title="Отвечать на вопросы автоматически (Ctrl+Shift+A)">Авто</button>
+      <span id="metrics" class="num"></span>
+      <button id="btn-clear" class="icon-btn" type="button" title="Очистить транскрипт и подсказки" aria-label="Очистить транскрипт и подсказки">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10" /></svg>
+      </button>
+    </footer>
+  </div>
+  <script src="transcript.js"></script>
+</body>
+</html>
