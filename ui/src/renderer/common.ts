@@ -1,4 +1,4 @@
-import type { RendererApi, Status } from "../shared/protocol";
+import type { RendererApi, Status, UiMessage } from "../shared/protocol";
 
 declare global {
   interface Window {
@@ -65,4 +65,18 @@ export function icon(name: keyof typeof ICONS): SVGSVGElement {
   path.setAttribute("d", ICONS[name]);
   svg.append(path);
   return svg;
+}
+
+/**
+ * Overlay window modes from main: `mini` (the camera strip) and `through` (clicks pass through)
+ * as body classes. The pointer over the window keeps it from dimming. Other messages go to `cb`.
+ */
+export function overlayUi(cb: (m: Exclude<UiMessage, { kind: "mode" }>) => void = () => {}): void {
+  api.onUi((m) => {
+    if (m.kind !== "mode") return cb(m);
+    document.body.classList.toggle("mini", m.mini);
+    document.body.classList.toggle("through", m.clickThrough);
+  });
+  document.addEventListener("mouseenter", () => api.uiActive());
+  document.addEventListener("mousemove", () => api.uiActive(), { passive: true });
 }

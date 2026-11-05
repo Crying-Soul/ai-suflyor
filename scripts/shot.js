@@ -69,6 +69,18 @@ app.whenReady().then(async () => {
   send([tr, hi], [{ ev: "vad", speaker: "them", active: true, t: T + 15000 }, { ev: "final", speaker: "them", t: T + 15000, text: "А как вы бы спроектировали rate limiter?", question: true }]);
   await wait(1800);
   await shot(tr, "transcript-owed.png");
+  // «У камеры»: the hints as a strip; then click-through on the transcript.
+  hi.setSize(640, 168);
+  hi.webContents.send("ui", { kind: "mode", mini: true, clickThrough: false });
+  await shot(hi, "hints-mini.png");
+  hi.setSize(460, 560);
+  hi.webContents.send("ui", { kind: "mode", mini: false, clickThrough: false });
+  hi.webContents.send("ui", { kind: "nav", dir: -1 });
+  await shot(hi, "hints-nav.png");
+  hi.webContents.send("ui", { kind: "nav", dir: 1 });
+  tr.webContents.send("ui", { kind: "mode", mini: false, clickThrough: true });
+  await shot(tr, "transcript-through.png");
+  tr.webContents.send("ui", { kind: "mode", mini: false, clickThrough: false });
   await shot(hi, "hints-caught.png");
   const s = new BrowserWindow({ width: 820, height: 640, show: false, titleBarStyle: "hidden", backgroundColor: "#13151b", webPreferences: wp });
   await s.loadFile(path.join(dist, "settings.html"));

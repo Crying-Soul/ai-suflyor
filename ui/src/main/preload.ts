@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import type { CoreEvent, RendererApi } from "../shared/protocol";
+import type { CoreEvent, RendererApi, UiMessage } from "../shared/protocol";
 
 const api: RendererApi = {
   send: (cmd) => ipcRenderer.send("core-cmd", cmd),
@@ -13,6 +13,11 @@ const api: RendererApi = {
   saveConfig: (patch) => ipcRenderer.invoke("config:save", patch),
   listMics: () => ipcRenderer.invoke("config:mics"),
   openCalls: () => ipcRenderer.send("calls:open"),
+  onUi: (cb) => {
+    ipcRenderer.on("ui", (_e, m: UiMessage) => cb(m));
+  },
+  uiActive: () => ipcRenderer.send("ui:active"),
+  copy: (text) => ipcRenderer.send("ui:copy", text),
   calls: {
     tree: () => ipcRenderer.invoke("calls:tree"),
     node: (dir) => ipcRenderer.invoke("calls:node", dir),

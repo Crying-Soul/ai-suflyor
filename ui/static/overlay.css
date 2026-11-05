@@ -46,3 +46,6 @@ footer .switch { padding-right: var(--space-sm); }
 
 /* Scroll areas: a thin thumb in the rule colour, no native arrows. */
 #transcript, #turns { scrollbar-width: thin; scrollbar-color: var(--color-rule) transparent; }
+
+/* Click-through: the window ignores the mouse until Ctrl+Alt+X again; the bar says so. */
+body.through #bar .title::after { content: ", насквозь"; color: var(--color-accent-2); font-weight: 400; }
