@@ -77,6 +77,86 @@ export function overlayUi(cb: (m: Exclude<UiMessage, { kind: "mode" }>) => void 
     document.body.classList.toggle("mini", m.mini);
     document.body.classList.toggle("through", m.clickThrough);
   });
+  guardPopups();
   document.addEventListener("mouseenter", () => api.uiActive());
   document.addEventListener("mousemove", () => api.uiActive(), { passive: true });
+}
+
+/**
+ * Native popups are separate OS windows, and not all of them inherit the window's capture
+ * protection: a `confirm()` box shows up in a screen share, tooltips are not proven safe. So
+ * `title` becomes an in-page tooltip, and `askConfirm` replaces confirm/alert.
+ */
+export function guardPopups(): void {
+  const tip = el("div", "tip");
+  tip.setAttribute("role", "tooltip");
+  tip.hidden = true;
+  document.body.append(tip);
+  const move = (n: Element) => {
+    if (!(n instanceof HTMLElement) || !n.title) return;
+    n.dataset.tip = n.title;
+    if (!n.getAttribute("aria-label") && !n.textContent?.trim()) n.setAttribute("aria-label", n.title);
+    n.removeAttribute("title");
+  };
+  document.querySelectorAll("[title]").forEach(move);
+  new MutationObserver((ms) => {
+    for (const m of ms) {
+      if (m.type === "attributes") move(m.target as Element);
+      else m.addedNodes.forEach((n) => n instanceof HTMLElement && (move(n), n.querySelectorAll("[title]").forEach(move)));
+    }
+  }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["title"] });
+  let timer = 0;
+  const hide = () => {
+    clearTimeout(timer);
+    tip.hidden = true;
+  };
+  document.addEventListener("mouseover", (e) => {
+    const t = (e.target as Element).closest<HTMLElement>("[data-tip]");
+    hide();
+    if (!t) return;
+    timer = window.setTimeout(() => {
+      tip.textContent = t.dataset.tip ?? "";
+      tip.hidden = false;
+      const r = t.getBoundingClientRect();
+      const x = Math.min(Math.max(4, r.left + r.width / 2 - tip.offsetWidth / 2), innerWidth - tip.offsetWidth - 4);
+      const below = r.bottom + 6;
+      const y = below + tip.offsetHeight > innerHeight - 4 ? r.top - tip.offsetHeight - 6 : below;
+      tip.style.left = `${x}px`;
+      tip.style.top = `${Math.max(4, y)}px`;
+    }, 500);
+  });
+  document.addEventListener("mousedown", hide);
+  document.addEventListener("mouseleave", hide);
+}
+
+/** An in-page confirm: resolves true on «ok». `cancel: null` makes it a notice with one button. */
+export function askConfirm(text: string, ok = "Да", cancel: string | null = "Отмена"): Promise<boolean> {
+  const d = el("dialog", "confirm");
+  const row = el("div", "confirm-actions");
+  const yes = el("button", "btn", ok);
+  yes.type = "button";
+  if (cancel !== null) {
+    const no = el("button", "btn-ghost", cancel);
+    no.type = "button";
+    no.onclick = () => done(false);
+    row.append(no);
+  }
+  row.append(yes);
+  d.append(el("p", "", text), row);
+  document.body.append(d);
+  d.showModal();
+  yes.focus();
+  let done: (v: boolean) => void = () => {};
+  return new Promise((resolve) => {
+    done = (v) => {
+      d.close();
+      d.remove();
+      resolve(v);
+    };
+    yes.onclick = () => done(true);
+    d.addEventListener("cancel", (e) => {
+      e.preventDefault();
+      done(false);
+    });
+  });
 }

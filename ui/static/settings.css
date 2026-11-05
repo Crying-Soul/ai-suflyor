@@ -75,6 +75,16 @@ progress { width: 5rem; height: 6px; border: 0; border-radius: var(--radius-pill
 progress::-webkit-progress-bar { background: var(--color-paper-3); }
 progress::-webkit-progress-value { background: var(--color-accent); border-radius: var(--radius-pill); transition: width var(--dur-short) var(--ease-out); }
 
+/* Privacy self-test: the capture and each window's state. */
+.privacy { display: grid; gap: var(--space-sm); justify-items: start; }
+.privacy-out { display: grid; gap: var(--space-sm); width: 100%; }
+.privacy-out img { width: 100%; border-radius: var(--radius-inner); box-shadow: 0 0 0 1px var(--color-rule); }
+.privacy-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-3xs); font-size: var(--text-sm); }
+.privacy-list li::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: var(--space-xs); border-radius: var(--radius-pill); vertical-align: middle; }
+.privacy-list .ok::before { background: var(--color-accent); }
+.privacy-list .bad { color: var(--color-error); }
+.privacy-list .bad::before { background: var(--color-error); }
+
 @media (max-width: 44rem) {
   .field { grid-template-columns: minmax(0, 1fr); }
   .field > label { padding-top: 0; }

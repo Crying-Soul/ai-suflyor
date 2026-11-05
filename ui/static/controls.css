@@ -54,3 +54,13 @@
 .input:disabled, .select:disabled, .textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .input:user-invalid, .textarea:user-invalid { border-color: var(--color-error); }
 .select option { background: var(--color-paper-2); color: var(--color-ink); }
+
+/* In-page tooltip (native ones are separate windows a screen share may catch). */
+.tip { position: fixed; z-index: var(--z-tooltip); max-width: 18rem; padding: var(--space-2xs) var(--space-xs); border-radius: 6px; background: var(--color-paper-3); box-shadow: 0 0 0 1px var(--color-rule), 0 8px 24px -8px var(--color-shade); color: var(--color-ink-2); font: 400 var(--text-xs)/1.4 var(--font-body); white-space: pre-line; pointer-events: none; }
+
+/* In-page confirm, for the same reason. */
+dialog.confirm { width: min(26rem, calc(100vw - 2 * var(--space-lg))); padding: var(--space-lg); border: 0; border-radius: var(--radius-card); background: var(--color-paper-2); color: var(--color-ink); box-shadow: var(--shadow-card), var(--glass-hi); }
+dialog.confirm[open] { display: grid; gap: var(--space-md); }
+dialog.confirm::backdrop { background: oklch(10% 0.022 268 / 0.6); }
+dialog.confirm p { font-size: var(--text-sm); }
+.confirm-actions { display: flex; justify-content: flex-end; gap: var(--space-xs); }

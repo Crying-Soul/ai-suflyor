@@ -1,8 +1,9 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, net, screen, shell, type Rectangle } from "electron";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import type { CallInfo, Command, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status, UiMessage } from "../shared/protocol";
+import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status, UiMessage } from "../shared/protocol";
 import * as calls from "./calls";
 import * as models from "./models";
 import { CoreProcess, resolveCoreExe } from "./core";
@@ -184,6 +185,8 @@ function createOverlay(name: OverlayName): void {
     frame: false,
     // Clicks work, but the keyboard stays in the call app: typing in chat is never stolen.
     focusable: false,
+    // Not in the taskbar or Alt+Tab, where a share or a recording could show its preview.
+    skipTaskbar: true,
     // Opaque: a transparent frameless window loses edge resizing on Windows.
     backgroundColor: PAPER,
     alwaysOnTop: true,
@@ -502,6 +505,59 @@ function registerModelsIpc(): void {
   });
 }
 
+// ---------- capture protection: check it applied, and let the user see it ----------
+
+const hwnd = (w: BrowserWindow) => w.getNativeWindowHandle().readBigUInt64LE(0).toString();
+
+/** WDA_EXCLUDEFROMCAPTURE needs Windows 10 2004 (build 19041); older builds show a black box. */
+const osHidesWindows = () => process.platform !== "win32" || Number(os.release().split(".")[2] ?? 0) >= 19041;
+
+function ourWindows(): [string, BrowserWindow][] {
+  const all: [string, BrowserWindow | null | undefined][] = [
+    ["Транскрипт", overlays.transcript],
+    ["Подсказки", overlays.hints],
+    ["Настройки", settingsWin],
+    ["Звонки", callsWin],
+  ];
+  return all.filter((e): e is [string, BrowserWindow] => Boolean(e[1]));
+}
+
+/** Display affinity of each window, read by the core (0x11 = hidden from capture). */
+async function affinities(): Promise<{ name: string; hidden: boolean }[]> {
+  const wins = ourWindows();
+  const { stdout } = await runCore(["--check-affinity", ...wins.map(([, w]) => hwnd(w))]);
+  const lines = stdout.trim().split(/\r?\n/);
+  return wins.map(([name], i) => ({ name, hidden: /\s0x11$/.test(lines[i] ?? "") }));
+}
+
+/** Once after start: a window that is not hidden from capture is said loudly. */
+async function checkProtection(): Promise<void> {
+  if (!osHidesWindows()) emit({ ev: "error", message: "Windows старше 10 2004: в демонстрации экрана окна видны чёрными прямоугольниками" });
+  try {
+    const bad = (await affinities()).filter((w) => !w.hidden);
+    if (bad.length) emit({ ev: "error", message: `Окно может попасть в демонстрацию экрана: ${bad.map((w) => w.name).join(", ")}` });
+  } catch (e) {
+    console.warn(`[privacy] affinity check failed: ${e}`);
+  }
+}
+
+/** Captures the display with the overlays the way other apps do, so the user sees they are absent. */
+async function privacyTest(): Promise<PrivacyReport> {
+  for (const w of Object.values(overlays)) if (!w.isVisible()) w.showInactive();
+  await new Promise((r) => setTimeout(r, 300));
+  const anchor = overlays.hints ?? overlays.transcript;
+  const display = anchor ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay();
+  const r = screen.dipToScreenRect(null, display.bounds);
+  const file = path.join(app.getPath("temp"), `call-assistant-privacy-${Date.now()}.png`);
+  try {
+    await runCore(["--snap", file, "--rect", `${r.x},${r.y},${r.width},${r.height}`]);
+    const image = `data:image/png;base64,${fs.readFileSync(file).toString("base64")}`;
+    return { image, windows: await affinities(), osOk: osHidesWindows() };
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+}
+
 function registerCallsIpc(): void {
   ipcMain.on("calls:open", openCalls);
   ipcMain.handle("calls:tree", () => calls.tree(dataDir));
@@ -543,9 +599,11 @@ app.whenReady().then(() => {
   ipcMain.handle("config:mics", async () => (await runCore(["--list-mics"])).stdout.split(/\r?\n/).filter(Boolean));
   registerCallsIpc();
   registerModelsIpc();
+  ipcMain.handle("privacy:test", privacyTest);
   createOverlay("transcript");
   createOverlay("hints");
   activity();
+  setTimeout(checkProtection, 3000);
   registerHotkeys();
   // The core reads the migrated profile, so it starts after the migration.
   pinDataDir();

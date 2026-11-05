@@ -80,13 +80,22 @@ fn main() -> Result<()> {
             "--print-config" => print_config = true,
             // The exact system prompt a call would get: `--print-context <call dir>` (or "" for the profile alone).
             "--print-context" => print_context = Some(args.next().map(PathBuf::from).unwrap_or_default()),
-            // Screenshot as the answer would get it: `--snap <out.png> [--monitor]`.
+            // Screenshot as the answer would get it: `--snap <out.png> [--monitor | --rect x,y,w,h]`.
             "--snap" => {
                 let out = args.next().map(PathBuf::from).ok_or_else(|| anyhow::anyhow!("--snap <out.png> [--monitor]"))?;
-                let monitor = args.next().as_deref() == Some("--monitor");
+                let mode = args.next();
                 screen::dpi_aware();
                 let t = std::time::Instant::now();
-                let shot = screen::capture(monitor)?;
+                let shot = match mode.as_deref() {
+                    Some("--monitor") => screen::capture(true)?,
+                    // `--rect x,y,w,h` in physical pixels.
+                    Some("--rect") => {
+                        let v: Vec<i32> = args.next().unwrap_or_default().split(',').filter_map(|n| n.trim().parse().ok()).collect();
+                        let [x, y, w, h] = v[..] else { anyhow::bail!("--rect x,y,w,h") };
+                        screen::capture_rect(x, y, w, h)?
+                    }
+                    _ => screen::capture(false)?,
+                };
                 std::fs::write(&out, &shot.png)?;
                 eprintln!("{}x{} за {} мс: {}", shot.width, shot.height, t.elapsed().as_millis(), shot.source);
                 return Ok(());
