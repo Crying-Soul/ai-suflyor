@@ -110,6 +110,7 @@ pub fn open(cfg: &Config, shared: &Shared, answerer: &Answerer, dir: PathBuf) ->
     let answers: Vec<AnswerRecord> = read_jsonl(&dir.join(ANSWERS));
     *shared.call.lock().unwrap() = Some(dir.clone());
     *shared.transcript.lock().unwrap() = segs.clone();
+    Answerer::forget_notes(shared);
     // The `call` event goes first: the UI clears its windows when the call changes.
     apply(cfg, shared, answerer, Some(&dir));
     info!("call opened: {} ({} segments, {} answers)", dir.display(), segs.len(), answers.len());
