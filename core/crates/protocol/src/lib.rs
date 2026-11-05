@@ -49,7 +49,24 @@ pub enum Command {
         answer_mode: Option<AnswerMode>,
     },
     Clear,
+    /// Opens a call directory (`<dataDir>/folders/<folder>/calls/<call>`): its context goes into the
+    /// prompt, its saved transcript and answers are replayed, new ones are appended to it.
+    OpenCall {
+        dir: String,
+    },
+    /// Rebuilds the context after its files changed; the transcript stays.
+    ReloadContext,
+    /// Stops saving to the open call and writes its `summary.md`.
+    CloseCall,
     Shutdown,
+}
+
+/// One piece of the assembled context, for the UI's breakdown.
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextPart {
+    pub name: String,
+    pub tokens: u64,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -147,6 +164,22 @@ pub enum Event {
     Error {
         message: String,
     },
+    /// The context now in use. `dir` is null when no call is open (profile only).
+    Call {
+        dir: Option<String>,
+        title: String,
+        folder: String,
+        tokens: u64,
+        parts: Vec<ContextPart>,
+        warnings: Vec<String>,
+    },
+    /// `summary.md` of a closed call was written (or failed).
+    Summary {
+        dir: String,
+        ok: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -163,6 +196,10 @@ mod tests {
         assert!(matches!(c, Command::Set { answer_mode: Some(AnswerMode::Speculative), .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"clear"}"#).unwrap();
         assert!(matches!(c, Command::Clear));
+        let c: Command = serde_json::from_str(r#"{"cmd":"open_call","dir":"C:\\x"}"#).unwrap();
+        assert!(matches!(c, Command::OpenCall { ref dir } if dir == "C:\\x"));
+        let c: Command = serde_json::from_str(r#"{"cmd":"close_call"}"#).unwrap();
+        assert!(matches!(c, Command::CloseCall));
     }
 
     #[test]
@@ -171,5 +208,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&e).unwrap(), r#"{"ev":"level","speaker":"them","rms":0.5,"peak":1.0}"#);
         let e = Event::Partial { speaker: Speaker::Me, t: 7, stable: "a b".into(), tail: "c".into() };
         assert_eq!(serde_json::to_string(&e).unwrap(), r#"{"ev":"partial","speaker":"me","t":7,"stable":"a b","tail":"c"}"#);
+        let e = Event::Call { dir: None, title: String::new(), folder: String::new(), tokens: 3, parts: vec![], warnings: vec![] };
+        assert_eq!(serde_json::to_string(&e).unwrap(), r#"{"ev":"call","dir":null,"title":"","folder":"","tokens":3,"parts":[],"warnings":[]}"#);
     }
 }

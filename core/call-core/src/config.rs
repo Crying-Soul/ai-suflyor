@@ -26,6 +26,8 @@ pub struct Config {
     /// Terms passed to whisper as initial prompt (spelling hints: Kubernetes, PostgreSQL...).
     pub glossary: Vec<String>,
     pub debug: DebugConfig,
+    /// Profile, call folders and their transcripts. Empty = `Documents\Call Assistant` in the user's home.
+    pub data_dir: String,
     /// Directory relative paths resolve against (the config file's directory).
     #[serde(skip)]
     pub base_dir: PathBuf,
@@ -165,6 +167,7 @@ impl Default for Config {
             stt: SttConfig::default(),
             glossary: Vec::new(),
             debug: DebugConfig::default(),
+            data_dir: String::new(),
             base_dir: PathBuf::new(),
         }
     }
@@ -201,12 +204,25 @@ impl Config {
                 let raw = std::fs::read_to_string(&p).with_context(|| format!("read {}", p.display()))?;
                 let mut cfg: Config = serde_json::from_str(&raw).with_context(|| format!("parse {}", p.display()))?;
                 cfg.base_dir = std::path::absolute(&p)?.parent().map(Path::to_path_buf).unwrap_or_default();
+                cfg.fill_data_dir();
                 return Ok((cfg, Some(p)));
             }
         }
         let mut cfg = Config::default();
         cfg.base_dir = std::env::current_dir()?;
+        cfg.fill_data_dir();
         Ok((cfg, None))
+    }
+
+    fn fill_data_dir(&mut self) {
+        if self.data_dir.trim().is_empty() {
+            let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).unwrap_or_default();
+            self.data_dir = home.join("Documents").join("Call Assistant").display().to_string();
+        }
+    }
+
+    pub fn profile_dir(&self) -> PathBuf {
+        self.path(&self.data_dir).join("profile")
     }
 
     /// Resolves a config path relative to the config file's directory.

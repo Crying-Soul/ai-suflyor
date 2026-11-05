@@ -167,6 +167,11 @@ impl CodeSession {
         }
     }
 
+    /// Takes effect at the next spawn: the prompt file is written then.
+    pub fn set_system(&mut self, system: String) {
+        self.system = system;
+    }
+
     pub async fn reset(&mut self) {
         self.proc = None;
         self.fresh = true;

@@ -2,13 +2,15 @@
 //! Talks NDJSON over stdio to the Electron UI (see the `protocol` crate).
 
 mod answer;
+mod call;
 mod config;
+mod context;
 mod llm;
 mod streams;
 mod stt_worker;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::Result;
 use protocol::{Command, Event, Speaker, Status};
@@ -22,7 +24,7 @@ use crate::stt_worker::SttQueue;
 
 pub type EventTx = mpsc::UnboundedSender<Event>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FinalSegment {
     pub speaker: Speaker,
     pub t_ms: u64,
@@ -40,6 +42,10 @@ pub struct Shared {
     pub them_speaking: std::sync::atomic::AtomicBool,
     /// Set once at startup; the STT worker reports "them" finals to it.
     pub answerer: std::sync::OnceLock<answer::Answerer>,
+    /// Whisper spelling hints of the current context (call, folder, profile, config).
+    pub glossary: RwLock<Vec<String>>,
+    /// Directory of the open call; finals and answers are appended to it.
+    pub call: Mutex<Option<PathBuf>>,
 }
 
 impl Shared {
@@ -64,12 +70,21 @@ fn main() -> Result<()> {
 
     let mut config_path: Option<PathBuf> = None;
     let mut print_config = false;
+    let mut print_context: Option<PathBuf> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--config" => config_path = args.next().map(PathBuf::from),
             // Effective config (file + defaults) as JSON, for the settings UI.
             "--print-config" => print_config = true,
+            // The exact system prompt a call would get: `--print-context <call dir>` (or "" for the profile alone).
+            "--print-context" => print_context = Some(args.next().map(PathBuf::from).unwrap_or_default()),
+            // Text of a PDF (cached next to it in .text/), for the UI's preview.
+            "--extract" => {
+                let pdf = args.next().map(PathBuf::from).ok_or_else(|| anyhow::anyhow!("--extract <pdf>"))?;
+                println!("{}", context::pdf_text(&pdf)?);
+                return Ok(());
+            }
             "--list-mics" => {
                 for m in audio::list_mics()? {
                     println!("{m}");
@@ -83,6 +98,16 @@ fn main() -> Result<()> {
     let (cfg, loaded_from) = Config::load(config_path.as_deref())?;
     if print_config {
         println!("{}", serde_json::to_string(&cfg)?);
+        return Ok(());
+    }
+    if let Some(dir) = print_context {
+        let dir = Some(dir.as_path()).filter(|d| !d.as_os_str().is_empty());
+        let a = context::assemble(&cfg.profile_dir(), dir, &cfg.user_context, &cfg.glossary);
+        println!("{}", llm::system_prompt(false, &a.text));
+        eprintln!("~{} tokens; glossary: {}", a.tokens(), a.glossary.join(", "));
+        for w in &a.warnings {
+            eprintln!("warning: {w}");
+        }
         return Ok(());
     }
     match &loaded_from {
@@ -134,7 +159,12 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
         transcript: Mutex::new(Vec::new()),
         them_speaking: Default::default(),
         answerer: Default::default(),
+        glossary: Default::default(),
+        call: Default::default(),
     });
+    // Until a call is opened: the profile alone.
+    let profile = context::assemble(&cfg.profile_dir(), None, &cfg.user_context, &cfg.glossary);
+    *shared.glossary.write().unwrap() = profile.glossary.clone();
 
     let _ = tx.send(Event::Ready { version: env!("CARGO_PKG_VERSION").into() });
     shared.update_status(|_| {});
@@ -142,7 +172,7 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
     let queue = Arc::new(SttQueue::default());
     let stt = stt_worker::spawn(&cfg, shared.clone(), queue.clone())?;
     let streams = StreamSet::start(&cfg, shared.clone(), queue.clone(), record_dir)?;
-    let answerer = answer::Answerer::start(&cfg, shared.clone());
+    let answerer = answer::Answerer::start(&cfg, shared.clone(), &profile.text);
     let _ = shared.answerer.set(answerer.clone());
 
     // stdin reader: commands from the UI. EOF means the UI died -> shut down.
@@ -175,7 +205,7 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn handle(cmd: Command, cfg: &Config, shared: &Shared, answerer: &answer::Answerer) {
+fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::Answerer) {
     match cmd {
         Command::Ask { screenshot, question } => {
             if screenshot {
@@ -204,6 +234,14 @@ fn handle(cmd: Command, cfg: &Config, shared: &Shared, answerer: &answer::Answer
             shared.transcript.lock().unwrap().clear();
             answerer.clear();
         }
+        // shortcut: assembly runs on the command loop; a large uncached PDF stalls commands for a second or two.
+        Command::OpenCall { dir } => {
+            if let Err(e) = call::open(cfg, shared, answerer, PathBuf::from(dir)) {
+                let _ = shared.events.send(Event::Error { message: format!("{e:#}") });
+            }
+        }
+        Command::ReloadContext => call::reload(cfg, shared, answerer),
+        Command::CloseCall => call::close(cfg, shared, answerer),
         Command::Shutdown => unreachable!(),
     }
 }
