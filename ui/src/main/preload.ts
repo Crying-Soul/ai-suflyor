@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type { CoreEvent, RendererApi } from "../shared/protocol";
 
 const api: RendererApi = {
@@ -12,6 +12,22 @@ const api: RendererApi = {
   loadConfig: () => ipcRenderer.invoke("config:load"),
   saveConfig: (patch) => ipcRenderer.invoke("config:save", patch),
   listMics: () => ipcRenderer.invoke("config:mics"),
+  openCalls: () => ipcRenderer.send("calls:open"),
+  calls: {
+    tree: () => ipcRenderer.invoke("calls:tree"),
+    node: (dir) => ipcRenderer.invoke("calls:node", dir),
+    save: (dir, patch) => ipcRenderer.invoke("calls:save", dir, patch),
+    createFolder: (title) => ipcRenderer.invoke("calls:create-folder", title),
+    createCall: (folder, title) => ipcRenderer.invoke("calls:create-call", folder, title),
+    addFiles: (dir, paths) => ipcRenderer.invoke("calls:add-files", dir, paths),
+    fileText: (dir, name) => ipcRenderer.invoke("calls:file-text", dir, name),
+    removeFile: (dir, name) => ipcRenderer.invoke("calls:remove-file", dir, name),
+    remove: (dir) => ipcRenderer.invoke("calls:remove", dir),
+    preview: (dir) => ipcRenderer.invoke("calls:preview", dir),
+    reveal: (dir) => ipcRenderer.send("calls:reveal", dir),
+    current: () => ipcRenderer.invoke("calls:current"),
+  },
+  pathForFile: (file) => webUtils.getPathForFile(file),
 };
 
 contextBridge.exposeInMainWorld("api", api);

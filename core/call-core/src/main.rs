@@ -102,11 +102,15 @@ fn main() -> Result<()> {
     }
     if let Some(dir) = print_context {
         let dir = Some(dir.as_path()).filter(|d| !d.as_os_str().is_empty());
+        if let Some(d) = dir.filter(|d| !d.is_dir()) {
+            anyhow::bail!("no call directory {}", d.display());
+        }
         let a = context::assemble(&cfg.profile_dir(), dir, &cfg.user_context, &cfg.glossary);
         println!("{}", llm::system_prompt(false, &a.text));
-        eprintln!("~{} tokens; glossary: {}", a.tokens(), a.glossary.join(", "));
+        // Read by the «Звонки» window: Russian, one line each.
+        eprintln!("≈{} токенов. Глоссарий: {}", a.tokens(), if a.glossary.is_empty() { "пусто".into() } else { a.glossary.join(", ") });
         for w in &a.warnings {
-            eprintln!("warning: {w}");
+            eprintln!("{w}");
         }
         return Ok(());
     }
