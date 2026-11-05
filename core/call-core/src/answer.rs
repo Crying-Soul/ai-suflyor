@@ -258,12 +258,12 @@ impl Answerer {
     }
 
     /// One-off summary of `segs` with the quick model, through the configured backend.
-    pub async fn summarize(&self, context: &str, segs: &[FinalSegment]) -> anyhow::Result<String> {
+    pub async fn summarize(&self, context: &str, segs: &[FinalSegment], hints: &[crate::call::AnswerRecord]) -> anyhow::Result<String> {
         let mut s = session(&self.cfg, "summary", llm::summary_system(context));
         let model = &self.cfg.quick_model;
         s.prepare(model).await?;
         let mut out = String::new();
-        let text = format!("<transcript>\n{}\n</transcript>\nSummarize this call.", llm::render(segs));
+        let text = format!("<transcript>\n{}\n</transcript>\n{}Summarize this call.", llm::render(segs), hints_block(hints));
         s.ask(model, &llm::Turn { text, image: None }, &mut |c| {
             if let Chunk::Text(t) = c {
                 out.push_str(&t);
@@ -272,6 +272,17 @@ impl Answerer {
         .await?;
         Ok(out.trim().to_string())
     }
+}
+
+/// The full-tier answers of a call for its summary: question and hint, each cut to keep the prompt small.
+fn hints_block(answers: &[crate::call::AnswerRecord]) -> String {
+    let cut = |s: &str, n: usize| if s.chars().count() > n { format!("{}…", s.chars().take(n).collect::<String>()) } else { s.to_string() };
+    let items: Vec<String> = answers
+        .iter()
+        .filter(|a| a.tier == "full" && !a.text.is_empty())
+        .map(|a| format!("<hint question=\"{}\">\n{}\n</hint>", cut(&a.question, 200).replace('"', "'"), cut(&a.text, 600)))
+        .collect();
+    if items.is_empty() { String::new() } else { format!("<hints>\n{}\n</hints>\n", items.join("\n")) }
 }
 
 fn session(cfg: &Config, tier: &'static str, system: String) -> Session {

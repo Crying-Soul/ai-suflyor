@@ -118,6 +118,7 @@ const SECTIONS: Section[] = [
     fields: [
       { key: "hotkeys.ask", label: "Спросить", kind: "text" },
       { key: "hotkeys.screenshotAsk", label: "Снимок экрана и вопрос", kind: "text" },
+      { key: "hotkeys.myQuestions", label: "Мои вопросы собеседнику", kind: "text" },
       { key: "hotkeys.toggleWindow", label: "Показать или скрыть окна", kind: "text" },
       { key: "hotkeys.toggleAuto", label: "Автоответы вкл./выкл.", kind: "text" },
       { key: "hotkeys.cameraMode", label: "«У камеры»: полоска подсказок у камеры", kind: "text" },

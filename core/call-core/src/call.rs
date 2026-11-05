@@ -146,12 +146,13 @@ pub fn close(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
     let context = context::assemble(&cfg.profile_dir(), Some(&dir), &cfg.user_context, &cfg.glossary).text;
     apply(cfg, shared, answerer, None);
     let segs = shared.transcript.lock().unwrap().clone();
+    let hints: Vec<AnswerRecord> = read_jsonl(&dir.join(ANSWERS));
     let (shared, answerer) = (shared.clone(), answerer.clone());
     tokio::spawn(async move {
         let r = if segs.is_empty() {
             Err(anyhow::anyhow!("транскрипт пуст"))
         } else {
-            answerer.summarize(&context, &segs).await.and_then(|s| Ok(std::fs::write(dir.join(SUMMARY), s + "\n")?))
+            answerer.summarize(&context, &segs, &hints).await.and_then(|s| Ok(std::fs::write(dir.join(SUMMARY), s + "\n")?))
         };
         if let Err(e) = &r {
             warn!("summary of {}: {e:#}", dir.display());

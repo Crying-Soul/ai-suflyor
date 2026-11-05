@@ -39,6 +39,9 @@ pub enum Command {
         /// Ask about this text instead of the detected question (a transcript row the user picked).
         #[serde(default)]
         question: Option<String>,
+        /// Suggest questions the user can ask the other side instead of answering.
+        #[serde(default)]
+        questions: bool,
     },
     Set {
         #[serde(default)]
@@ -196,9 +199,11 @@ mod tests {
     #[test]
     fn parses_commands() {
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","screenshot":true}"#).unwrap();
-        assert!(matches!(c, Command::Ask { screenshot: true, question: None }));
+        assert!(matches!(c, Command::Ask { screenshot: true, question: None, questions: false }));
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","question":"Почему Go?"}"#).unwrap();
-        assert!(matches!(c, Command::Ask { screenshot: false, question: Some(ref q) } if q == "Почему Go?"));
+        assert!(matches!(c, Command::Ask { screenshot: false, question: Some(ref q), questions: false } if q == "Почему Go?"));
+        let c: Command = serde_json::from_str(r#"{"cmd":"ask","questions":true}"#).unwrap();
+        assert!(matches!(c, Command::Ask { questions: true, .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"set","answer_mode":"speculative"}"#).unwrap();
         assert!(matches!(c, Command::Set { answer_mode: Some(AnswerMode::Speculative), .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"clear"}"#).unwrap();

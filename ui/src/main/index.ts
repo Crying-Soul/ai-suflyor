@@ -23,6 +23,7 @@ interface Hotkeys {
   copyAnswer: string;
   zoomIn: string;
   zoomOut: string;
+  myQuestions: string;
 }
 
 const DEFAULT_HOTKEYS: Hotkeys = {
@@ -39,6 +40,7 @@ const DEFAULT_HOTKEYS: Hotkeys = {
   copyAnswer: "CommandOrControl+Alt+C",
   zoomIn: "CommandOrControl+Alt+=",
   zoomOut: "CommandOrControl+Alt+-",
+  myQuestions: "CommandOrControl+Alt+Q",
 };
 
 /** Window background before the page paints (Dusk paper, approximated in sRGB). */
@@ -357,6 +359,7 @@ function registerHotkeys(): void {
     [hotkeys.copyAnswer, () => sendUi(overlays.hints, { kind: "copy" })],
     [hotkeys.zoomIn, () => zoom(0.1)],
     [hotkeys.zoomOut, () => zoom(-0.1)],
+    [hotkeys.myQuestions, () => core.send({ cmd: "ask", screenshot: false, questions: true })],
   ];
   for (const [accel, fn] of map) {
     try {
