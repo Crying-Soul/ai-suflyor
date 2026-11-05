@@ -61,6 +61,8 @@ export type CoreEvent =
   | { ev: "answer_end"; id: number; error?: string }
   | { ev: "metrics"; name: string; ms: number }
   | { ev: "error"; message: string }
+  /** The screen that goes with answer turn `turn`; `thumb` is a small JPEG data URL. */
+  | { ev: "screenshot"; turn: number; width: number; height: number; thumb: string }
   | ({ ev: "call" } & CallInfo)
   | { ev: "summary"; dir: string; ok: boolean; error?: string }
   // Emitted by the UI main process itself, not the core:

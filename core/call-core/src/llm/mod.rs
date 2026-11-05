@@ -16,6 +16,30 @@ pub enum Chunk {
     Usage { input: u64, cache_read: u64, cache_write: u64, output: u64 },
 }
 
+/// One user turn: text and, for "Экран + вопрос", a PNG of the screen placed before it.
+pub struct Turn {
+    pub text: String,
+    pub image: Option<std::sync::Arc<Vec<u8>>>,
+}
+
+impl Turn {
+    pub fn text(t: &str) -> Turn {
+        Turn { text: t.to_string(), image: None }
+    }
+
+    /// Messages API content blocks; claude-code stream-json takes the same.
+    pub fn content(&self) -> serde_json::Value {
+        use base64::Engine as _;
+        let mut blocks = Vec::new();
+        if let Some(png) = &self.image {
+            let data = base64::engine::general_purpose::STANDARD.encode(png.as_slice());
+            blocks.push(serde_json::json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}}));
+        }
+        blocks.push(serde_json::json!({"type": "text", "text": self.text}));
+        serde_json::Value::Array(blocks)
+    }
+}
+
 pub enum Session {
     Api(api::ApiSession),
     Code(claude_code::CodeSession),
@@ -39,10 +63,10 @@ impl Session {
         }
     }
 
-    pub async fn ask(&mut self, model: &str, text: String, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
+    pub async fn ask(&mut self, model: &str, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
         match self {
-            Session::Api(s) => s.ask(model, text, out).await,
-            Session::Code(s) => s.ask(text, out).await,
+            Session::Api(s) => s.ask(model, turn, out).await,
+            Session::Code(s) => s.ask(turn, out).await,
         }
     }
 
@@ -79,14 +103,17 @@ Write code only if the question asks for code. No preamble, no headings, do not 
 Answer in the language of the question.\n\n\
 Context about the user, the company and this call may follow in <about_user>, <document>, <company>, <previous_calls> and <this_call>. \
 Answer from the user's real experience in <about_user> and the documents; never invent experience they do not have. \
-Stay consistent with what the user said earlier in this call and in previous calls. Use the company and call context.";
+Stay consistent with what the user said earlier in this call and in previous calls. Use the company and call context.\n\n\
+An attached image is the user's screen right now, often the other side's shared screen. Read code and task text from it exactly. \
+If the question is about that code or task, answer about it: output, bug, complexity, fix or solution. Code goes in a fenced block.";
 
 const QUICK_SYSTEM: &str = "You are a silent assistant helping the user during a live call, often a job interview. \
 You receive a live transcript in <transcript> blocks: lines starting with \"Q:\" are the other side, lines starting with \"A:\" are the user. \
 It comes from speech recognition and may contain errors. \
 Reply with one line of at most 15 words: the key point the user should say in answer to <question>. \
 No preamble, no markdown. Answer in the language of the question. \
-Base it on the user's real experience from the context below, if any.";
+Base it on the user's real experience from the context below, if any. \
+An attached image is the user's screen: if it shows code or a task, the line is about that.";
 
 const SUMMARY_SYSTEM: &str = "You summarize a finished call for the user, who will read it before the next call with the same people. \
 The transcript comes from speech recognition: \"Q:\" lines are the other side, \"A:\" lines are the user. \
@@ -150,15 +177,32 @@ pub fn question(segs: &[FinalSegment]) -> (String, Option<u64>) {
     (text, Some(v[start].t_ms))
 }
 
-/// User turn: the transcript since the previous turn, then the question.
-pub fn turn_text(new: &[FinalSegment], question: &str) -> String {
+/// What the turn says about the screen.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Screen {
+    None,
+    /// The image goes with this turn.
+    Attached,
+    /// Same screen as the image sent earlier in this session: not sent again.
+    Unchanged,
+}
+
+/// User turn: the transcript since the previous turn, a note about the screen, then the question.
+pub fn turn_text(new: &[FinalSegment], question: &str, screen: Screen) -> String {
     let mut t = String::new();
     if !new.is_empty() {
         t.push_str("<transcript>\n");
         t.push_str(&render(new));
         t.push_str("\n</transcript>\n");
     }
-    if question.is_empty() {
+    match screen {
+        Screen::None => {}
+        Screen::Attached => t.push_str("<screen>The attached image is the user's screen now.</screen>\n"),
+        Screen::Unchanged => t.push_str("<screen>Unchanged since the previous screenshot; use that image.</screen>\n"),
+    }
+    if question.is_empty() && screen != Screen::None {
+        t.push_str("<question>Look at the screen: if there is a task, code or a question, solve or answer it.</question>");
+    } else if question.is_empty() {
         t.push_str("<question>No question yet. Give the user a useful hint for the conversation so far.</question>");
     } else {
         t.push_str(&format!("<question>{question}</question>"));
@@ -191,6 +235,13 @@ mod tests {
         // Pause over 1.5 s: a new question, even without a "me" line in between.
         let gap = vec![seg(Speaker::Them, 0, "Первый?"), seg(Speaker::Them, 9_000, "Второй?")];
         assert_eq!(question(&gap), ("Второй?".into(), Some(9_000)));
-        assert!(turn_text(&[], "").contains("No question yet"));
+        assert!(turn_text(&[], "", Screen::None).contains("No question yet"));
+        let t = turn_text(&[], "", Screen::Attached);
+        assert!(t.contains("<screen>The attached") && t.contains("Look at the screen"));
+        assert!(turn_text(&[], "Почему?", Screen::Unchanged).contains("Unchanged since"));
+        let turn = Turn { text: "q".into(), image: Some(std::sync::Arc::new(vec![1, 2, 3])) };
+        let c = turn.content();
+        assert_eq!((c[0]["type"].as_str(), c[0]["source"]["data"].as_str(), c[1]["text"].as_str()), (Some("image"), Some("AQID"), Some("q")));
+        assert_eq!(Turn::text("x").content().as_array().unwrap().len(), 1);
     }
 }

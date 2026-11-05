@@ -12,6 +12,7 @@ use tracing::{info, warn};
 
 use crate::config::{Backend, Config};
 use crate::llm::{self, Chunk, Session};
+use crate::screen::Shot;
 use crate::{FinalSegment, Shared};
 
 struct Req {
@@ -22,6 +23,9 @@ struct Req {
     question: String,
     q_t: Option<u64>,
     segs: Arc<Vec<FinalSegment>>,
+    shot: Option<Arc<Shot>>,
+    /// File name of the shot saved in the open call.
+    shot_file: Option<String>,
 }
 
 enum Msg {
@@ -63,11 +67,19 @@ impl Answerer {
     }
 
     /// Starts both tiers. `question`: (text, start of its transcript run); None = the latest "them" run.
-    pub fn ask(&self, shared: &Shared, trigger: &str, question: Option<(String, Option<u64>)>) {
+    pub fn ask(&self, shared: &Shared, trigger: &str, question: Option<(String, Option<u64>)>, shot: Option<Shot>) {
         let segs = Arc::new(shared.transcript.lock().unwrap().clone());
         let (question, q_t) = question.unwrap_or_else(|| llm::question(&segs));
         let model = shared.status.lock().unwrap().model.clone();
         let turn = self.next_id();
+        let shot = shot.map(Arc::new);
+        let mut shot_file = None;
+        if let Some(sh) = &shot {
+            use base64::Engine as _;
+            let thumb = format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&sh.thumb));
+            let _ = shared.events.send(Event::Screenshot { turn, width: sh.width, height: sh.height, thumb });
+            shot_file = crate::call::save_shot(shared, turn, &sh.png);
+        }
         let req = |model: String| Req {
             id: self.next_id(),
             turn,
@@ -76,6 +88,8 @@ impl Answerer {
             question: question.clone(),
             q_t,
             segs: segs.clone(),
+            shot: shot.clone(),
+            shot_file: shot_file.clone(),
         };
         if let Some((tx, quick_model)) = &self.quick {
             let _ = tx.send(Msg::Ask(req(quick_model.clone())));
@@ -110,7 +124,7 @@ impl Answerer {
         s.prepare(model).await?;
         let mut out = String::new();
         let text = format!("<transcript>\n{}\n</transcript>\nSummarize this call.", llm::render(segs));
-        s.ask(model, text, &mut |c| {
+        s.ask(model, &llm::Turn { text, image: None }, &mut |c| {
             if let Chunk::Text(t) = c {
                 out.push_str(&t);
             }
@@ -153,7 +167,7 @@ async fn auto_detect(a: Answerer, shared: Arc<Shared>, mut rx: mpsc::UnboundedRe
         }
         info!("auto: question detected: {question}");
         last_asked = question.clone();
-        a.ask(&shared, "auto", Some((question, q_t)));
+        a.ask(&shared, "auto", Some((question, q_t)), None);
     }
 }
 
@@ -166,6 +180,8 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
         }
         // Transcript segments already sent in this session.
         let mut sent = 0usize;
+        // dHash of the last screen image this session holds: the same screen is not sent twice.
+        let mut last_screen: Option<u64> = None;
         let mut pending: Option<Msg> = None;
         loop {
             let msg = match pending.take() {
@@ -179,12 +195,14 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                 Msg::Clear => {
                     session.reset().await;
                     sent = 0;
+                    last_screen = None;
                     continue;
                 }
                 Msg::Reconfigure(system) => {
                     session.set_system(system);
                     session.reset().await;
                     sent = 0;
+                    last_screen = None;
                     if let Err(e) = session.warm(&warm_model).await {
                         warn!("[{tier}] warm-up failed: {e:#}");
                     }
@@ -212,8 +230,21 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                 Ok(fresh) => {
                     if fresh {
                         sent = 0;
+                        last_screen = None;
                     }
-                    let text = llm::turn_text(&req.segs[sent.min(req.segs.len())..], &req.question);
+                    let screen = match &req.shot {
+                        None => llm::Screen::None,
+                        Some(sh) if last_screen.is_some_and(|h| crate::screen::same_screen(h, sh.hash)) => {
+                            info!("[{tier}] screen unchanged, image not resent");
+                            llm::Screen::Unchanged
+                        }
+                        Some(sh) => {
+                            last_screen = Some(sh.hash);
+                            llm::Screen::Attached
+                        }
+                    };
+                    let image = (screen == llm::Screen::Attached).then(|| req.shot.as_ref().map(|s| Arc::new(s.png.clone()))).flatten();
+                    let turn = llm::Turn { text: llm::turn_text(&req.segs[sent.min(req.segs.len())..], &req.question, screen), image };
                     sent = req.segs.len();
                     let mut first = true;
                     let mut emit = |c: Chunk| match c {
@@ -230,7 +261,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                         }
                     };
                     tokio::select! {
-                        r = session.ask(&req.model, text, &mut emit) => Some(r),
+                        r = session.ask(&req.model, &turn, &mut emit) => Some(r),
                         m = rx.recv() => {
                             pending = m;
                             None
@@ -248,6 +279,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                         q_t: req.q_t,
                         model: req.model.clone(),
                         text: std::mem::take(&mut answer),
+                        shot: req.shot_file.clone(),
                     });
                     None
                 }

@@ -12,7 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tracing::{info, warn};
 
-use super::Chunk;
+use super::{Chunk, Turn};
 
 struct Proc {
     _child: Child,
@@ -84,7 +84,7 @@ impl CodeSession {
     pub async fn warm(&mut self, model: &str) -> Result<()> {
         let fresh = self.prepare(model).await?;
         let t = std::time::Instant::now();
-        self.ask("Reply with OK.".into(), &mut |_| {}).await?;
+        self.ask(&Turn::text("Reply with OK."), &mut |_| {}).await?;
         info!("claude code warm in {} ms", t.elapsed().as_millis());
         self.fresh = fresh;
         Ok(())
@@ -115,8 +115,8 @@ impl CodeSession {
         }
     }
 
-    pub async fn ask(&mut self, text: String, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
-        self.send(json!({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}})).await?;
+    pub async fn ask(&mut self, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
+        self.send(json!({"type": "user", "message": {"role": "user", "content": turn.content()}})).await?;
         loop {
             let v = self.next().await?;
             match v["type"].as_str().unwrap_or("") {

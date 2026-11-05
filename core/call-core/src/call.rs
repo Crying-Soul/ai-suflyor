@@ -29,6 +29,9 @@ pub struct AnswerRecord {
     pub q_t: Option<u64>,
     pub model: String,
     pub text: String,
+    /// Screenshot of this turn in `shots/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shot: Option<String>,
 }
 
 const TRANSCRIPT: &str = "transcript.jsonl";
@@ -61,6 +64,15 @@ pub fn save_final(shared: &Shared, seg: &FinalSegment) {
     if let Some(dir) = shared.call.lock().unwrap().as_ref() {
         append(&dir.join(TRANSCRIPT), seg);
     }
+}
+
+/// Saves the turn's screenshot in the open call; returns its file name.
+pub fn save_shot(shared: &Shared, turn: u64, png: &[u8]) -> Option<String> {
+    let dir = shared.call.lock().unwrap().as_ref()?.join("shots");
+    let name = format!("{}-{turn}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_millis());
+    let r = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&name), png));
+    r.map_err(|e| warn!("save {}: {e}", dir.display())).ok()?;
+    Some(name)
 }
 
 pub fn save_answer(shared: &Shared, rec: AnswerRecord) {
@@ -167,7 +179,7 @@ mod tests {
         append(&f, &a);
         assert_eq!(read_jsonl::<FinalSegment>(&f).len(), 3, "an append after a torn line stays readable");
 
-        let r = AnswerRecord { turn: 1, tier: "full".into(), trigger: "auto".into(), question: "q".into(), q_t: Some(5), model: "m".into(), text: "**a**".into() };
+        let r = AnswerRecord { turn: 1, tier: "full".into(), trigger: "auto".into(), question: "q".into(), q_t: Some(5), model: "m".into(), text: "**a**".into(), shot: None };
         append(&dir.path().join(ANSWERS), &r);
         assert_eq!(read_jsonl::<AnswerRecord>(&dir.path().join(ANSWERS)), vec![r]);
         assert!(read_jsonl::<AnswerRecord>(&dir.path().join("missing.jsonl")).is_empty());
