@@ -162,6 +162,34 @@ export interface ModelInfo {
   error?: string;
 }
 
+/** One line of «Готовность»: something the app needs, whether it is there, and what fixes it. */
+export interface ReadyItem {
+  id: "core" | "whisper" | "cuda" | "claude" | "audio" | "mt";
+  /** required: nothing works without it; recommended: works, but worse; optional: one feature. */
+  level: "required" | "recommended" | "optional";
+  ok: boolean;
+  title: string;
+  why: string;
+  problem?: string;
+  /** whisper: the catalog id to offer. */
+  model?: string;
+  /** claude: the backend in config. */
+  backend?: "api" | "claude-code";
+}
+
+export interface ReadyApi {
+  list(): Promise<ReadyItem[]>;
+  open(): void;
+  /** Saves the key and switches the backend to it (the core restarts). */
+  useApiKey(key: string): Promise<SaveResult>;
+  /** Switches to Claude Code and checks that `claude --version` answers. */
+  useClaudeCode(): Promise<SaveResult>;
+  /** Downloads and selects the whisper model. */
+  getModel(id: string): void;
+  openLogs(): void;
+  onChange(cb: (items: ReadyItem[]) => void): void;
+}
+
 /** An update from GitHub Releases. "dev": not installed, nothing to update. */
 export interface UpdateState {
   state: "dev" | "idle" | "checking" | "latest" | "available" | "downloading" | "ready" | "error";
@@ -238,6 +266,7 @@ export interface RendererApi {
   models: ModelsApi;
   packs: PacksApi;
   update: UpdateApi;
+  ready: ReadyApi;
   privacyTest(): Promise<PrivacyReport>;
   openLogs(): void;
   /** Disk path of a file dropped on the page. */

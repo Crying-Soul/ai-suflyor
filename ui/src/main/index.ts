@@ -1,11 +1,13 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, net, screen, shell, type Rectangle } from "electron";
 import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status, UiMessage } from "../shared/protocol";
+import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, ReadyItem, SaveResult, Status, UiMessage } from "../shared/protocol";
 import * as calls from "./calls";
 import * as models from "./models";
+import * as readiness from "./readiness";
 import { cuda } from "./cuda";
 import { mt } from "./mt";
 import * as update from "./update";
@@ -79,6 +81,9 @@ type OverlayName = "transcript" | "hints";
 
 const overlays: Partial<Record<OverlayName, BrowserWindow>> = {};
 let settingsWin: BrowserWindow | null = null;
+let readyWin: BrowserWindow | null = null;
+/** Why the core is not running (core_down), cleared by its `ready`. */
+let coreError: string | null = null;
 let callsWin: BrowserWindow | null = null;
 let lastStatus: Status | null = null;
 /** The context in use, from the core's last `call` event; its call is reopened after a core restart. */
@@ -90,6 +95,8 @@ let tray: ReturnType<typeof createTray> | null = null;
 
 function emit(e: CoreEvent): void {
   if (e.ev === "status") lastStatus = e;
+  if (e.ev === "ready" || e.ev === "core_down") coreError = e.ev === "core_down" ? e.message : null;
+  if (e.ev === "status" || e.ev === "ready" || e.ev === "core_down") refreshReady();
   if (e.ev === "call") {
     lastCall = e;
     tray?.setCall(e.dir ? e.title : null);
@@ -114,7 +121,7 @@ function loadHotkeys(): Hotkeys {
 
 const coreExe = resolveCoreExe(app.getAppPath(), app.isPackaged);
 const coreArgs = () => (configPath ? ["--config", configPath] : []);
-const core = new CoreProcess(coreExe, coreArgs(), rootDir(), emit);
+const core = new CoreProcess(coreExe, coreArgs, rootDir(), emit);
 
 function webPreferences(): Electron.WebPreferences {
   return { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true };
@@ -393,8 +400,10 @@ function writeConfig(patch: Record<string, unknown>): SaveResult {
 function saveConfig(patch: Record<string, unknown>): SaveResult {
   const res = writeConfig(patch);
   if (res.ok) {
+    claudeCodeOk = null;
+    refreshReady();
     registerHotkeys();
-    core.restart(coreArgs());
+    core.restart();
     resolveDataDir();
   }
   return res;
@@ -523,26 +532,126 @@ function registerUpdateIpc(): void {
 
 function registerModelsIpc(): void {
   models.useFetch(net.fetch as typeof fetch);
-  const changed = () => settingsWin?.webContents.send("models:changed");
+  const changed = modelsChanged;
   ipcMain.handle("pack:status", (_e, id: PackId) => PACKS[id].pack.status(PACKS[id].dir()));
   // Not awaited, like the whisper download: progress arrives as models:changed.
   ipcMain.handle("pack:download", (_e, id: PackId) => {
     const { pack, dir } = PACKS[id];
     // The core picks the CUDA backend up when it starts.
-    void pack.download(dir(), changed).then(() => id === "cuda" && pack.status(dir()).state === "installed" && core.restart(coreArgs()));
+    void pack.download(dir(), changed).then(() => id === "cuda" && pack.status(dir()).state === "installed" && core.restart());
   });
   ipcMain.on("pack:cancel", (_e, id: PackId) => PACKS[id].pack.cancel());
   ipcMain.handle("models:list", () => models.list(modelsDir(), activeModel()));
   // Not awaited: the download outlives the request; progress arrives as models:changed.
-  ipcMain.handle("models:download", (_e, id: string) => void models.download(modelsDir(), id, changed));
+  ipcMain.handle("models:download", (_e, id: string) => void getModel(id));
   ipcMain.on("models:cancel", (_e, id: string) => models.cancel(id));
   ipcMain.handle("models:remove", (_e, id: string) => models.remove(modelsDir(), id, activeModel()));
-  ipcMain.handle("models:use", (_e, id: string) => {
-    const file = path.join(modelsDir(), models.fileOf(id));
-    if (!fs.existsSync(file)) return { ok: false, error: "модель не скачана" };
-    const rel = path.relative(path.dirname(configPath ?? newConfigPath()), file);
-    return saveConfig({ "stt.model": rel.startsWith("..") || path.isAbsolute(rel) ? file : rel.replaceAll("\\", "/") });
+  ipcMain.handle("models:use", (_e, id: string) => useModel(id));
+}
+
+/** Points stt.model at a downloaded model (relative to the config when it is inside its folder). */
+function useModel(id: string): SaveResult {
+  const file = path.join(modelsDir(), models.fileOf(id));
+  if (!fs.existsSync(file)) return { ok: false, error: "модель не скачана" };
+  const rel = path.relative(path.dirname(configPath ?? newConfigPath()), file);
+  return saveConfig({ "stt.model": rel.startsWith("..") || path.isAbsolute(rel) ? file : rel.replaceAll("\\", "/") });
+}
+
+/** Downloads a whisper model and, when none in use works yet, selects it: a first model need not be picked by hand. */
+async function getModel(id: string): Promise<void> {
+  await models.download(modelsDir(), id, modelsChanged);
+  if (!fs.existsSync(activeModel()) && fs.existsSync(path.join(modelsDir(), models.fileOf(id)))) useModel(id);
+}
+
+function modelsChanged(): void {
+  settingsWin?.webContents.send("models:changed");
+  readyWin?.webContents.send("models:changed");
+  refreshReady();
+}
+
+// ---------- «Готовность»: what is missing, and the way to get it ----------
+
+/** `claude --version` through the configured command; null = not checked since the config changed. */
+let claudeCodeOk: boolean | null = null;
+async function checkClaudeCode(): Promise<boolean> {
+  if (claudeCodeOk !== null) return claudeCodeOk;
+  const cmd = ((readRaw(configPath).claudeCode as { command?: string[] } | undefined)?.command ?? ["claude"]).filter(Boolean);
+  claudeCodeOk = await promisify(execFile)(cmd[0] ?? "claude", [...cmd.slice(1), "--version"], { timeout: 10_000, windowsHide: true }).then(
+    () => true,
+    () => false,
+  );
+  return claudeCodeOk;
+}
+
+const nvidia: Promise<boolean> = app
+  .whenReady()
+  .then(() => app.getGPUInfo("basic"))
+  .then((i) => ((i as { gpuDevice?: { vendorId: number }[] }).gpuDevice ?? []).some((d) => d.vendorId === 0x10de))
+  .catch(() => false);
+
+async function readyItems(): Promise<ReadyItem[]> {
+  const raw = readRaw(configPath);
+  const backend = (raw.llm as { backend?: string } | undefined)?.backend === "claude-code" ? "claude-code" : "api";
+  return readiness.check({
+    coreError,
+    modelExists: fs.existsSync(activeModel()),
+    backend,
+    apiKey: Boolean(raw.anthropicApiKey || process.env.ANTHROPIC_API_KEY),
+    claudeCodeOk: backend === "claude-code" && (await checkClaudeCode()),
+    nvidia: await nvidia,
+    cudaInstalled: cuda.status(cudaDir()).state === "installed",
+    status: lastStatus,
+    translate: Boolean(raw.translate ?? lastStatus?.translate),
+    mtInstalled: mt.status(PACKS.mt.dir()).state === "installed",
   });
+}
+
+let readyTimer: NodeJS.Timeout | undefined;
+/** Recomputes the list and sends it to whoever shows it (debounced: status events come in bursts). */
+function refreshReady(): void {
+  clearTimeout(readyTimer);
+  readyTimer = setTimeout(async () => {
+    const items = await readyItems();
+    for (const w of [readyWin, overlays.transcript, overlays.hints]) w?.webContents.send("ready:changed", items);
+  }, 300);
+}
+
+function openReady(): void {
+  if (readyWin) {
+    readyWin.focus();
+    return;
+  }
+  readyWin = new BrowserWindow({
+    width: 600,
+    height: 680,
+    minWidth: 480,
+    minHeight: 420,
+    title: "Подготовка к работе",
+    backgroundColor: PAPER,
+    titleBarStyle: "hidden",
+    titleBarOverlay: { color: PAPER, symbolColor: "#e8e5df", height: 40 },
+    webPreferences: webPreferences(),
+  });
+  readyWin.setContentProtection(true);
+  readyWin.loadFile(path.join(__dirname, "ready.html"));
+  readyWin.on("closed", () => (readyWin = null));
+}
+
+function registerReadyIpc(): void {
+  ipcMain.handle("ready:list", readyItems);
+  ipcMain.on("ready:open", openReady);
+  ipcMain.handle("ready:apiKey", (_e, key: string) => {
+    const k = String(key).trim();
+    if (!k.startsWith("sk-ant-")) return { ok: false, error: "Ключ API Anthropic начинается с sk-ant-." };
+    return saveConfig({ anthropicApiKey: k, "llm.backend": "api" });
+  });
+  ipcMain.handle("ready:claudeCode", async () => {
+    const res = saveConfig({ "llm.backend": "claude-code" });
+    if (!res.ok) return res;
+    return (await checkClaudeCode()) ? res : { ok: false, error: "Команда claude не ответила. Установите Claude Code и войдите в аккаунт." };
+  });
+  ipcMain.on("ready:model", (_e, id: string) => void getModel(id));
+  ipcMain.on("ready:logs", () => shell.openPath(logDir));
 }
 
 // ---------- capture protection: check it applied, and let the user see it ----------
@@ -647,6 +756,7 @@ app.whenReady().then(() => {
   registerCallsIpc();
   registerModelsIpc();
   registerUpdateIpc();
+  registerReadyIpc();
   ipcMain.handle("privacy:test", privacyTest);
   ipcMain.on("logs:open", () => shell.openPath(logDir));
   createOverlay("transcript");
@@ -657,6 +767,7 @@ app.whenReady().then(() => {
     openSettings,
     togglePreset,
     toggleClickThrough,
+    openReady,
     checkUpdates: () => {
       openSettings("guide");
       update.check();
@@ -670,6 +781,12 @@ app.whenReady().then(() => {
   resolveDataDir()
     .then(migrateContext)
     .finally(() => core.start());
+  // A fresh install has no model and no Claude: say so at once, with the way to fix it.
+  void readyItems().then((items) => {
+    const missing = items.filter((i) => !i.ok).map((i) => i.id);
+    if (missing.length) console.log(`[ready] missing: ${missing.join(", ")}`);
+    if (readiness.blocking(items)) openReady();
+  });
 });
 
 app.on("will-quit", () => {

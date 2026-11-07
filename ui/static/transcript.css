@@ -10,6 +10,10 @@
 #status.error { color: var(--color-error); }
 
 /* Sources: who, live level, device, as two ruled lines. */
+/* Something required is missing: a calm apricot strip with the way to the fix. */
+.setup { display: flex; align-items: center; gap: var(--space-sm); margin: var(--space-2xs) 0; padding: var(--space-xs) var(--space-xs) var(--space-xs) var(--space-sm); border-radius: var(--radius-inner); background: color-mix(in oklab, var(--color-accent-2) 14%, var(--color-paper-2)); box-shadow: inset 2px 0 0 var(--color-accent-2); font-size: var(--text-sm); }
+.setup p { flex: 1; min-width: 0; color: var(--color-ink); }
+.setup .btn.small { min-height: 28px; padding: 0 var(--space-sm); font-size: var(--text-xs); }
 .sources { display: grid; }
 .src { display: grid; grid-template-columns: 6rem minmax(0, 1fr) minmax(0, 44%); align-items: center; gap: var(--space-sm); min-height: 28px; font-size: var(--text-xs); }
 .src + .src { border-top: var(--rule-hair) solid var(--color-rule); }

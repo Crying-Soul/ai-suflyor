@@ -42,6 +42,14 @@ async function shot(w, name) { await wait(700); fs.writeFileSync(path.join(out, 
 const send = (ws, evs) => { for (const e of evs) for (const w of ws) w.webContents.send("core-event", e); };
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
+  // A fresh install on an NVIDIA machine: no model, no Claude, CUDA not downloaded.
+  const fresh = [
+    { id: "whisper", level: "required", ok: false, title: "Модель распознавания речи", why: "Whisper превращает речь в текст прямо на этом компьютере. Скачивается один раз.", model: "large-v3-turbo-q8_0" },
+    { id: "cuda", level: "recommended", ok: false, title: "Ускорение на видеокарте NVIDIA", why: "Текст появляется в несколько раз быстрее. Без него Whisper работает на процессоре." },
+    { id: "claude", level: "required", ok: false, title: "Подключение к Claude", why: "Claude пишет подсказки. Нужен ключ API Anthropic или установленный Claude Code с подпиской.", problem: "Ключ API не задан.", backend: "api" },
+    { id: "audio", level: "required", ok: true, title: "Микрофон и звук собеседника", why: "Приложение слушает ваш микрофон и звук звонка из колонок или наушников." },
+  ];
+  ipcMain.handle("ready:list", () => fresh);
   ipcMain.handle("update:state", () => ({ state: "available", version: "0.1.0", latest: "0.2.0" }));
   ipcMain.handle("pack:status", (_e, id) => id === "cuda" ? ({ id: "cuda", label: "CUDA для Whisper", sizeMb: 653, note: "Распознавание на видеокарте NVIDIA.", state: "absent", received: 0, total: 0, active: false }) : ({ id: "mt", label: "Opus-MT, английский → русский", sizeMb: 112, note: "Перевод речи собеседника на процессоре, без интернета и токенов.", state: "installed", received: 0, total: 0, active: true }));
   ipcMain.handle("config:load", () => ({ path: "C:\\dev\\suflyor\\config.json", raw: cfg, effective: cfg }));
@@ -67,6 +75,9 @@ app.whenReady().then(async () => {
   await hi.loadFile(path.join(dist, "hints.html"));
   // The compositor of a hidden window never runs CSS animations: entering cards would stay at opacity 0.
   for (const w of [tr, hi]) await w.webContents.insertCSS("*, *::before, *::after { animation: none !important; transition: none !important; }");
+  await shot(tr, "transcript-setup.png");
+  const allOk = fresh.map((i) => ({ ...i, ok: true }));
+  for (const w of [tr, hi]) w.webContents.send("ready:changed", allOk);
   await shot(tr, "transcript-empty.png");
   await shot(hi, "hints-empty.png");
   send([tr, hi], live);
@@ -100,6 +111,12 @@ app.whenReady().then(async () => {
   await shot(tr, "transcript-through.png");
   tr.webContents.send("ui", { kind: "mode", mini: false, clickThrough: false });
   await shot(hi, "hints-caught.png");
+  const rw = new BrowserWindow({ width: 600, height: 760, show: false, backgroundColor: "#13151b", webPreferences: wp });
+  await rw.loadFile(path.join(dist, "ready.html"));
+  await rw.webContents.insertCSS("*, *::before, *::after { animation: none !important; transition: none !important; }");
+  await shot(rw, "ready.png");
+  await rw.webContents.executeJavaScript(`document.querySelector("main").scrollTop = 9999`);
+  await shot(rw, "ready-claude.png");
   const s = new BrowserWindow({ width: 820, height: 640, show: false, titleBarStyle: "hidden", backgroundColor: "#13151b", webPreferences: wp });
   await s.loadFile(path.join(dist, "settings.html"));
   await shot(s, "settings-context.png");

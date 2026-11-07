@@ -15,5 +15,6 @@ await Promise.all([
   build({ ...common, entryPoints: ["src/renderer/hints.ts"], outfile: "dist/hints.js", platform: "browser", format: "iife" }),
   build({ ...common, entryPoints: ["src/renderer/settings.ts"], outfile: "dist/settings.js", platform: "browser", format: "iife" }),
   build({ ...common, entryPoints: ["src/renderer/calls.ts"], outfile: "dist/calls.js", platform: "browser", format: "iife" }),
+  build({ ...common, entryPoints: ["src/renderer/ready.ts"], outfile: "dist/ready.js", platform: "browser", format: "iife" }),
 ]);
 cpSync("static", "dist", { recursive: true });

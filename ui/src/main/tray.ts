@@ -8,6 +8,7 @@ export interface TrayActions {
   openSettings(section?: string): void;
   togglePreset(): void;
   toggleClickThrough(): void;
+  openReady(): void;
   checkUpdates(): void;
   quit(): void;
 }
@@ -47,6 +48,7 @@ export function createTray(a: TrayActions): { setCall(title: string | null): voi
       { label: "Звонки", click: a.openCalls },
       { label: "Настройки", click: () => a.openSettings() },
       { label: "Справка", click: () => a.openSettings("guide") },
+      { label: "Проверка готовности", click: a.openReady },
       { label: "Проверить обновления", click: a.checkUpdates },
       { type: "separator" },
       { label: "«У камеры»", click: a.togglePreset },

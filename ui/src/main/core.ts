@@ -12,7 +12,8 @@ export class CoreProcess {
 
   constructor(
     private exe: string,
-    private args: string[],
+    /** Read at every start: on a fresh install config.json appears only after the UI starts. */
+    private args: () => string[],
     private cwd: string,
     private onEvent: (e: CoreEvent) => void,
   ) {}
@@ -22,8 +23,9 @@ export class CoreProcess {
       this.onEvent({ ev: "core_down", message: `core not found: ${this.exe} (run: npm run core)` });
       return;
     }
-    console.log(`[core] spawn ${this.exe} ${this.args.join(" ")}`);
-    const proc = spawn(this.exe, this.args, { cwd: this.cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    const args = this.args();
+    console.log(`[core] spawn ${this.exe} ${args.join(" ")}`);
+    const proc = spawn(this.exe, args, { cwd: this.cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     this.proc = proc;
     const startedAt = Date.now();
 
@@ -54,9 +56,8 @@ export class CoreProcess {
     this.proc?.stdin?.write(JSON.stringify(cmd) + "\n");
   }
 
-  /** Stops the running core (if any) and starts it again with new arguments. */
-  restart(args: string[]): void {
-    this.args = args;
+  /** Stops the running core (if any) and starts it again (with the arguments as they are now). */
+  restart(): void {
     const p = this.proc;
     if (!p) {
       this.stopping = false;

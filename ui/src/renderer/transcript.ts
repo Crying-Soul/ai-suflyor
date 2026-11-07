@@ -1,4 +1,4 @@
-import type { CaptureStatus, CoreEvent, Speaker, Status } from "../shared/protocol";
+import type { CaptureStatus, CoreEvent, ReadyItem, Speaker, Status } from "../shared/protocol";
 import { $, api, el, follow, icon, overlayUi, sttLabel } from "./common";
 
 const list = $("transcript");
@@ -215,6 +215,7 @@ function renderStatus(s: Status): void {
   renderCapture("them", s.them);
   statusEl.textContent = s.recording_dir ? `${sttLabel(s.stt)}, пишу WAV` : sttLabel(s.stt);
   statusEl.classList.toggle("error", s.stt.startsWith("error"));
+  statusEl.title = s.stt.startsWith("error") ? s.stt.slice(6).trim() : "";
 }
 
 function setMeter(speaker: Speaker, peak: number): void {
@@ -286,11 +287,31 @@ api.onEvent((e: CoreEvent) => {
     }
     case "error":
     case "core_down":
-      statusEl.textContent = `⚠ ${e.message}`;
+      statusEl.textContent = "ядро остановлено";
+      statusEl.title = e.message;
       statusEl.classList.add("error");
       break;
   }
 });
+
+const SETUP: Record<ReadyItem["id"], string> = {
+  core: "ядро не запустилось",
+  whisper: "нет модели распознавания",
+  claude: "Claude не подключён",
+  audio: "нет звука",
+  cuda: "нет CUDA",
+  mt: "нет модели перевода",
+};
+
+// While something required is missing: one line naming it, and the way to the fix.
+function renderSetup(items: ReadyItem[]): void {
+  const missing = items.filter((i) => i.level === "required" && !i.ok);
+  $("setup").hidden = !missing.length;
+  $("setup-text").textContent = missing.length ? `Не всё готово: ${missing.map((i) => SETUP[i.id]).join(", ")}.` : "";
+}
+$("btn-setup").onclick = () => api.ready.open();
+api.ready.onChange(renderSetup);
+void api.ready.list().then(renderSetup);
 
 autoBtn.onclick = () => api.send({ cmd: "set", auto: !(status?.auto ?? true) });
 translateBtn.onclick = () => api.send({ cmd: "set", translate: !(status?.translate ?? false) });

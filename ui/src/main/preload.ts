@@ -31,6 +31,17 @@ const api: RendererApi = {
     reveal: (dir) => ipcRenderer.send("calls:reveal", dir),
     current: () => ipcRenderer.invoke("calls:current"),
   },
+  ready: {
+    list: () => ipcRenderer.invoke("ready:list"),
+    open: () => ipcRenderer.send("ready:open"),
+    useApiKey: (key) => ipcRenderer.invoke("ready:apiKey", key),
+    useClaudeCode: () => ipcRenderer.invoke("ready:claudeCode"),
+    getModel: (id) => ipcRenderer.send("ready:model", id),
+    openLogs: () => ipcRenderer.send("ready:logs"),
+    onChange: (cb) => {
+      ipcRenderer.on("ready:changed", (_e, items) => cb(items));
+    },
+  },
   update: {
     state: () => ipcRenderer.invoke("update:state"),
     check: () => ipcRenderer.send("update:check"),

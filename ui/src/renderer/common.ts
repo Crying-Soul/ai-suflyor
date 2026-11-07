@@ -21,7 +21,8 @@ export function sttLabel(stt: string): string {
   if (stt === "off") return "распознавание выключено";
   if (stt === "loading") return "загружаю модель речи…";
   if (stt.startsWith("ready")) return stt.includes("gpu") ? "распознавание готово (GPU)" : "распознавание готово (CPU)";
-  if (stt.startsWith("error")) return `ошибка распознавания: ${stt.slice(6).trim()}`;
+  // The raw cause goes to the tooltip; «Подготовка к работе» names the fix.
+  if (stt.startsWith("error")) return "распознавание не запущено";
   return stt;
 }
 

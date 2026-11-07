@@ -1,5 +1,6 @@
 import type { ConfigSnapshot, ModelInfo, PackId, RendererApi, SaveResult, UpdateState } from "../shared/protocol";
 import { askConfirm, guardPopups } from "./common";
+import { el, packOps, renderModels, small, WHISPER } from "./model-row";
 
 declare global {
   interface Window {
@@ -185,12 +186,6 @@ function get(obj: Record<string, unknown>, key: string): unknown {
   return key.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), obj);
 }
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, unknown> = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
-  const e = Object.assign(document.createElement(tag), props);
-  e.append(...kids);
-  return e;
-}
-
 function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLElement, () => unknown] {
   switch (f.kind) {
     case "bool": {
@@ -275,7 +270,7 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
     }
     case "models":
     case "pack": {
-      const ops = f.pack ? packOps(f.pack) : WHISPER;
+      const ops = f.pack ? packOps(f.pack) : { ...WHISPER, onUse: reportUse };
       const box = el("ul", { className: "models" });
       renderModels(box, ops).catch(() => box.replaceChildren(el("li", { className: "hint", textContent: "Список моделей недоступен." })));
       api.models.onChange(() => void renderModels(box, ops));
@@ -290,86 +285,13 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
   }
 }
 
-const mb = (bytes: number) => Math.round(bytes / 1024 / 1024).toLocaleString("ru-RU");
-
-function small(text: string, onclick: () => unknown, cls = "btn-ghost small"): HTMLButtonElement {
-  const b = el("button", { type: "button", className: cls, textContent: text });
-  b.onclick = () => {
-    b.disabled = true;
-    Promise.resolve(onclick()).finally(() => (b.disabled = false));
-  };
-  return b;
-}
-
-/** What a model list can do. The translation model has no choice and no removal: one model, used when present. */
-interface ModelOps {
-  list(): Promise<ModelInfo[]>;
-  download(id: string): unknown;
-  cancel(id: string): unknown;
-  use?(id: string): Promise<SaveResult>;
-  remove?(id: string): Promise<void>;
-}
-
-const WHISPER: ModelOps = {
-  list: () => api.models.list(),
-  download: (id) => api.models.download(id),
-  cancel: (id) => api.models.cancel(id),
-  use: (id) => api.models.use(id),
-  remove: (id) => api.models.remove(id),
-};
-
-const packOps = (id: PackId): ModelOps => ({
-  list: async () => [await api.packs.status(id)],
-  download: () => api.packs.download(id),
-  cancel: () => api.packs.cancel(id),
-});
-
-/** Models: one row each, the action fits its state. Redrawn on every download change. */
-async function renderModels(box: HTMLElement, ops: ModelOps): Promise<void> {
-  const list = await ops.list();
-  box.replaceChildren(...list.map((m) => modelRow(m, box, ops)));
-}
-
-function modelRow(m: ModelInfo, box: HTMLElement, ops: ModelOps): HTMLElement {
-  const info = el("div", { className: "model-info" },
-    el("span", { className: "model-name", textContent: m.label }),
-    el("span", { className: "hint", textContent: `${m.note} ${m.sizeMb.toLocaleString("ru-RU")}\u00a0МБ.` }),
-  );
-  if (m.error) info.append(el("span", { className: "hint error", textContent: `Не скачалась: ${m.error}` }));
-  const act = el("div", { className: "model-act" });
-  const refresh = () => renderModels(box, ops);
-  const use = async () => {
-    const res = await ops.use!(m.id);
-    saveState.className = res.ok ? "done" : "error";
-    saveState.textContent = res.ok ? `Модель ${m.label}. Ядро перезапускается.` : `Не выбрана: ${res.error}`;
-    await refresh();
-  };
-  const del = async () => {
-    if (!(await askConfirm(`Удалить модель ${m.label} с диска?`, "Удалить"))) return;
-    await ops.remove!(m.id).catch((e) => askConfirm(String(e), "Понятно", null));
-    await refresh();
-  };
-  const delBtn = () => (ops.remove ? [small("Удалить", del)] : []);
-  if (m.active && m.state === "installed") {
-    act.append(el("span", { className: "in-use", textContent: ops.use ? "используется" : "установлена" }));
-  } else if (m.state === "installed") {
-    act.append(small("Выбрать", use, "btn small"), ...delBtn());
-  } else if (m.state === "downloading") {
-    const pct = m.total ? Math.floor((m.received / m.total) * 100) : 0;
-    const bar = el("progress", { max: 100, value: pct });
-    bar.setAttribute("aria-label", `Загрузка ${m.label}`);
-    act.append(bar, el("span", { className: "num pct", textContent: `${pct}\u00a0%` }), small("Отмена", () => ops.cancel(m.id)));
-  } else if (m.state === "partial") {
-    act.append(el("span", { className: "hint num", textContent: `${mb(m.received)}\u00a0МБ` }), small("Продолжить", () => ops.download(m.id), "btn small"), ...delBtn());
-  } else {
-    act.append(small("Скачать", () => ops.download(m.id)));
-  }
-  const li = el("li", { className: m.active ? "model active" : "model" }, info, act);
-  return li;
-}
-
 /** The in-app guide: first in the list, a page to read rather than a form section. */
 const GUIDE = "guide";
+
+function reportUse(res: SaveResult, m: ModelInfo): void {
+  saveState.className = res.ok ? "done" : "error";
+  saveState.textContent = res.ok ? `Модель ${m.label}. Ядро перезапускается.` : `Не выбрана: ${res.error}`;
+}
 
 function showSection(id: string): void {
   for (const b of nav.querySelectorAll<HTMLButtonElement>("button")) {
