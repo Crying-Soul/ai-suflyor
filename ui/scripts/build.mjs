@@ -4,7 +4,9 @@ import { cpSync, mkdirSync, rmSync } from "node:fs";
 // Start clean so files of removed pages do not linger in dist.
 rmSync("dist", { recursive: true, force: true });
 mkdirSync("dist", { recursive: true });
-const common = { bundle: true, sourcemap: true, logLevel: "info" };
+// --dist (the installer): minified, no source maps.
+const dist = process.argv.includes("--dist");
+const common = { bundle: true, sourcemap: !dist, minify: dist, logLevel: "info" };
 
 await Promise.all([
   build({ ...common, entryPoints: ["src/main/index.ts"], outfile: "dist/main.js", platform: "node", format: "cjs", external: ["electron"] }),
