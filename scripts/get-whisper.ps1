@@ -1,4 +1,4 @@
-# Downloads whisper.cpp server (Windows x64) and a GGML model into .\whisper
+# Downloads the whisper.cpp DLLs (Windows x64) and a GGML model into .\whisper
 # Usage (PowerShell, from the project root):
 #   powershell -ExecutionPolicy Bypass -File scripts\get-whisper.ps1                 # CPU build, large-v3-turbo
 #   powershell -ExecutionPolicy Bypass -File scripts\get-whisper.ps1 -Cuda           # NVIDIA GPU build
@@ -31,7 +31,9 @@ if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
 Expand-Archive $zip -DestinationPath $tmp
 $server = Get-ChildItem $tmp -Recurse -Filter "whisper-server.exe" | Select-Object -First 1
 if (-not $server) { throw "whisper-server.exe not found in $asset" }
-Copy-Item (Join-Path $server.DirectoryName "*") $dir -Recurse -Force
+# Only what whisper.dll loads; the zip also carries ~40 tools and test programs.
+$keep = "whisper.dll", "ggml.dll", "ggml-base.dll", "ggml-cpu-*.dll", "ggml-cuda.dll", "cudart64_*.dll", "cublas64_*.dll", "cublasLt64_*.dll"
+Get-ChildItem $server.DirectoryName -Include $keep -File -Recurse | Copy-Item -Destination $dir -Force
 
 $modelFile = Join-Path $dir "ggml-$Model.bin"
 $modelUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$Model.bin"

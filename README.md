@@ -44,7 +44,7 @@ Useful:
 - Settings: the slider button in the transcript window opens a settings window that edits `config.json` (only the changed keys) and restarts the core. Defaults come from `suflyor-core.exe --print-config`.
 - `debug.recordWav: true` writes 16 kHz WAV of both streams to `recordings/`.
 - The `SUFLYOR_CORE_PATH` environment variable overrides the core binary path.
-- Installer: `cd ui; npm run dist` (NSIS, bundles `suflyor-core.exe` and the whisper DLLs).
+- Installer: `cd ui; npm run dist`. NSIS, maximum compression. It builds the core in the `dist` profile (fat LTO, stripped) and minifies the UI. It bundles `suflyor-core.exe`, `silero_vad.onnx`, only the whisper DLLs that `whisper.dll` loads, and the VC++ runtime from `System32`. Whisper and translation models are downloaded from Settings. Installed, relative paths in `config.json` (in `%APPDATA%\suflyor`) fall back to the folder next to the core.
 
 ## Testing without a call
 

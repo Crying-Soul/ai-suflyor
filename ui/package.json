@@ -8,9 +8,9 @@
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p .",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/renderer/md.test.ts src/main/calls.test.ts src/main/log.test.ts",
-    "core": "cargo build --release --manifest-path ../core/Cargo.toml",
+    "core": "cargo build --profile dist --manifest-path ../core/Cargo.toml",
     "start": "npm run build && electron .",
-    "dist": "npm run core && npm run build && electron-builder --win nsis"
+    "dist": "npm run core && node scripts/build.mjs --dist && electron-builder --win nsis"
   },
   "dependencies": {},
   "devDependencies": {
@@ -23,27 +23,65 @@
   "build": {
     "appId": "local.suflyor",
     "productName": "Suflyor",
+    "directories": {
+      "output": "release"
+    },
     "files": [
       "dist/**",
       "package.json"
     ],
     "extraResources": [
       {
-        "from": "../core/target/release/suflyor-core.exe",
+        "from": "../core/target/dist/suflyor-core.exe",
         "to": "suflyor-core.exe"
+      },
+      {
+        "from": "../models/silero_vad.onnx",
+        "to": "models/silero_vad.onnx"
       },
       {
         "from": "../whisper",
         "to": "whisper",
         "filter": [
-          "*.dll",
-          "*.exe"
+          "whisper.dll",
+          "ggml.dll",
+          "ggml-base.dll",
+          "ggml-cpu-*.dll",
+          "ggml-cuda.dll",
+          "cudart64_*.dll",
+          "cublas64_*.dll",
+          "cublasLt64_*.dll"
         ]
+      },
+      {
+        "from": "C:/Windows/System32/vcruntime140.dll",
+        "to": "vcruntime140.dll"
+      },
+      {
+        "from": "C:/Windows/System32/vcruntime140_1.dll",
+        "to": "vcruntime140_1.dll"
+      },
+      {
+        "from": "C:/Windows/System32/msvcp140.dll",
+        "to": "msvcp140.dll"
+      },
+      {
+        "from": "C:/Windows/System32/msvcp140_1.dll",
+        "to": "msvcp140_1.dll"
+      },
+      {
+        "from": "C:/Windows/System32/vcomp140.dll",
+        "to": "whisper/vcomp140.dll"
       }
     ],
     "win": {
       "target": "nsis"
-    }
+    },
+    "electronLanguages": [
+      "ru",
+      "en-US"
+    ],
+    "compression": "maximum"
   },
   "allowScripts": {
     "esbuild@0.28.2": true

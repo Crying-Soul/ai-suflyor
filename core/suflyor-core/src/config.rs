@@ -237,6 +237,15 @@ impl Config {
     /// Resolves a config path relative to the config file's directory.
     pub fn path(&self, p: &str) -> PathBuf {
         let p = Path::new(p);
-        if p.is_absolute() { p.to_path_buf() } else { self.base_dir.join(p) }
+        if p.is_absolute() {
+            return p.to_path_buf();
+        }
+        let here = self.base_dir.join(p);
+        if here.exists() {
+            return here;
+        }
+        // Installed: config.json lives in %APPDATA%, the bundled whisper/ and models/ next to the exe.
+        let bundled = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join(p)));
+        bundled.filter(|b| b.exists()).unwrap_or(here)
     }
 }
