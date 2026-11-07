@@ -4,7 +4,7 @@ import path from "node:path";
 import readline from "node:readline";
 import type { Command, CoreEvent } from "../shared/protocol";
 
-/** Supervises call-core.exe: spawns it, parses NDJSON events, restarts it on crash. */
+/** Supervises suflyor-core.exe: spawns it, parses NDJSON events, restarts it on crash. */
 export class CoreProcess {
   private proc: ChildProcess | null = null;
   private restarts = 0;
@@ -83,9 +83,9 @@ export class CoreProcess {
   }
 }
 
-/** Dev: ../core/target/release/call-core.exe; packaged: resources/call-core.exe; override: CALL_CORE_PATH. */
+/** Dev: ../core/target/release/suflyor-core.exe; packaged: resources/suflyor-core.exe; override: SUFLYOR_CORE_PATH. */
 export function resolveCoreExe(appPath: string, isPackaged: boolean): string {
-  if (process.env.CALL_CORE_PATH) return process.env.CALL_CORE_PATH;
-  if (isPackaged) return path.join(process.resourcesPath, "call-core.exe");
-  return path.resolve(appPath, "..", "core", "target", "release", "call-core.exe");
+  if (process.env.SUFLYOR_CORE_PATH) return process.env.SUFLYOR_CORE_PATH;
+  if (isPackaged) return path.join(process.resourcesPath, "suflyor-core.exe");
+  return path.resolve(appPath, "..", "core", "target", "release", "suflyor-core.exe");
 }

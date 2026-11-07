@@ -1,4 +1,4 @@
-//! NDJSON protocol between the Electron UI and call-core (one JSON object per line).
+//! NDJSON protocol between the Electron UI and suflyor-core (one JSON object per line).
 //! UI -> core: [`Command`] on stdin. core -> UI: [`Event`] on stdout. Logs go to stderr.
 
 use serde::{Deserialize, Serialize};

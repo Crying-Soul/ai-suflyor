@@ -1,4 +1,4 @@
-//! call-core: audio capture, speech pipeline and Claude client for the call assistant.
+//! suflyor-core: audio capture, speech pipeline and Claude client for Suflyor, the live call prompter.
 //! Talks NDJSON over stdio to the Electron UI (see the `protocol` crate).
 
 mod answer;

@@ -1,6 +1,6 @@
-# Call Assistant
+# Suflyor (Суфлёр)
 
-Live call assistant for Windows. A Rust core (`core/`, `call-core.exe`) handles audio capture, the speech pipeline and Claude. A thin Electron UI (`ui/`) shows two overlay windows (live transcript, Claude's hints) and handles hotkeys. They talk over NDJSON on the core's stdio.
+Live call prompter for Windows. A Rust core (`core/`, `suflyor-core.exe`) handles audio capture, the speech pipeline and Claude. A thin Electron UI (`ui/`) shows two overlay windows (live transcript, Claude's hints) and handles hotkeys. They talk over NDJSON on the core's stdio.
 
 Architecture and roadmap: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -26,7 +26,7 @@ copy config.example.json config.json                                     # set a
 # core
 cargo build --release --manifest-path core\Cargo.toml
 
-# UI (spawns core\target\release\call-core.exe)
+# UI (spawns core\target\release\suflyor-core.exe)
 cd ui
 npm install
 npm start
@@ -34,17 +34,17 @@ npm start
 
 Useful:
 
-- `core\target\release\call-core.exe --list-mics` lists microphone names for `audio.micDevice`, which matches on a substring.
+- `core\target\release\suflyor-core.exe --list-mics` lists microphone names for `audio.micDevice`, which matches on a substring.
 - `audio.themSource`: `"system"` (all system audio) or `"process:chrome.exe"` (one app only, Windows 10 2004+).
-- Context per call: the chip in the transcript bar opens «Звонки». «Обо мне» (CV, stack) is shared by every call; a folder holds a company or project (vacancy, notes); a call holds its own notes. Each takes notes, a whisper glossary and md/txt/pdf files. «Начать звонок» puts that context into the prompt and saves the transcript, answers and, on «Завершить звонок», a summary that later calls of the folder see. Data lives in `dataDir` (default `Documents\Call Assistant`). `call-core.exe --print-context <call dir>` prints the exact prompt.
+- Context per call: the chip in the transcript bar opens «Звонки». «Обо мне» (CV, stack) is shared by every call; a folder holds a company or project (vacancy, notes); a call holds its own notes. Each takes notes, a whisper glossary and md/txt/pdf files. «Начать звонок» puts that context into the prompt and saves the transcript, answers and, on «Завершить звонок», a summary that later calls of the folder see. Data lives in `dataDir` (default `Documents\Suflyor`). `suflyor-core.exe --print-context <call dir>` prints the exact prompt.
 - Whisper models: Settings → «Распознавание» downloads, resumes, checks and switches models.
 - `vad.minSilenceMs` (default 500): the pause that ends a phrase. Lower is faster, but phrases get cut at commas.
 - `vad.earlySilenceMs` (default 250, "them" only): after this much silence the final is decoded speculatively and reused if speech does not resume. It saves about 250 ms per phrase; 0 turns it off.
 - Claude connection (`llm.backend`): `api` uses `anthropicApiKey` (or `ANTHROPIC_API_KEY`). `claude-code` uses your Claude Code login and subscription limits, with no key. Install Claude Code natively (`irm https://claude.ai/install.ps1 | iex`, then `claude login`) and keep `claudeCode.command` = `["claude"]`. Or run it from WSL: `["wsl.exe", "-e", "/path/to/claude"]`.
-- Settings: the slider button in the transcript window opens a settings window that edits `config.json` (only the changed keys) and restarts the core. Defaults come from `call-core.exe --print-config`.
+- Settings: the slider button in the transcript window opens a settings window that edits `config.json` (only the changed keys) and restarts the core. Defaults come from `suflyor-core.exe --print-config`.
 - `debug.recordWav: true` writes 16 kHz WAV of both streams to `recordings/`.
-- The `CALL_CORE_PATH` environment variable overrides the core binary path.
-- Installer: `cd ui; npm run dist` (NSIS, bundles `call-core.exe` and the whisper DLLs).
+- The `SUFLYOR_CORE_PATH` environment variable overrides the core binary path.
+- Installer: `cd ui; npm run dist` (NSIS, bundles `suflyor-core.exe` and the whisper DLLs).
 
 ## Testing without a call
 
@@ -71,7 +71,7 @@ Useful:
 | Ctrl+Alt+W | «Что сказать»: three phrases to continue the conversation |
 | Ctrl+Alt+T | Translate the other side's speech on/off (local Opus-MT model: download it once in Settings → «Ответы») |
 
-The tray icon (it may sit in the `^` overflow) shows or hides the windows, opens «Звонки» and «Настройки», and quits. Logs go to `%APPDATA%\call-assistant-ui\logs\YYYY-MM-DD.log` and are kept 7 days (Settings → «Отладка» → «Открыть папку логов»).
+The tray icon (it may sit in the `^` overflow) shows or hides the windows, opens «Звонки» and «Настройки», and quits. Logs go to `%APPDATA%\suflyor\logs\YYYY-MM-DD.log` and are kept 7 days (Settings → «Отладка» → «Открыть папку логов»).
 
 Ctrl+Shift+S and Ctrl+Shift+A are also Teams shortcuts; if you use Teams, rebind them in Settings → «Горячие клавиши». The overlays never take keyboard focus.
 

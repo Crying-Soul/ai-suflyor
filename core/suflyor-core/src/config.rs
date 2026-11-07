@@ -32,7 +32,7 @@ pub struct Config {
     /// Terms passed to whisper as initial prompt (spelling hints: Kubernetes, PostgreSQL...).
     pub glossary: Vec<String>,
     pub debug: DebugConfig,
-    /// Profile, call folders and their transcripts. Empty = `Documents\Call Assistant` in the user's home.
+    /// Profile, call folders and their transcripts. Empty = `Documents\Suflyor` in the user's home.
     pub data_dir: String,
     /// Directory relative paths resolve against (the config file's directory).
     #[serde(skip)]
@@ -226,7 +226,7 @@ impl Config {
     fn fill_data_dir(&mut self) {
         if self.data_dir.trim().is_empty() {
             let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).unwrap_or_default();
-            self.data_dir = home.join("Documents").join("Call Assistant").display().to_string();
+            self.data_dir = home.join("Documents").join("Suflyor").display().to_string();
         }
     }
 

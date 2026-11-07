@@ -10,7 +10,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const status = { ev: "status", me: { state: "running", source: "mic: Focusrite USB (2- Focusrite USB Audio) [48000 Hz, 2 ch]" }, them: { state: "running", source: "system loopback: Speakers [192000 Hz, 2 ch]" }, stt: "ready (gpu)", auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", translate: true, busy: false };
 const T = 1000;
 // Live phase: speech just started, then a partial with a settled prefix, then a question final.
-const callEv = { ev: "call", dir: "C:\\Users\\me\\Documents\\Call Assistant\\folders\\yandex\\calls\\2026-11-05-1200-sys", title: "Системный дизайн", folder: "Яндекс Маркет", tokens: 5320, parts: [], warnings: [] };
+const callEv = { ev: "call", dir: "C:\\Users\\me\\Documents\\Suflyor\\folders\\yandex\\calls\\2026-11-05-1200-sys", title: "Системный дизайн", folder: "Яндекс Маркет", tokens: 5320, parts: [], warnings: [] };
 const live = [
   status,
   callEv,
@@ -43,14 +43,14 @@ const send = (ws, evs) => { for (const e of evs) for (const w of ws) w.webConten
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
   ipcMain.handle("mt:status", () => ({ id: "opus-mt-en-ru", label: "Opus-MT, английский → русский", sizeMb: 112, note: "Перевод речи собеседника на процессоре, без интернета и токенов.", state: "installed", received: 0, total: 0, active: true }));
-  ipcMain.handle("config:load", () => ({ path: "C:\\dev\\interviewer\\config.json", raw: cfg, effective: cfg }));
+  ipcMain.handle("config:load", () => ({ path: "C:\\dev\\suflyor\\config.json", raw: cfg, effective: cfg }));
   ipcMain.handle("config:mics", () => ["Focusrite USB (2- Focusrite USB Audio)", "Microphone (Realtek High Definition Audio)"]);
   ipcMain.handle("privacy:test", () => ({
     image: "data:image/png;base64," + fs.readFileSync(path.join(out, "privacy-capture.png")).toString("base64"),
     windows: [{ name: "Транскрипт", hidden: true }, { name: "Подсказки", hidden: true }, { name: "Настройки", hidden: true }],
     osOk: true,
   }));
-  ipcMain.handle("config:save", () => ({ ok: true, path: "C:\\dev\\interviewer\\config.json" }));
+  ipcMain.handle("config:save", () => ({ ok: true, path: "C:\\dev\\suflyor\\config.json" }));
   const M = (id, label, sizeMb, note, state, extra = {}) => ({ id, label, sizeMb, note, state, received: 0, total: 0, active: false, ...extra });
   ipcMain.handle("models:list", () => [
     M("large-v3-turbo", "Large v3 Turbo", 1620, "Лучшее соотношение: почти как Large v3, в разы быстрее. По умолчанию.", "installed", { active: true }),
@@ -118,7 +118,7 @@ app.whenReady().then(async () => {
   await shot(s, "settings-guide-2.png");
 
   // «Звонки» with mock storage.
-  const D = "C:\\Users\\me\\Documents\\Call Assistant";
+  const D = "C:\\Users\\me\\Documents\\Suflyor";
   const Y = `${D}\\folders\\yandex`;
   const tree = {
     dataDir: D,

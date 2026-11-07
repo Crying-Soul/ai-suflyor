@@ -35,7 +35,7 @@ pub struct CodeSession {
 
 impl CodeSession {
     pub fn new(command: Vec<String>, system: String, effort: String, tier: &str) -> CodeSession {
-        let dir = std::env::temp_dir().join(format!("call-core-claude-{tier}"));
+        let dir = std::env::temp_dir().join(format!("suflyor-core-claude-{tier}"));
         CodeSession { command, system, effort, dir, proc: None, fresh: true, next_request: 1 }
     }
 

@@ -39,7 +39,7 @@ function icon(): Electron.NativeImage {
 
 export function createTray(a: TrayActions): { setCall(title: string | null): void } {
   const tray = new Tray(icon());
-  tray.setToolTip("Ассистент звонков");
+  tray.setToolTip("Суфлёр");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Показать или скрыть окна", click: a.toggleWindows },
@@ -54,5 +54,5 @@ export function createTray(a: TrayActions): { setCall(title: string | null): voi
     ]),
   );
   tray.on("click", a.toggleWindows);
-  return { setCall: (title) => tray.setToolTip(title ? `Ассистент звонков: ${title}` : "Ассистент звонков") };
+  return { setCall: (title) => tray.setToolTip(title ? `Суфлёр: ${title}` : "Суфлёр") };
 }
