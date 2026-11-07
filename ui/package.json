@@ -1,7 +1,7 @@
 {
-  "name": "call-assistant-ui",
+  "name": "suflyor",
   "version": "0.1.0",
-  "description": "Live call assistant: hears mic + system audio, transcribes locally with whisper.cpp, answers with Claude",
+  "description": "Suflyor, a live call prompter: hears mic + system audio, transcribes locally with whisper.cpp, answers with Claude",
   "main": "dist/main.js",
   "private": true,
   "scripts": {
@@ -21,16 +21,16 @@
     "typescript": "^7.0.2"
   },
   "build": {
-    "appId": "local.call-assistant",
-    "productName": "CallAssistant",
+    "appId": "local.suflyor",
+    "productName": "Suflyor",
     "files": [
       "dist/**",
       "package.json"
     ],
     "extraResources": [
       {
-        "from": "../core/target/release/call-core.exe",
-        "to": "call-core.exe"
+        "from": "../core/target/release/suflyor-core.exe",
+        "to": "suflyor-core.exe"
       },
       {
         "from": "../whisper",

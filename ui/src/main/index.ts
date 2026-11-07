@@ -398,16 +398,41 @@ function saveConfig(patch: Record<string, unknown>): SaveResult {
   return res;
 }
 
+const DATA_DIR = "Suflyor";
+
+/** Renames `from` to `to` when only `from` exists. True when `to` is there to use. */
+function moveOnce(from: string, to: string): boolean {
+  if (fs.existsSync(to)) return true;
+  if (!fs.existsSync(from)) return false;
+  try {
+    fs.renameSync(from, to);
+    return true;
+  } catch (e) {
+    console.warn(`move ${from} -> ${to}: ${e}`);
+    return false;
+  }
+}
+
 /** Pins dataDir to the real Documents folder once: it may be redirected (F:\Documents, OneDrive),
  *  which the core's %USERPROFILE%\Documents default does not know. */
 function pinDataDir(): void {
-  if (!readRaw(configPath).dataDir) writeConfig({ dataDir: path.join(app.getPath("documents"), "Call Assistant") });
+  const docs = app.getPath("documents");
+  const dir = path.join(docs, DATA_DIR);
+  const raw = readRaw(configPath).dataDir;
+  // Renamed from «Call Assistant»: the old default folder moves once; a folder the user chose stays.
+  const old = path.join(docs, "Call Assistant");
+  if (raw && path.resolve(String(raw)).toLowerCase() !== old.toLowerCase()) return;
+  if (raw || fs.existsSync(old)) {
+    // Not moved (open in Explorer, say): keep using the old folder.
+    if (!moveOnce(old, dir)) return void (raw || writeConfig({ dataDir: old }));
+  }
+  writeConfig({ dataDir: dir });
 }
 
 /** The core's effective dataDir (it fills in the default), relative paths against the config's folder. */
 async function resolveDataDir(): Promise<void> {
   const cfg = await loadConfig();
-  const dir = String(cfg.effective.dataDir ?? "") || path.join(app.getPath("documents"), "Call Assistant");
+  const dir = String(cfg.effective.dataDir ?? "") || path.join(app.getPath("documents"), DATA_DIR);
   dataDir = path.resolve(path.dirname(cfg.path), dir);
 }
 
@@ -539,7 +564,7 @@ async function privacyTest(): Promise<PrivacyReport> {
   const anchor = overlays.hints ?? overlays.transcript;
   const display = anchor ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay();
   const r = screen.dipToScreenRect(null, display.bounds);
-  const file = path.join(app.getPath("temp"), `call-assistant-privacy-${Date.now()}.png`);
+  const file = path.join(app.getPath("temp"), `suflyor-privacy-${Date.now()}.png`);
   try {
     await runCore(["--snap", file, "--rect", `${r.x},${r.y},${r.width},${r.height}`]);
     const image = `data:image/png;base64,${fs.readFileSync(file).toString("base64")}`;
@@ -574,6 +599,11 @@ function registerCallsIpc(): void {
   ipcMain.handle("calls:current", () => lastCall);
 }
 
+// Renamed from CallAssistant: window state, logs and downloaded models move to the new userData once.
+// Per file: Electron has created userData itself by now.
+for (const name of ["call-assistant-ui", "CallAssistant"]) {
+  for (const f of ["windows.json", "logs", "whisper-models"]) moveOnce(path.join(app.getPath("appData"), name, f), path.join(app.getPath("userData"), f));
+}
 const logDir = path.join(app.getPath("userData"), "logs");
 startLogs(logDir);
 

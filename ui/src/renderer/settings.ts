@@ -151,7 +151,7 @@ const SECTIONS: Section[] = [
     id: "data",
     title: "Данные",
     fields: [
-      { key: "dataDir", label: "Папка звонков", kind: "text", hint: "Профиль, папки, транскрипты и итоги. Пусто: Документы\\Call Assistant." },
+      { key: "dataDir", label: "Папка звонков", kind: "text", hint: "Профиль, папки, транскрипты и итоги. Пусто: Документы\\Suflyor." },
     ],
   },
   {

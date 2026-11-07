@@ -189,32 +189,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
-name = "call-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "audio",
- "base64 0.22.1",
- "futures-util",
- "hound",
- "image",
- "mt",
- "pdf-extract",
- "protocol",
- "reqwest",
- "serde",
- "serde_json",
- "stt",
- "tempfile",
- "textproc",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "vad",
- "windows",
-]
-
-[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2238,6 +2212,32 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "suflyor-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "audio",
+ "base64 0.22.1",
+ "futures-util",
+ "hound",
+ "image",
+ "mt",
+ "pdf-extract",
+ "protocol",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "stt",
+ "tempfile",
+ "textproc",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vad",
+ "windows",
+]
 
 [[package]]
 name = "syn"

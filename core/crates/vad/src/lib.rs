@@ -27,7 +27,7 @@ pub fn env() -> Result<&'static Environment> {
     if let Some(e) = ENV.get() {
         return Ok(e);
     }
-    let e = ort::init().with_name("call-core").build().map_err(|e| anyhow!("ort init: {e}"))?;
+    let e = ort::init().with_name("suflyor-core").build().map_err(|e| anyhow!("ort init: {e}"))?;
     Ok(ENV.get_or_init(|| e))
 }
 

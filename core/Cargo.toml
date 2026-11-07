@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/protocol", "crates/audio", "crates/vad", "crates/stt", "crates/textproc", "crates/mt", "call-core"]
+members = ["crates/protocol", "crates/audio", "crates/vad", "crates/stt", "crates/textproc", "crates/mt", "suflyor-core"]
 
 [workspace.package]
 edition = "2024"

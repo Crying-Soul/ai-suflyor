@@ -1,5 +1,5 @@
 [package]
-name = "call-core"
+name = "suflyor-core"
 edition.workspace = true
 version.workspace = true
 
