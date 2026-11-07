@@ -35,7 +35,9 @@ enum Msg {
     /// New system prompt (another call's context): the session restarts on it.
     Reconfigure(String),
     /// Drop answer turn `turn` (an early answer whose question went on); other turns ignore it.
-    Cancel { turn: u64 },
+    Cancel {
+        turn: u64,
+    },
     /// New notes stand in for the old transcript: restart the session on them once the current answer is done.
     Compact,
 }
@@ -324,12 +326,9 @@ fn hints_block(answers: &[crate::call::AnswerRecord]) -> String {
 
 pub(crate) fn session(cfg: &Config, tier: &'static str, system: String) -> Session {
     if cfg.llm.backend == Backend::ClaudeCode {
-        Session::Code(llm::claude_code::CodeSession::new(cfg.claude_code.command.clone(), system, cfg.effort.clone(), tier))
+        Session::Code(Box::new(llm::claude_code::CodeSession::new(cfg.claude_code.command.clone(), system, cfg.effort.clone(), tier)))
     } else {
-        let key = Some(cfg.anthropic_api_key.clone())
-            .filter(|k| !k.is_empty())
-            .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
-            .unwrap_or_default();
+        let key = Some(cfg.anthropic_api_key.clone()).filter(|k| !k.is_empty()).or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()).unwrap_or_default();
         let max_tokens = match tier {
             "quick" => 200,
             "summary" => 1500,
@@ -580,16 +579,19 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
             };
             let error = match result {
                 Some(Ok(())) => {
-                    crate::call::save_answer(&shared, crate::call::AnswerRecord {
-                        turn: req.turn,
-                        tier: tier.into(),
-                        trigger: req.trigger.clone(),
-                        question: req.question.clone(),
-                        q_t: req.q_t,
-                        model: req.model.clone(),
-                        text: std::mem::take(&mut answer),
-                        shot: req.shot_file.clone(),
-                    });
+                    crate::call::save_answer(
+                        &shared,
+                        crate::call::AnswerRecord {
+                            turn: req.turn,
+                            tier: tier.into(),
+                            trigger: req.trigger.clone(),
+                            question: req.question.clone(),
+                            q_t: req.q_t,
+                            model: req.model.clone(),
+                            text: std::mem::take(&mut answer),
+                            shot: req.shot_file.clone(),
+                        },
+                    );
                     None
                 }
                 Some(Err(e)) => {
@@ -653,10 +655,10 @@ mod tests {
     /// The error of the answer `id` (None = it finished).
     async fn end(rx: &mut mpsc::UnboundedReceiver<Event>, want: u64) -> Option<String> {
         loop {
-            if let Event::AnswerEnd { id, error } = rx.recv().await.expect("tier stopped") {
-                if id == want {
-                    return error;
-                }
+            if let Event::AnswerEnd { id, error } = rx.recv().await.expect("tier stopped")
+                && id == want
+            {
+                return error;
             }
         }
     }
@@ -799,7 +801,14 @@ mod tests {
         tx.send(Msg::Compact).unwrap();
         let mut segs = (*segs()).clone();
         segs.push(them(5000, "А каналы?"));
-        tx.send(Msg::Ask(Req { segs: Arc::new(segs), ..match ask(2, None) { Msg::Ask(r) => r, _ => unreachable!() } })).unwrap();
+        tx.send(Msg::Ask(Req {
+            segs: Arc::new(segs),
+            ..match ask(2, None) {
+                Msg::Ask(r) => r,
+                _ => unreachable!(),
+            }
+        }))
+        .unwrap();
         assert_eq!(end(&mut rx, 2).await, None);
         let seen = seen.lock().unwrap();
         let t = &seen[1].0;

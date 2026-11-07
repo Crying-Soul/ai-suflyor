@@ -6,7 +6,8 @@ import path from "node:path";
 import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status, UiMessage } from "../shared/protocol";
 import * as calls from "./calls";
 import * as models from "./models";
-import * as mt from "./mt";
+import { cuda } from "./cuda";
+import { mt } from "./mt";
 import { createTray } from "./tray";
 import { startLogs } from "./log";
 import { CoreProcess, resolveCoreExe } from "./core";
@@ -489,25 +490,39 @@ async function removeNode(dir: string): Promise<void> {
 /** Where downloaded whisper models go: whisper/ in dev (next to whisper.dll), userData when installed. */
 const modelsDir = () => (app.isPackaged ? path.join(app.getPath("userData"), "whisper-models") : path.join(rootDir(), "whisper"));
 
+/** A config path as the core resolves it: against the config's folder. */
+const configRel = (p: string) => path.resolve(path.dirname(configPath ?? newConfigPath()), p);
+
 /** stt.model as an absolute path (relative ones resolve against the config's folder, as in the core). */
 function activeModel(): string {
   const p = (readRaw(configPath).stt as { model?: string } | undefined)?.model || "whisper/ggml-large-v3-turbo.bin";
-  return path.resolve(path.dirname(configPath ?? newConfigPath()), p);
+  return configRel(p);
 }
 
-/** translateModel as an absolute path, resolved like the core does. */
-function mtDir(): string {
-  const p = (readRaw(configPath).translateModel as string | undefined) || "models/opus-mt-en-ru";
-  return path.resolve(path.dirname(configPath ?? newConfigPath()), p);
+/** The CUDA backend: next to whisper.dll in dev (get-whisper.ps1 -Cuda), else stt.cudaDir. */
+function cudaDir(): string {
+  const stt = (readRaw(configPath).stt ?? {}) as { dll?: string; cudaDir?: string };
+  const beside = path.dirname(configRel(stt.dll || "whisper/whisper.dll"));
+  return fs.existsSync(path.join(beside, "ggml-cuda.dll")) ? beside : configRel(stt.cudaDir || "cuda");
 }
+
+const PACKS = {
+  mt: { pack: mt, dir: () => configRel((readRaw(configPath).translateModel as string | undefined) || "models/opus-mt-en-ru") },
+  cuda: { pack: cuda, dir: cudaDir },
+};
+type PackId = keyof typeof PACKS;
 
 function registerModelsIpc(): void {
   models.useFetch(net.fetch as typeof fetch);
-  ipcMain.handle("mt:status", () => mt.status(mtDir()));
-  // Not awaited, like the whisper download: progress arrives as models:changed.
-  ipcMain.handle("mt:download", () => void mt.download(mtDir(), () => settingsWin?.webContents.send("models:changed")));
-  ipcMain.on("mt:cancel", () => mt.cancel());
   const changed = () => settingsWin?.webContents.send("models:changed");
+  ipcMain.handle("pack:status", (_e, id: PackId) => PACKS[id].pack.status(PACKS[id].dir()));
+  // Not awaited, like the whisper download: progress arrives as models:changed.
+  ipcMain.handle("pack:download", (_e, id: PackId) => {
+    const { pack, dir } = PACKS[id];
+    // The core picks the CUDA backend up when it starts.
+    void pack.download(dir(), changed).then(() => id === "cuda" && pack.status(dir()).state === "installed" && core.restart(coreArgs()));
+  });
+  ipcMain.on("pack:cancel", (_e, id: PackId) => PACKS[id].pack.cancel());
   ipcMain.handle("models:list", () => models.list(modelsDir(), activeModel()));
   // Not awaited: the download outlives the request; progress arrives as models:changed.
   ipcMain.handle("models:download", (_e, id: string) => void models.download(modelsDir(), id, changed));

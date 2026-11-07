@@ -76,12 +76,8 @@ impl ApiSession {
         let body = self.body(model);
         let mut attempt = 0;
         let resp = loop {
-            let mut req = self
-                .client
-                .post("https://api.anthropic.com/v1/messages")
-                .header("x-api-key", &self.key)
-                .header("anthropic-version", "2023-06-01")
-                .json(&body);
+            let mut req =
+                self.client.post("https://api.anthropic.com/v1/messages").header("x-api-key", &self.key).header("anthropic-version", "2023-06-01").json(&body);
             if fallback_supported(model) {
                 req = req.header("anthropic-beta", "server-side-fallback-2026-07-01");
             }
@@ -164,12 +160,8 @@ fn find_event_end(buf: &[u8]) -> Option<usize> {
 }
 
 fn error_message(body: &str) -> String {
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .and_then(|v| v["error"]["message"].as_str().map(String::from))
-        .unwrap_or_else(|| body.chars().take(300).collect())
+    serde_json::from_str::<Value>(body).ok().and_then(|v| v["error"]["message"].as_str().map(String::from)).unwrap_or_else(|| body.chars().take(300).collect())
 }
-
 
 #[cfg(test)]
 mod tests {

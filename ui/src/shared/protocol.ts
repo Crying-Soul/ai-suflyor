@@ -162,11 +162,12 @@ export interface ModelInfo {
   error?: string;
 }
 
-/** The local translation model: one entry, installed or not. Changes arrive through `ModelsApi.onChange`. */
-export interface MtApi {
-  status(): Promise<ModelInfo>;
-  download(): Promise<void>;
-  cancel(): void;
+/** Optional downloads: the translation model and the CUDA backend. Changes arrive through `ModelsApi.onChange`. */
+export type PackId = "mt" | "cuda";
+export interface PacksApi {
+  status(id: PackId): Promise<ModelInfo>;
+  download(id: PackId): Promise<void>;
+  cancel(id: PackId): void;
 }
 
 export interface ModelsApi {
@@ -217,7 +218,7 @@ export interface RendererApi {
   copy(text: string): void;
   calls: CallsApi;
   models: ModelsApi;
-  mt: MtApi;
+  packs: PacksApi;
   privacyTest(): Promise<PrivacyReport>;
   openLogs(): void;
   /** Disk path of a file dropped on the page. */

@@ -89,13 +89,23 @@ pub fn spawn(cfg: &Config, shared: Arc<Shared>, queue: Arc<SttQueue>) -> std::io
     })
 }
 
+/// ((start_sample, len), text or None if dropped, decode ms) of a speculative decode.
+type Speculative = ((u64, usize), Option<String>, f64);
+
 fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
     shared.update_status(|s| s.stt = "loading".into());
     let t = Instant::now();
+    let dll = cfg.path(&cfg.stt.dll);
     let model = Whisper::load(
-        &cfg.path(&cfg.stt.dll),
+        &dll,
         &cfg.path(&cfg.stt.model),
-        &ModelOptions { use_gpu: cfg.stt.use_gpu, gpu_device: cfg.stt.gpu_device, flash_attn: cfg.stt.flash_attn, verbose: cfg.stt.verbose },
+        &ModelOptions {
+            cuda_dll: cuda_dll(cfg, &dll),
+            use_gpu: cfg.stt.use_gpu,
+            gpu_device: cfg.stt.gpu_device,
+            flash_attn: cfg.stt.flash_attn,
+            verbose: cfg.stt.verbose,
+        },
     )?;
     let mut states: [State; 2] = [model.new_state()?, model.new_state()?];
     let base = DecodeOptions {
@@ -122,8 +132,8 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
     let mut last_partial: [(u64, String); 2] = Default::default();
     // Per speaker: stream sample up to which audio is finalized; older partials are stale.
     let mut finalized_upto: [u64; 2] = [0, 0];
-    // Per speaker: ((start_sample, len), text or None if dropped, decode ms) of the last speculative decode.
-    let mut spec: [Option<((u64, usize), Option<String>, f64)>; 2] = Default::default();
+    // Per speaker: the last speculative decode.
+    let mut spec: [Option<Speculative>; 2] = Default::default();
     // Language whisper detected on the last full decode. With `language: auto`, partials reuse it:
     // detection on < 1 s of audio guesses wrong (Russian speech came out as Japanese).
     let mut lang: Option<String> = None;
@@ -169,10 +179,11 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
                 spec[idx] = Some((key, raw, decode_ms));
             }
             let Some(text) = text else { continue };
-            if job.speculative && speaker == Speaker::Them {
-                if let Some(a) = shared.answerer.get() {
-                    a.on_them_early(crate::FinalSegment { speaker, t_ms: t, end_ms: t + (job.utt.speech_end_sample - start) / 16, text: text.clone() });
-                }
+            if job.speculative
+                && speaker == Speaker::Them
+                && let Some(a) = shared.answerer.get()
+            {
+                a.on_them_early(crate::FinalSegment { speaker, t_ms: t, end_ms: t + (job.utt.speech_end_sample - start) / 16, text: text.clone() });
             }
             // Echo partials would flash the other side's words on our row until the final drops them.
             if speaker == Speaker::Me && is_echo(shared, t, &text, &last_partial[1].1) {
@@ -194,11 +205,11 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
             info!("[{}] dropped: {raw:?}", speaker.as_str());
         }
         // Without headphones the mic hears the speakers: drop "me" text that repeats recent "them" speech.
-        if let (Speaker::Me, Some(tx)) = (speaker, &text) {
-            if is_echo(shared, t, tx, &last_partial[1].1) {
-                info!("[me] echo dropped: {tx}");
-                text = None;
-            }
+        if let (Speaker::Me, Some(tx)) = (speaker, &text)
+            && is_echo(shared, t, tx, &last_partial[1].1)
+        {
+            info!("[me] echo dropped: {tx}");
+            text = None;
         }
         // An empty final removes the utterance's row from the UI.
         let text = text.unwrap_or_default();
@@ -218,16 +229,18 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
         // The local model has one pair: English speech, a Russian-speaking user (the detected language, or the configured one).
         let english = lang.as_deref().or(opts_language(cfg)) == Some(crate::translate::FROM);
         let wanted = english && cfg.user_language == crate::translate::TO;
-        if speaker == Speaker::Them && wanted && shared.status.lock().unwrap().translate {
-            if let Some(tr) = shared.translator.get() {
-                tr.push(t, text.clone());
-            }
+        if speaker == Speaker::Them
+            && wanted
+            && shared.status.lock().unwrap().translate
+            && let Some(tr) = shared.translator.get()
+        {
+            tr.push(t, text.clone());
         }
         last_text[idx] = text;
-        if speaker == Speaker::Them {
-            if let Some(a) = shared.answerer.get() {
-                a.on_them_final();
-            }
+        if speaker == Speaker::Them
+            && let Some(a) = shared.answerer.get()
+        {
+            a.on_them_final();
         }
     }
     Ok(())
@@ -244,11 +257,7 @@ fn is_echo(shared: &Shared, t: u64, text: &str, them_partial: &str) -> bool {
         return true;
     }
     let transcript = shared.transcript.lock().unwrap();
-    transcript
-        .iter()
-        .rev()
-        .take_while(|f| t.abs_diff(f.t_ms) < 20_000)
-        .any(|f| f.speaker == Speaker::Them && textproc::is_echo(text, &f.text))
+    transcript.iter().rev().take_while(|f| t.abs_diff(f.t_ms) < 20_000).any(|f| f.speaker == Speaker::Them && textproc::is_echo(text, &f.text))
 }
 
 /// Whisper initial prompt: the glossary (spelling) + the tail of the speaker's previous utterance (continuity).
@@ -295,4 +304,11 @@ fn decode(state: &mut State, mut samples: Vec<f32>, opts: DecodeOptions, partial
             None
         }
     }
+}
+
+/// The CUDA backend downloaded in Settings (`stt.cudaDir`), unless whisper.dll ships its own.
+fn cuda_dll(cfg: &Config, whisper_dll: &std::path::Path) -> Option<std::path::PathBuf> {
+    const CUDA_DLL: &str = "ggml-cuda.dll";
+    let downloaded = cfg.path(&cfg.stt.cuda_dir).join(CUDA_DLL);
+    (cfg.stt.use_gpu && !whisper_dll.parent()?.join(CUDA_DLL).exists() && downloaded.exists()).then_some(downloaded)
 }

@@ -78,31 +78,22 @@ pub fn start(source: Source, name: &str) -> Result<Capture> {
         let stop = stop.clone();
         let failed = failed.clone();
         let name = name.to_string();
-        std::thread::Builder::new()
-            .name(format!("capture-{name}"))
-            .spawn(move || {
-                if let Err(e) = capture_thread(source, producer, &stop, &ready_tx) {
-                    error!("capture {name} stopped: {e:#}");
-                    failed.store(true, Ordering::Relaxed);
-                    // If we failed before signalling readiness, report the error to start().
-                    let _ = ready_tx.try_send(Err(e));
-                }
-            })?
+        std::thread::Builder::new().name(format!("capture-{name}")).spawn(move || {
+            if let Err(e) = capture_thread(source, producer, &stop, &ready_tx) {
+                error!("capture {name} stopped: {e:#}");
+                failed.store(true, Ordering::Relaxed);
+                // If we failed before signalling readiness, report the error to start().
+                let _ = ready_tx.try_send(Err(e));
+            }
+        })?
     };
 
-    let description = ready_rx
-        .recv_timeout(Duration::from_secs(10))
-        .map_err(|_| anyhow!("capture {name}: timed out starting"))??;
+    let description = ready_rx.recv_timeout(Duration::from_secs(10)).map_err(|_| anyhow!("capture {name}: timed out starting"))??;
     info!("capture {name}: {description}");
     Ok(Capture { consumer, description, stop, failed, thread: Some(thread) })
 }
 
-fn capture_thread(
-    source: Source,
-    mut producer: rtrb::Producer<f32>,
-    stop: &AtomicBool,
-    ready: &std::sync::mpsc::SyncSender<Result<String>>,
-) -> Result<()> {
+fn capture_thread(source: Source, mut producer: rtrb::Producer<f32>, stop: &AtomicBool, ready: &std::sync::mpsc::SyncSender<Result<String>>) -> Result<()> {
     wasapi::initialize_mta().ok().context("CoInitializeEx")?;
     set_pro_audio_priority();
 
@@ -209,7 +200,7 @@ fn capture_thread(
 /// Mono downsampler to 16 kHz (FFT-based, fixed input chunks of ~20 ms).
 enum Downsampler {
     Passthrough,
-    Fft { r: rubato::Fft<f32>, buf: Vec<f32> },
+    Fft { r: Box<rubato::Fft<f32>>, buf: Vec<f32> },
 }
 
 impl Downsampler {
@@ -218,10 +209,10 @@ impl Downsampler {
             return Ok(Downsampler::Passthrough);
         }
         let chunk = rate / 50;
-        let r = rubato::Fft::<f32>::new(rate, SAMPLE_RATE as usize, chunk, 1, rubato::FixedSync::Input)
-            .map_err(|e| anyhow!("resampler {rate} -> 16000: {e}"))?;
+        let r =
+            rubato::Fft::<f32>::new(rate, SAMPLE_RATE as usize, chunk, 1, rubato::FixedSync::Input).map_err(|e| anyhow!("resampler {rate} -> 16000: {e}"))?;
         let buf = vec![0.0; rubato::Resampler::output_frames_max(&r)];
-        Ok(Downsampler::Fft { r, buf })
+        Ok(Downsampler::Fft { r: Box::new(r), buf })
     }
 
     /// Consumes whole chunks from `input` (leaves the remainder) and appends output.
@@ -295,17 +286,13 @@ fn open_client(source: &Source) -> Result<(AudioClient, String, bool)> {
 /// not its renderer/audio children), so include_tree captures all of it.
 fn find_root_process(name: &str) -> Result<u32> {
     use sysinfo::{ProcessRefreshKind, RefreshKind, System};
-    let sys = System::new_with_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()))
-        .context("sysinfo")?;
+    let sys = System::new_with_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing())).context("sysinfo")?;
     let target = OsStr::new(name);
     let procs: Vec<_> = sys.processes_by_exact_name(target).collect();
     if procs.is_empty() {
         bail!("process {name} is not running");
     }
-    let root = procs
-        .iter()
-        .find(|p| p.parent().and_then(|pp| sys.process(pp)).map(|pp| pp.name() != target).unwrap_or(true))
-        .unwrap_or(&procs[0]);
+    let root = procs.iter().find(|p| p.parent().and_then(|pp| sys.process(pp)).map(|pp| pp.name() != target).unwrap_or(true)).unwrap_or(&procs[0]);
     Ok(root.pid().as_u32())
 }
 

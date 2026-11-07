@@ -1,4 +1,4 @@
-import type { ConfigSnapshot, ModelInfo, RendererApi, SaveResult } from "../shared/protocol";
+import type { ConfigSnapshot, ModelInfo, PackId, RendererApi, SaveResult } from "../shared/protocol";
 import { askConfirm, guardPopups } from "./common";
 
 declare global {
@@ -9,7 +9,7 @@ declare global {
 
 const api = window.api;
 
-type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "mt" | "privacy" | "logs";
+type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs";
 
 interface Field {
   /** Dotted config.json key. */
@@ -21,6 +21,8 @@ interface Field {
   min?: number;
   max?: number;
   step?: number;
+  /** kind "pack": which download the row manages. */
+  pack?: PackId;
 }
 
 interface Section {
@@ -60,7 +62,7 @@ const SECTIONS: Section[] = [
         hint: "Пункты подсказок, пояснения и перевод на этом языке. Первая строка подсказки всегда на языке собеседника.",
       },
       { key: "translate", label: "Перевод с начала", kind: "bool", hint: "Переводить речь собеседника сразу после запуска. В звонке: кнопка «Перевод» или Ctrl+Alt+T." },
-      { key: "translateModel", label: "Модель перевода", kind: "mt" },
+      { key: "translateModel", label: "Модель перевода", kind: "pack", pack: "mt" },
       {
         key: "claudeCode.command",
         label: "Команда Claude Code",
@@ -109,6 +111,7 @@ const SECTIONS: Section[] = [
     fields: [
       { key: "stt.model", label: "Модель Whisper", kind: "models", hint: "Выбор сразу перезапускает ядро, модель грузится несколько секунд. Загрузку можно прервать и продолжить." },
       { key: "language", label: "Язык речи", kind: "select", options: [["auto", "Определять"], ["ru", "Русский"], ["en", "Английский"]] },
+      { key: "stt.cudaDir", label: "Видеокарта", kind: "pack", pack: "cuda" },
       { key: "stt.useGpu", label: "Использовать GPU", kind: "bool" },
       { key: "stt.partialMs", label: "Живой текст каждые, мс", kind: "number", min: 0, max: 3000, step: 100, hint: "Показывает текст прямо во время речи. 0 выключает и освобождает GPU для финальных фраз." },
       { key: "stt.flashAttn", label: "Flash attention", kind: "bool" },
@@ -271,8 +274,8 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       return [el("div", { className: "privacy" }, run, out), () => undefined];
     }
     case "models":
-    case "mt": {
-      const ops = f.kind === "mt" ? MT : WHISPER;
+    case "pack": {
+      const ops = f.pack ? packOps(f.pack) : WHISPER;
       const box = el("ul", { className: "models" });
       renderModels(box, ops).catch(() => box.replaceChildren(el("li", { className: "hint", textContent: "Список моделей недоступен." })));
       api.models.onChange(() => void renderModels(box, ops));
@@ -315,11 +318,11 @@ const WHISPER: ModelOps = {
   remove: (id) => api.models.remove(id),
 };
 
-const MT: ModelOps = {
-  list: async () => [await api.mt.status()],
-  download: () => api.mt.download(),
-  cancel: () => api.mt.cancel(),
-};
+const packOps = (id: PackId): ModelOps => ({
+  list: async () => [await api.packs.status(id)],
+  download: () => api.packs.download(id),
+  cancel: () => api.packs.cancel(id),
+});
 
 /** Models: one row each, the action fits its state. Redrawn on every download change. */
 async function renderModels(box: HTMLElement, ops: ModelOps): Promise<void> {

@@ -46,11 +46,7 @@
           "whisper.dll",
           "ggml.dll",
           "ggml-base.dll",
-          "ggml-cpu-*.dll",
-          "ggml-cuda.dll",
-          "cudart64_*.dll",
-          "cublas64_*.dll",
-          "cublasLt64_*.dll"
+          "ggml-cpu-*.dll"
         ]
       },
       {

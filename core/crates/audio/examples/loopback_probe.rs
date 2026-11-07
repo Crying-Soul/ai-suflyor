@@ -23,18 +23,35 @@ fn main() -> anyhow::Result<()> {
     let cap = client.get_audiocaptureclient()?;
     client.start_stream()?;
     let mut q = VecDeque::new();
-    let mut w = hound::WavWriter::create(&a[1], hound::WavSpec { channels: ch as u16, sample_rate: rate, bits_per_sample: 32, sample_format: hound::SampleFormat::Float })?;
+    let mut w = hound::WavWriter::create(
+        &a[1],
+        hound::WavSpec { channels: ch as u16, sample_rate: rate, bits_per_sample: 32, sample_format: hound::SampleFormat::Float },
+    )?;
     let t = std::time::Instant::now();
     let (mut packets, mut silent, mut frames) = (0, 0, 0usize);
     while t.elapsed().as_secs_f32() < secs {
         let _ = ev.wait_for_event(50);
-        while let Some(n) = cap.get_next_packet_size()? { if n == 0 { break; }
+        while let Some(n) = cap.get_next_packet_size()? {
+            if n == 0 {
+                break;
+            }
             let info = cap.read_from_device_to_deque(&mut q)?;
-            packets += 1; frames += n as usize; if info.flags.silent { silent += 1; }
+            packets += 1;
+            frames += n as usize;
+            if info.flags.silent {
+                silent += 1;
+            }
         }
-        while q.len() >= 4 { let b = [q.pop_front().unwrap(), q.pop_front().unwrap(), q.pop_front().unwrap(), q.pop_front().unwrap()]; w.write_sample(f32::from_le_bytes(b))?; }
+        while q.len() >= 4 {
+            let b = [q.pop_front().unwrap(), q.pop_front().unwrap(), q.pop_front().unwrap(), q.pop_front().unwrap()];
+            w.write_sample(f32::from_le_bytes(b))?;
+        }
     }
     w.finalize()?;
-    println!("bits {bits}, packets {packets}, silent {silent}, frames {frames} ({:.2} s of audio in {:.2} s)", frames as f32 / rate as f32, t.elapsed().as_secs_f32());
+    println!(
+        "bits {bits}, packets {packets}, silent {silent}, frames {frames} ({:.2} s of audio in {:.2} s)",
+        frames as f32 / rate as f32,
+        t.elapsed().as_secs_f32()
+    );
     Ok(())
 }

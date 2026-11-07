@@ -29,7 +29,7 @@ struct WsOpts {
 const WS_TIMED_OUT: c_int = -1000;
 
 unsafe extern "C" {
-    fn ws_load(dll_path: *const u16, verbose: c_int, err: *mut c_char, errlen: c_int) -> c_int;
+    fn ws_load(dll_path: *const u16, cuda_dll: *const u16, verbose: c_int, err: *mut c_char, errlen: c_int) -> c_int;
     fn ws_system_info() -> *const c_char;
     fn ws_init(model: *const c_char, use_gpu: c_int, gpu_device: c_int, flash_attn: c_int) -> *mut c_void;
     fn ws_state_new(ctx: *mut c_void) -> *mut c_void;
@@ -45,6 +45,8 @@ unsafe extern "C" {
 
 #[derive(Debug, Clone)]
 pub struct ModelOptions {
+    /// A CUDA backend (ggml-cuda.dll with its runtime) outside the whisper.dll directory.
+    pub cuda_dll: Option<std::path::PathBuf>,
     pub use_gpu: bool,
     pub gpu_device: i32,
     pub flash_attn: bool,
@@ -134,9 +136,13 @@ impl Whisper {
         // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR requires an absolute path.
         let dll = std::path::absolute(dll)?;
         let model = std::path::absolute(model)?;
-        let wide: Vec<u16> = dll.as_os_str().encode_wide().chain(Some(0)).collect();
+        let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
+        let cuda = opts.cuda_dll.as_deref().map(|p| std::path::absolute(p).map(|p| wide(&p))).transpose()?;
+        let dll_w = wide(&dll);
         let mut err = [0 as c_char; 256];
-        let rc = unsafe { ws_load(wide.as_ptr(), opts.verbose as c_int, err.as_mut_ptr(), err.len() as c_int) };
+        let rc = unsafe {
+            ws_load(dll_w.as_ptr(), cuda.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()), opts.verbose as c_int, err.as_mut_ptr(), err.len() as c_int)
+        };
         if rc != 0 {
             let msg = unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy().into_owned();
             bail!("load {}: {msg}", dll.display());

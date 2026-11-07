@@ -15,7 +15,12 @@ use crate::FinalSegment;
 pub enum Chunk {
     Text(String),
     /// Token usage of the finished turn (input = uncached part).
-    Usage { input: u64, cache_read: u64, cache_write: u64, output: u64 },
+    Usage {
+        input: u64,
+        cache_read: u64,
+        cache_write: u64,
+        output: u64,
+    },
 }
 
 /// One user turn: text and, for "Экран + вопрос", a PNG of the screen placed before it.
@@ -44,7 +49,7 @@ impl Turn {
 
 pub enum Session {
     Api(api::ApiSession),
-    Code(claude_code::CodeSession),
+    Code(Box<claude_code::CodeSession>),
     #[cfg(test)]
     Mock(mock::MockSession),
 }

@@ -3,13 +3,7 @@
 
 /// Whisper hallucinations on noise/silence (subtitle credits from its training data),
 /// compared after normalization. Exact-match phrases:
-const HALLUCINATIONS: &[&str] = &[
-    "продолжение следует",
-    "спасибо за просмотр",
-    "thank you for watching",
-    "thanks for watching",
-    "you",
-];
+const HALLUCINATIONS: &[&str] = &["продолжение следует", "спасибо за просмотр", "thank you for watching", "thanks for watching", "you"];
 /// Substrings that never occur in real call speech but do in whisper credits.
 const HALLUCINATION_MARKERS: &[&str] = &["dimatorzok", "редактор субтитров", "субтитры сделал", "субтитры создавал", "корректор а егорова"];
 
@@ -41,10 +35,11 @@ pub fn strip_disfluencies(text: &str) -> String {
     let words: Vec<&str> = text.split_whitespace().filter(|w| !DISFLUENCIES.contains(&word_key(w).as_str())).collect();
     let mut out = words.join(" ");
     // "Э, как это работает" -> ", как это работает" is not possible: punctuation goes with the dropped token.
-    if let Some(c) = out.chars().next() {
-        if c.is_lowercase() && text.trim_start().chars().next().is_some_and(char::is_uppercase) {
-            out = c.to_uppercase().chain(out.chars().skip(1)).collect();
-        }
+    if let Some(c) = out.chars().next()
+        && c.is_lowercase()
+        && text.trim_start().chars().next().is_some_and(char::is_uppercase)
+    {
+        out = c.to_uppercase().chain(out.chars().skip(1)).collect();
     }
     out
 }
@@ -158,11 +153,67 @@ pub fn split_stable(prev: &str, cur: &str) -> (String, String) {
 
 /// Words that open a question or a request to talk ("Расскажите о себе.", "Walk me through...").
 const QUESTION_STARTS: &[&str] = &[
-    "как", "что", "почему", "зачем", "когда", "где", "куда", "откуда", "какой", "какая", "какое", "какие", "каким", "какого", "каком",
-    "какую", "сколько", "кто", "чем", "чего", "чему", "расскажите", "расскажи", "объясните", "объясни", "опишите", "опиши",
-    "приведите", "назовите", "перечислите", "сравните", "можете", "можешь", "могли", "правда", "а как", "а что", "а почему",
-    "what", "why", "how", "when", "where", "which", "who", "whose", "can you", "could you", "would you", "will you", "do you",
-    "did you", "have you", "are you", "is there", "is it", "tell me", "explain", "describe", "walk me", "give me",
+    "как",
+    "что",
+    "почему",
+    "зачем",
+    "когда",
+    "где",
+    "куда",
+    "откуда",
+    "какой",
+    "какая",
+    "какое",
+    "какие",
+    "каким",
+    "какого",
+    "каком",
+    "какую",
+    "сколько",
+    "кто",
+    "чем",
+    "чего",
+    "чему",
+    "расскажите",
+    "расскажи",
+    "объясните",
+    "объясни",
+    "опишите",
+    "опиши",
+    "приведите",
+    "назовите",
+    "перечислите",
+    "сравните",
+    "можете",
+    "можешь",
+    "могли",
+    "правда",
+    "а как",
+    "а что",
+    "а почему",
+    "what",
+    "why",
+    "how",
+    "when",
+    "where",
+    "which",
+    "who",
+    "whose",
+    "can you",
+    "could you",
+    "would you",
+    "will you",
+    "do you",
+    "did you",
+    "have you",
+    "are you",
+    "is there",
+    "is it",
+    "tell me",
+    "explain",
+    "describe",
+    "walk me",
+    "give me",
 ];
 
 /// Heuristic: does this "them" speech ask the user something? Whisper writes "?" for most
