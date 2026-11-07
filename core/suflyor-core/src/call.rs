@@ -15,8 +15,8 @@ use tracing::{info, warn};
 
 use crate::answer::Answerer;
 use crate::config::Config;
-use crate::{brief, context};
 use crate::{FinalSegment, Shared};
+use crate::{brief, context};
 
 /// One finished answer of one tier, as saved in `answers.jsonl`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -235,7 +235,16 @@ mod tests {
         append(&f, &a);
         assert_eq!(read_jsonl::<FinalSegment>(&f).len(), 3, "an append after a torn line stays readable");
 
-        let r = AnswerRecord { turn: 1, tier: "full".into(), trigger: "auto".into(), question: "q".into(), q_t: Some(5), model: "m".into(), text: "**a**".into(), shot: None };
+        let r = AnswerRecord {
+            turn: 1,
+            tier: "full".into(),
+            trigger: "auto".into(),
+            question: "q".into(),
+            q_t: Some(5),
+            model: "m".into(),
+            text: "**a**".into(),
+            shot: None,
+        };
         append(&dir.path().join(ANSWERS), &r);
         assert_eq!(read_jsonl::<AnswerRecord>(&dir.path().join(ANSWERS)), vec![r]);
         assert!(read_jsonl::<AnswerRecord>(&dir.path().join("missing.jsonl")).is_empty());

@@ -57,10 +57,7 @@ impl StreamSet {
         }
         let stamp = timestamp();
         let mic_device = Some(cfg.audio.mic_device.clone()).filter(|d| !d.is_empty());
-        let sources = [
-            (Speaker::Me, Source::Mic { device: mic_device }),
-            (Speaker::Them, Source::parse_them(&cfg.audio.them_source)),
-        ];
+        let sources = [(Speaker::Me, Source::Mic { device: mic_device }), (Speaker::Them, Source::parse_them(&cfg.audio.them_source))];
         let mut threads = Vec::new();
         for (speaker, source) in sources {
             let wav = record_dir.as_ref().map(|d| d.join(format!("{stamp}-{}.wav", speaker.as_str())));
@@ -93,22 +90,9 @@ fn set_capture_status(shared: &Shared, speaker: Speaker, st: CaptureStatus) {
     });
 }
 
-fn supervise(
-    speaker: Speaker,
-    source: Source,
-    shared: Arc<Shared>,
-    queue: Arc<SttQueue>,
-    vad: VadSetup,
-    wav: Option<PathBuf>,
-    stop: &AtomicBool,
-) {
+fn supervise(speaker: Speaker, source: Source, shared: Arc<Shared>, queue: Arc<SttQueue>, vad: VadSetup, wav: Option<PathBuf>, stop: &AtomicBool) {
     let mut writer = wav.and_then(|p| {
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: SAMPLE_RATE,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
+        let spec = hound::WavSpec { channels: 1, sample_rate: SAMPLE_RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
         match hound::WavWriter::create(&p, spec) {
             Ok(w) => {
                 info!("recording {} to {}", speaker.as_str(), p.display());
@@ -125,20 +109,16 @@ fn supervise(
         let capture = match audio::start(source.clone(), speaker.as_str()) {
             Ok(c) => c,
             Err(e) => {
-                set_capture_status(&shared, speaker, CaptureStatus {
-                    state: CaptureState::Error,
-                    source: format!("{source:?}"),
-                    error: Some(format!("{e:#}")),
-                });
+                set_capture_status(
+                    &shared,
+                    speaker,
+                    CaptureStatus { state: CaptureState::Error, source: format!("{source:?}"), error: Some(format!("{e:#}")) },
+                );
                 sleep_unless_stopped(RETRY_DELAY, stop);
                 continue;
             }
         };
-        set_capture_status(&shared, speaker, CaptureStatus {
-            state: CaptureState::Running,
-            source: capture.description.clone(),
-            error: None,
-        });
+        set_capture_status(&shared, speaker, CaptureStatus { state: CaptureState::Running, source: capture.description.clone(), error: None });
         let silero = match Silero::new(&vad.model) {
             Ok(s) => Some(s),
             Err(e) => {
@@ -148,11 +128,11 @@ fn supervise(
         };
         drain(speaker, capture, &shared, &queue, silero, &vad.seg, vad.partial_ms, writer.as_mut(), stop);
         if !stop.load(Ordering::Relaxed) {
-            set_capture_status(&shared, speaker, CaptureStatus {
-                state: CaptureState::Error,
-                source: format!("{source:?}"),
-                error: Some("capture stopped, restarting".into()),
-            });
+            set_capture_status(
+                &shared,
+                speaker,
+                CaptureStatus { state: CaptureState::Error, source: format!("{source:?}"), error: Some("capture stopped, restarting".into()) },
+            );
             sleep_unless_stopped(RETRY_DELAY, stop);
         }
     }
@@ -218,10 +198,10 @@ fn drain(
                         let _ = shared.events.send(Event::Vad { speaker, active: true, t: t_of(start_sample) });
                     }
                     VadEvent::Resume { .. } => {
-                        if speaker == Speaker::Them {
-                            if let Some(a) = shared.answerer.get() {
-                                a.on_them_resumed();
-                            }
+                        if speaker == Speaker::Them
+                            && let Some(a) = shared.answerer.get()
+                        {
+                            a.on_them_resumed();
                         }
                     }
                     VadEvent::Discarded { start_sample } => {
@@ -257,25 +237,25 @@ fn drain(
                 }
             }
             // Live text: re-decode the utterance in progress every `partial_ms` of new audio.
-            if partial_ms > 0 {
-                if let Some((start, cur)) = segmenter.current() {
-                    let last = partial_at.filter(|(s, _)| *s == start).map_or(0, |(_, n)| n);
-                    // Each partial re-decodes the whole utterance: on long phrases space them out
-                    // (a fifth of the audio so far), or GPU work grows with the square of the length.
-                    let step = (partial_ms * 16).max(cur.len() / 5);
-                    if cur.len() >= FIRST_PARTIAL && cur.len() >= last + step {
-                        partial_at = Some((start, cur.len()));
-                        let now = Instant::now();
-                        queue.push(Job {
-                            speaker,
-                            t_ms: t_of(start),
-                            speech_end: now,
-                            queued: now,
-                            utt: Utterance { start_sample: start, samples: cur.to_vec(), speech_end_sample: pos, forced: false },
-                            speculative: false,
-                            partial: true,
-                        });
-                    }
+            if partial_ms > 0
+                && let Some((start, cur)) = segmenter.current()
+            {
+                let last = partial_at.filter(|(s, _)| *s == start).map_or(0, |(_, n)| n);
+                // Each partial re-decodes the whole utterance: on long phrases space them out
+                // (a fifth of the audio so far), or GPU work grows with the square of the length.
+                let step = (partial_ms * 16).max(cur.len() / 5);
+                if cur.len() >= FIRST_PARTIAL && cur.len() >= last + step {
+                    partial_at = Some((start, cur.len()));
+                    let now = Instant::now();
+                    queue.push(Job {
+                        speaker,
+                        t_ms: t_of(start),
+                        speech_end: now,
+                        queued: now,
+                        utt: Utterance { start_sample: start, samples: cur.to_vec(), speech_end_sample: pos, forced: false },
+                        speculative: false,
+                        partial: true,
+                    });
                 }
             }
             if vad_windows >= 300 {

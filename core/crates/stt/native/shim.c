@@ -65,7 +65,9 @@ static void quiet_log(enum ggml_log_level level, const char *text, void *user) {
 
 // dll_path: full path to whisper.dll. Its directory is added to the DLL search
 // path so ggml*.dll and the CUDA runtime next to it resolve.
-int ws_load(const wchar_t *dll_path, int verbose, char *err, int errlen) {
+// cuda_dll: NULL, or the full path to a ggml-cuda.dll downloaded apart from the app
+// (Settings), with its cudart/cublas next to it. If it fails to load, whisper runs on the CPU.
+int ws_load(const wchar_t *dll_path, const wchar_t *cuda_dll, int verbose, char *err, int errlen) {
     if (g_loaded) return 0;
     g_verbose = verbose;
     // ggml loads its backends (ggml-cuda.dll, ggml-cpu-*.dll) later with a plain
@@ -91,7 +93,17 @@ int ws_load(const wchar_t *dll_path, int verbose, char *err, int errlen) {
     // from the DLL's own directory instead.
     {
         typedef void (*p_load_all_from_path)(const char *);
+        typedef void *(*p_backend_load)(const char *);
         HMODULE g = GetModuleHandleW(L"ggml.dll");
+        if (cuda_dll && g) {
+            // Altered search path: its dependencies resolve from its own directory.
+            p_backend_load backend_load = (p_backend_load)(void *)GetProcAddress(g, "ggml_backend_load");
+            char cuda[MAX_PATH * 3];
+            if (!backend_load || !LoadLibraryExW(cuda_dll, NULL, LOAD_WITH_ALTERED_SEARCH_PATH) ||
+                WideCharToMultiByte(CP_UTF8, 0, cuda_dll, -1, cuda, sizeof(cuda), NULL, NULL) <= 0 || !backend_load(cuda)) {
+                fprintf(stderr, "ggml-cuda.dll did not load (error %lu), whisper runs on the CPU\n", GetLastError());
+            }
+        }
         p_load_all_from_path load_all = g ? (p_load_all_from_path)(void *)GetProcAddress(g, "ggml_backend_load_all_from_path") : NULL;
         if (!load_all) {
             snprintf(err, errlen, "ggml_backend_load_all_from_path not found in ggml.dll");

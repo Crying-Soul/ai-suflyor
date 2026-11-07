@@ -42,7 +42,7 @@ async function shot(w, name) { await wait(700); fs.writeFileSync(path.join(out, 
 const send = (ws, evs) => { for (const e of evs) for (const w of ws) w.webContents.send("core-event", e); };
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
-  ipcMain.handle("mt:status", () => ({ id: "opus-mt-en-ru", label: "Opus-MT, английский → русский", sizeMb: 112, note: "Перевод речи собеседника на процессоре, без интернета и токенов.", state: "installed", received: 0, total: 0, active: true }));
+  ipcMain.handle("pack:status", (_e, id) => id === "cuda" ? ({ id: "cuda", label: "CUDA для Whisper", sizeMb: 653, note: "Распознавание на видеокарте NVIDIA.", state: "absent", received: 0, total: 0, active: false }) : ({ id: "mt", label: "Opus-MT, английский → русский", sizeMb: 112, note: "Перевод речи собеседника на процессоре, без интернета и токенов.", state: "installed", received: 0, total: 0, active: true }));
   ipcMain.handle("config:load", () => ({ path: "C:\\dev\\suflyor\\config.json", raw: cfg, effective: cfg }));
   ipcMain.handle("config:mics", () => ["Focusrite USB (2- Focusrite USB Audio)", "Microphone (Realtek High Definition Audio)"]);
   ipcMain.handle("privacy:test", () => ({
@@ -110,6 +110,8 @@ app.whenReady().then(async () => {
   }
   await s.webContents.executeJavaScript(`document.querySelector('[data-section="answers"]').click(); document.querySelector('fieldset:not([hidden]) .models').scrollIntoView({ block: "center" })`);
   await shot(s, "settings-mt.png");
+  await s.webContents.executeJavaScript(`document.querySelector('[data-section="stt"]').click(); [...document.querySelectorAll('fieldset:not([hidden]) .models')].at(-1).scrollIntoView({ block: "center" })`);
+  await shot(s, "settings-cuda.png");
   await s.webContents.executeJavaScript(`document.querySelector('#f-vad-minSilenceMs').value='450'; document.querySelector('#form').dispatchEvent(new Event('input'))`);
   await shot(s, "settings-dirty.png");
   await s.webContents.executeJavaScript(`document.querySelector('[data-section="guide"]').click()`);

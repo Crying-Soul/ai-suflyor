@@ -19,7 +19,7 @@ use tracing::info;
 pub const WINDOW: usize = 512;
 /// Silero v5+ expects the last 64 samples of the previous window prepended.
 const CONTEXT: usize = 64;
-const STATE_LEN: usize = 2 * 1 * 128;
+const STATE_LEN: usize = 2 * 128;
 
 /// The process-wide ONNX Runtime environment; other ONNX models (translation) share it.
 pub fn env() -> Result<&'static Environment> {

@@ -97,9 +97,7 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_ansi(false)
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,ort=warn".into()),
-        )
+        .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,ort=warn".into()))
         .init();
 
     let mut config_path: Option<PathBuf> = None;
@@ -318,11 +316,7 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
                 s.auto = a;
             }
             if let Some(m) = model {
-                s.model = if m == "toggle" {
-                    if s.model == cfg.model { cfg.alt_model.clone() } else { cfg.model.clone() }
-                } else {
-                    m
-                };
+                s.model = if m == "toggle" { if s.model == cfg.model { cfg.alt_model.clone() } else { cfg.model.clone() } } else { m };
             }
             if let Some(m) = answer_mode {
                 s.answer_mode = m;

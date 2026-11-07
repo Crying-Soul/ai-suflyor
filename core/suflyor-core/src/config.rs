@@ -74,6 +74,9 @@ impl Default for VadConfig {
 pub struct SttConfig {
     pub dll: String,
     pub model: String,
+    /// The CUDA backend downloaded in Settings (ggml-cuda.dll, cudart, cublas). Unused when
+    /// whisper.dll has ggml-cuda.dll next to it.
+    pub cuda_dir: String,
     pub use_gpu: bool,
     pub gpu_device: i32,
     pub flash_attn: bool,
@@ -93,6 +96,7 @@ impl Default for SttConfig {
         Self {
             dll: "whisper/whisper.dll".into(),
             model: "whisper/ggml-large-v3-turbo.bin".into(),
+            cuda_dir: "cuda".into(),
             use_gpu: true,
             gpu_device: 0,
             flash_attn: true,
@@ -200,10 +204,10 @@ impl Config {
             Some(p) => vec![p.to_path_buf()],
             None => {
                 let mut v = vec![PathBuf::from("config.json")];
-                if let Ok(exe) = std::env::current_exe() {
-                    if let Some(dir) = exe.parent() {
-                        v.push(dir.join("config.json"));
-                    }
+                if let Ok(exe) = std::env::current_exe()
+                    && let Some(dir) = exe.parent()
+                {
+                    v.push(dir.join("config.json"));
                 }
                 v
             }
@@ -217,8 +221,7 @@ impl Config {
                 return Ok((cfg, Some(p)));
             }
         }
-        let mut cfg = Config::default();
-        cfg.base_dir = std::env::current_dir()?;
+        let mut cfg = Config { base_dir: std::env::current_dir()?, ..Config::default() };
         cfg.fill_data_dir();
         Ok((cfg, None))
     }

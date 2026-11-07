@@ -12,9 +12,8 @@ use image::{ImageEncoder, RgbImage, RgbaImage};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
-    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CAPTUREBLT, CreateCompatibleBitmap, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
-    DeleteObject, GetDC, GetDIBits, GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, MonitorFromWindow,
-    ReleaseDC, SRCCOPY, SelectObject,
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CAPTUREBLT, CreateCompatibleBitmap, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC,
+    GetDIBits, GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, MonitorFromWindow, ReleaseDC, SRCCOPY, SelectObject,
 };
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetForegroundWindow, GetWindowDisplayAffinity, GetWindowTextW, WDA_EXCLUDEFROMCAPTURE};
@@ -122,7 +121,7 @@ fn grab(r: RECT) -> Result<RgbaImage> {
             bail!("GetDIBits returned {lines} of {h} lines");
         }
         // BGRA -> RGBA, opaque.
-        for px in buf.chunks_exact_mut(4) {
+        for px in buf.as_chunks_mut::<4>().0 {
             px.swap(0, 2);
             px[3] = 255;
         }
@@ -192,7 +191,7 @@ mod tests {
     use super::*;
 
     fn stripes(w: u32, h: u32, period: u32) -> RgbaImage {
-        RgbaImage::from_fn(w, h, |x, _| if (x / period) % 2 == 0 { image::Rgba([0, 0, 0, 255]) } else { image::Rgba([255, 255, 255, 255]) })
+        RgbaImage::from_fn(w, h, |x, _| if (x / period).is_multiple_of(2) { image::Rgba([0, 0, 0, 255]) } else { image::Rgba([255, 255, 255, 255]) })
     }
 
     #[test]

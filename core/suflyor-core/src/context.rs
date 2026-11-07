@@ -93,10 +93,10 @@ pub fn pdf_cache(pdf: &Path) -> PathBuf {
 pub fn pdf_text(pdf: &Path) -> Result<String> {
     let cache = pdf_cache(pdf);
     let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-    if let (Some(c), Some(p)) = (modified(&cache), modified(pdf)) {
-        if c >= p {
-            return Ok(std::fs::read_to_string(&cache)?);
-        }
+    if let (Some(c), Some(p)) = (modified(&cache), modified(pdf))
+        && c >= p
+    {
+        return Ok(std::fs::read_to_string(&cache)?);
     }
     let bytes = std::fs::read(pdf).with_context(|| format!("read {}", pdf.display()))?;
     // pdf-extract panics on some malformed fonts; a bad file must not take the core down.

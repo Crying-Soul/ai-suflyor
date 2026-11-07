@@ -15,7 +15,11 @@ fn main() -> anyhow::Result<()> {
         hound::SampleFormat::Float => r.samples::<f32>().map(|s| s.unwrap()).collect(),
     };
     let t = Instant::now();
-    let w = stt::Whisper::load(dll.as_ref(), model.as_ref(), &stt::ModelOptions { use_gpu: true, gpu_device: 0, flash_attn: true, verbose: false })?;
+    let w = stt::Whisper::load(
+        dll.as_ref(),
+        model.as_ref(),
+        &stt::ModelOptions { cuda_dll: None, use_gpu: true, gpu_device: 0, flash_attn: true, verbose: false },
+    )?;
     let mut st = w.new_state()?;
     eprintln!("load: {:?}", t.elapsed());
     let opts = stt::DecodeOptions {

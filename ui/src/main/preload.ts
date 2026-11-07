@@ -31,10 +31,10 @@ const api: RendererApi = {
     reveal: (dir) => ipcRenderer.send("calls:reveal", dir),
     current: () => ipcRenderer.invoke("calls:current"),
   },
-  mt: {
-    status: () => ipcRenderer.invoke("mt:status"),
-    download: () => ipcRenderer.invoke("mt:download"),
-    cancel: () => ipcRenderer.send("mt:cancel"),
+  packs: {
+    status: (id) => ipcRenderer.invoke("pack:status", id),
+    download: (id) => ipcRenderer.invoke("pack:download", id),
+    cancel: (id) => ipcRenderer.send("pack:cancel", id),
   },
   models: {
     list: () => ipcRenderer.invoke("models:list"),

@@ -53,15 +53,21 @@ pub struct Utterance {
 
 #[derive(Debug)]
 pub enum VadEvent {
-    SpeechStart { start_sample: u64 },
+    SpeechStart {
+        start_sample: u64,
+    },
     SpeechEnd(Utterance),
     /// `early_silence_ms` of silence: the utterance as it will be finalized if speech does not
     /// resume. A later `SpeechEnd` with the same `start_sample` and length carries the same samples.
     Pause(Utterance),
     /// Speech came back after a `Pause`: that snapshot is not the end of the utterance.
-    Resume { start_sample: u64 },
+    Resume {
+        start_sample: u64,
+    },
     /// Speech ended but was too short to keep (cough, click).
-    Discarded { start_sample: u64 },
+    Discarded {
+        start_sample: u64,
+    },
 }
 
 fn ms_to_windows(ms: u32) -> usize {
@@ -120,12 +126,7 @@ impl Segmenter {
     }
 
     /// Feeds samples; `prob` scores each 512-sample window.
-    pub fn push<E>(
-        &mut self,
-        mut samples: &[f32],
-        prob: &mut impl FnMut(&[f32]) -> Result<f32, E>,
-        out: &mut Vec<VadEvent>,
-    ) -> Result<(), E> {
+    pub fn push<E>(&mut self, mut samples: &[f32], prob: &mut impl FnMut(&[f32]) -> Result<f32, E>, out: &mut Vec<VadEvent>) -> Result<(), E> {
         while !samples.is_empty() {
             let take = (WINDOW - self.pending.len()).min(samples.len());
             self.pending.extend_from_slice(&samples[..take]);
@@ -180,11 +181,13 @@ impl Segmenter {
         // Between the thresholds: neither speech nor silence (hysteresis).
 
         let early = ms_to_windows(self.cfg.early_silence_ms);
-        if self.cfg.early_silence_ms > 0 && self.silence_windows == early && early < ms_to_windows(self.cfg.min_silence_ms) {
-            if self.speech_windows >= ms_to_windows(self.cfg.min_speech_ms) {
-                out.push(VadEvent::Pause(self.snapshot(false)));
-                self.paused = true;
-            }
+        if self.cfg.early_silence_ms > 0
+            && self.silence_windows == early
+            && early < ms_to_windows(self.cfg.min_silence_ms)
+            && self.speech_windows >= ms_to_windows(self.cfg.min_speech_ms)
+        {
+            out.push(VadEvent::Pause(self.snapshot(false)));
+            self.paused = true;
         }
         if self.silence_windows >= ms_to_windows(self.cfg.min_silence_ms) {
             self.finish(false, out);
@@ -241,12 +244,7 @@ impl Segmenter {
         let rest = self.cur.split_off(cut);
         let start = self.cur_start;
         let first = std::mem::take(&mut self.cur);
-        out.push(VadEvent::SpeechEnd(Utterance {
-            start_sample: start,
-            speech_end_sample: start + first.len() as u64,
-            samples: first,
-            forced: true,
-        }));
+        out.push(VadEvent::SpeechEnd(Utterance { start_sample: start, speech_end_sample: start + first.len() as u64, samples: first, forced: true }));
         self.cur_start = start + cut as u64;
         self.cur = rest;
         self.last_speech_len = self.cur.len();
