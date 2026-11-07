@@ -8,6 +8,7 @@ import * as calls from "./calls";
 import * as models from "./models";
 import { cuda } from "./cuda";
 import { mt } from "./mt";
+import * as update from "./update";
 import { createTray } from "./tray";
 import { startLogs } from "./log";
 import { CoreProcess, resolveCoreExe } from "./core";
@@ -512,6 +513,14 @@ const PACKS = {
 };
 type PackId = keyof typeof PACKS;
 
+function registerUpdateIpc(): void {
+  update.initUpdates((s) => settingsWin?.webContents.send("update:changed", s));
+  ipcMain.handle("update:state", () => update.updateState());
+  ipcMain.on("update:check", () => update.check());
+  ipcMain.on("update:download", () => update.download());
+  ipcMain.on("update:install", () => void update.install(() => core.stopped()));
+}
+
 function registerModelsIpc(): void {
   models.useFetch(net.fetch as typeof fetch);
   const changed = () => settingsWin?.webContents.send("models:changed");
@@ -637,11 +646,23 @@ app.whenReady().then(() => {
   ipcMain.handle("config:mics", async () => (await runCore(["--list-mics"])).stdout.split(/\r?\n/).filter(Boolean));
   registerCallsIpc();
   registerModelsIpc();
+  registerUpdateIpc();
   ipcMain.handle("privacy:test", privacyTest);
   ipcMain.on("logs:open", () => shell.openPath(logDir));
   createOverlay("transcript");
   createOverlay("hints");
-  tray = createTray({ toggleWindows, openCalls, openSettings, togglePreset, toggleClickThrough, quit: () => app.quit() });
+  tray = createTray({
+    toggleWindows,
+    openCalls,
+    openSettings,
+    togglePreset,
+    toggleClickThrough,
+    checkUpdates: () => {
+      openSettings("guide");
+      update.check();
+    },
+    quit: () => app.quit(),
+  });
   setTimeout(checkProtection, 3000);
   registerHotkeys();
   // The core reads the migrated profile, so it starts after the migration.

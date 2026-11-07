@@ -1,4 +1,4 @@
-import type { ConfigSnapshot, ModelInfo, PackId, RendererApi, SaveResult } from "../shared/protocol";
+import type { ConfigSnapshot, ModelInfo, PackId, RendererApi, SaveResult, UpdateState } from "../shared/protocol";
 import { askConfirm, guardPopups } from "./common";
 
 declare global {
@@ -383,6 +383,28 @@ function showSection(id: string): void {
   document.body.classList.toggle("on-guide", guide);
 }
 
+/** The version line at the top of the guide: one action for each step of an update. */
+function renderUpdate(u: UpdateState): void {
+  const text = (t: string, cls = "hint") => el("span", { className: cls, textContent: t });
+  const btn = (t: string, run: () => void, cls = "btn small") => small(t, run, cls);
+  const v = `Версия ${u.version}`;
+  const parts: Record<UpdateState["state"], () => HTMLElement[]> = {
+    dev: () => [text(`${v}. Обновления работают в установленном приложении.`)],
+    idle: () => [text(v), btn("Проверить обновления", api.update.check, "btn-ghost small")],
+    checking: () => [text(`${v}. Проверяю обновления…`)],
+    latest: () => [text(`${v}, последняя.`), btn("Проверить снова", api.update.check, "btn-ghost small")],
+    available: () => [text(`${v}. Вышла ${u.latest}.`), btn("Скачать", api.update.download)],
+    downloading: () => {
+      const bar = el("progress", { max: 100, value: u.percent ?? 0 });
+      bar.setAttribute("aria-label", `Загрузка версии ${u.latest}`);
+      return [text(`Скачиваю ${u.latest}`), bar, text(`${u.percent ?? 0}\u00a0%`, "hint num")];
+    },
+    ready: () => [text(`Версия ${u.latest} скачана.`), btn("Перезапустить и обновить", api.update.install)],
+    error: () => [text(`${v}. Обновление не удалось: ${u.error}`, "hint error"), btn("Повторить", api.update.check, "btn-ghost small")],
+  };
+  $("update").replaceChildren(...parts[u.state]());
+}
+
 /** The guide's hotkey table, from the keys in effect: what the user set, else the defaults. */
 function renderGuideKeys(): void {
   const keys = SECTIONS.find((s) => s.id === "hotkeys")!.fields;
@@ -483,6 +505,8 @@ $("btn-cancel").onclick = async () => {
 };
 
 guardPopups();
+api.update.onChange(renderUpdate);
+void api.update.state().then(renderUpdate);
 // Opened again from an overlay's «?» or the tray while this window is up.
 api.onUi((m) => m.kind === "section" && showSection(m.id));
 document.addEventListener("keydown", (e) => {
