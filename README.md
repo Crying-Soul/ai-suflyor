@@ -28,10 +28,16 @@
 powershell -ExecutionPolicy Bypass -File scripts\get-whisper.ps1 -Cuda   # whisper.cpp + модель в .\whisper
 copy config.example.json config.json
 cargo build --release --manifest-path core\Cargo.toml
-cd ui; npm install; npm start      # npm run dist — установщик в ui\release
+cd ui; npm install; npm start      # запуск из исходников
+npm run dist                        # установщик
 ```
 
-Подробности для разработки: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Архитектура: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Куда попадает сборка:
+
+- `release\Suflyor Setup 0.1.0.exe` — установщик, его и выкладывать в Releases;
+- `release\win-unpacked\Suflyor.exe` — то же приложение без установки, для проверки;
+- `core\target\release\suflyor-core.exe` — ядро для `npm start`, `core\target\dist\` — ядро для установщика;
+- `ui\dist\` — собранный интерфейс.
 
 ## Устройство
 

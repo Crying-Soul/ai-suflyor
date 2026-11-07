@@ -15,6 +15,7 @@ CLAUDE.md
 AGENTS.md
 GEMINI.md
 .claude/
+.claude*
 .codex/
 .gemini/
 .cursor/
@@ -28,3 +29,4 @@ GEMINI.md
 .codegraph/
 .serena/
 .hallmark/
+docs/

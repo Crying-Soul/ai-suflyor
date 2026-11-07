@@ -24,7 +24,7 @@
     "appId": "local.suflyor",
     "productName": "Suflyor",
     "directories": {
-      "output": "release"
+      "output": "../release"
     },
     "files": [
       "dist/**",
