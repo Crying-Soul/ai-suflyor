@@ -1,4 +1,4 @@
-//! Translation of the other side's speech into the user's language (docs/ARCHITECTURE.md §6c).
+//! Translation of the other side's speech into the user's language.
 //! A local Opus-MT model (`crates/mt`) on the CPU: no network, no tokens. One actor; lines that
 //! arrive while a translation runs go out together next, so the translation never falls behind.
 

@@ -1,4 +1,4 @@
-//! Per-call context (docs/ARCHITECTURE.md §6a). Three nodes of one shape: the profile (shared by
+//! Per-call context. Three nodes of one shape: the profile (shared by
 //! every call), a folder (a company or project) and a call (one round). Each node is a directory
 //! with `context.md`, `meta.json` (`{title, glossary}`) and `files/` (md, txt, pdf).
 //! The assembled text goes into the system prompt, stable parts first, so the prompt cache holds.

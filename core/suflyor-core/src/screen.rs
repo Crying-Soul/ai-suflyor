@@ -1,4 +1,4 @@
-//! Screenshot of what the user looks at (docs/ARCHITECTURE.md §7): the foreground window as it
+//! Screenshot of what the user looks at: the foreground window as it
 //! appears on screen, or a whole monitor. BitBlt from the screen DC goes through DWM composition,
 //! so GPU-drawn apps come out right and windows with WDA_EXCLUDEFROMCAPTURE (our overlays) are left out.
 

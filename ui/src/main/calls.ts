@@ -1,4 +1,4 @@
-// Call folders on disk (docs/ARCHITECTURE.md §6a): <dataDir>/profile, folders/<slug>, folders/<slug>/calls/<date>-<slug>.
+// Call folders on disk: <dataDir>/profile, folders/<slug>, folders/<slug>/calls/<date>-<slug>.
 // Every node has context.md, meta.json {title, glossary, ...} and files/. The core reads the same layout.
 import fs from "node:fs";
 import path from "node:path";

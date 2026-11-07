@@ -1,4 +1,4 @@
-//! «Досье» (docs/ARCHITECTURE.md §6b): a short brief of a large context for the quick tier.
+//! «Досье»: a short brief of a large context for the quick tier.
 //! The full tier reads the whole context from its cached system prompt; the quick tier must answer
 //! within a second, so it gets this brief instead. It is written once by the full model and kept in
 //! `brief.md` next to the call, keyed by a hash of the context: the user may edit it, and the edit
