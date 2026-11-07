@@ -5,7 +5,7 @@ import { Menu, Tray, nativeImage } from "electron";
 export interface TrayActions {
   toggleWindows(): void;
   openCalls(): void;
-  openSettings(): void;
+  openSettings(section?: string): void;
   togglePreset(): void;
   toggleClickThrough(): void;
   quit(): void;
@@ -44,7 +44,8 @@ export function createTray(a: TrayActions): { setCall(title: string | null): voi
     Menu.buildFromTemplate([
       { label: "Показать или скрыть окна", click: a.toggleWindows },
       { label: "Звонки", click: a.openCalls },
-      { label: "Настройки", click: a.openSettings },
+      { label: "Настройки", click: () => a.openSettings() },
+      { label: "Справка", click: () => a.openSettings("guide") },
       { type: "separator" },
       { label: "«У камеры»", click: a.togglePreset },
       { label: "Клики сквозь окна", click: a.toggleClickThrough },

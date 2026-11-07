@@ -23,7 +23,7 @@ export const CATALOG: Omit<ModelInfo, "state" | "received" | "total" | "active" 
 
 export const fileOf = (id: string) => `ggml-${id}.bin`;
 
-interface Job {
+export interface Job {
   controller: AbortController;
   received: number;
   total: number;
@@ -69,7 +69,7 @@ async function sha256(file: string): Promise<string> {
 class BadFile extends Error {}
 
 /** One request: appends to `<file>.part` from where it ends (Range), to the end of the file. */
-async function fetchPart(url: string, part: string, job: Job, totalHint: number): Promise<void> {
+export async function fetchPart(url: string, part: string, job: Job, totalHint: number): Promise<void> {
   let start = fs.existsSync(part) ? fs.statSync(part).size : 0;
   if (totalHint && start === totalHint) return;
   const res = await fetch(url, { headers: start ? { Range: `bytes=${start}-` } : {}, signal: job.controller.signal });

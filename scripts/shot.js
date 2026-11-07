@@ -7,7 +7,7 @@ const out = path.resolve(__dirname, "../recordings/shots");
 const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config.json"), "utf8"));
 const wp = { preload: path.join(dist, "preload.js"), contextIsolation: true, sandbox: true, backgroundThrottling: false };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const status = { ev: "status", me: { state: "running", source: "mic: Focusrite USB (2- Focusrite USB Audio) [48000 Hz, 2 ch]" }, them: { state: "running", source: "system loopback: Speakers [192000 Hz, 2 ch]" }, stt: "ready (gpu)", auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", busy: false };
+const status = { ev: "status", me: { state: "running", source: "mic: Focusrite USB (2- Focusrite USB Audio) [48000 Hz, 2 ch]" }, them: { state: "running", source: "system loopback: Speakers [192000 Hz, 2 ch]" }, stt: "ready (gpu)", auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", translate: true, busy: false };
 const T = 1000;
 // Live phase: speech just started, then a partial with a settled prefix, then a question final.
 const callEv = { ev: "call", dir: "C:\\Users\\me\\Documents\\Call Assistant\\folders\\yandex\\calls\\2026-11-05-1200-sys", title: "Системный дизайн", folder: "Яндекс Маркет", tokens: 5320, parts: [], warnings: [] };
@@ -16,6 +16,7 @@ const live = [
   callEv,
   { ev: "level", speaker: "them", rms: 0.1, peak: 0.4 }, { ev: "level", speaker: "me", rms: 0.01, peak: 0.03 },
   { ev: "final", speaker: "them", t: T, text: "А какой у вас опыт с Kubernetes и PostgreSQL в продакшене?", question: true },
+  { ev: "final", speaker: "them", t: T + 2500, text: "Интересует, какие кластеры и сколько нод.", question: false },
   { ev: "final", speaker: "me", t: T + 5000, text: "Да, около четырёх лет, в основном на EKS.", question: false },
   { ev: "vad", speaker: "them", active: true, t: T + 9000 },
   { ev: "partial", speaker: "them", t: T + 9000, stable: "Расскажите, как работает", tail: "сборщик мусора в" },
@@ -34,12 +35,14 @@ const done = [
   { ev: "answer_start", id: 5, turn: 3, trigger: "auto", question: "Расскажите, как работает сборщик мусора в Go и чем он отличается от Java?", q_t: T + 9000, tier: "full" },
   { ev: "answer_delta", id: 5, text: "- Go: не перемещает объекты, нет поколений, работает параллельно с программой.\n- Java: G1/ZGC с поколениями и уплотнением, больше настроек.\n- В Go главный рычаг: `GOGC` и `GOMEMLIMIT`." },
   { ev: "metrics", name: "answer_first_token_quick", ms: 840 },
+  { ev: "translation", ts: [T, T + 2500], text: "А какой у вас опыт с Kubernetes и PostgreSQL в продакшене? Интересуют кластеры и число нод." },
   { ev: "metrics", name: "stt_decode", ms: 312 }, { ev: "metrics", name: "speech_end_to_final", ms: 712 },
 ];
 async function shot(w, name) { await wait(700); fs.writeFileSync(path.join(out, name), (await w.webContents.capturePage()).toPNG()); }
 const send = (ws, evs) => { for (const e of evs) for (const w of ws) w.webContents.send("core-event", e); };
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
+  ipcMain.handle("mt:status", () => ({ id: "opus-mt-en-ru", label: "Opus-MT, английский → русский", sizeMb: 112, note: "Перевод речи собеседника на процессоре, без интернета и токенов.", state: "installed", received: 0, total: 0, active: true }));
   ipcMain.handle("config:load", () => ({ path: "C:\\dev\\interviewer\\config.json", raw: cfg, effective: cfg }));
   ipcMain.handle("config:mics", () => ["Focusrite USB (2- Focusrite USB Audio)", "Microphone (Realtek High Definition Audio)"]);
   ipcMain.handle("privacy:test", () => ({
@@ -61,6 +64,8 @@ app.whenReady().then(async () => {
   const hi = new BrowserWindow({ width: 460, height: 560, frame: false, show: false, backgroundColor: "#13151b", webPreferences: wp });
   await tr.loadFile(path.join(dist, "transcript.html"));
   await hi.loadFile(path.join(dist, "hints.html"));
+  // The compositor of a hidden window never runs CSS animations: entering cards would stay at opacity 0.
+  for (const w of [tr, hi]) await w.webContents.insertCSS("*, *::before, *::after { animation: none !important; transition: none !important; }");
   await shot(tr, "transcript-empty.png");
   await shot(hi, "hints-empty.png");
   send([tr, hi], live);
@@ -74,6 +79,13 @@ app.whenReady().then(async () => {
   send([tr, hi], [{ ev: "vad", speaker: "them", active: true, t: T + 15000 }, { ev: "final", speaker: "them", t: T + 15000, text: "А как вы бы спроектировали rate limiter?", question: true }]);
   await wait(1800);
   await shot(tr, "transcript-owed.png");
+  // «Что сказать»: three phrases in the call's language with a gloss.
+  send([hi], [
+    { ev: "answer_start", id: 7, turn: 6, trigger: "continue", question: "", tier: "full" },
+    { ev: "answer_delta", id: 7, text: "Would it help if I walked you through a real incident we had? — если хотят глубже\n- Would it help if I walked you through a real incident we had? — если хотят глубже\n- Happy to go deeper into the sharding part. — вернуть к сильной теме\n- Does that answer your question? — закрыть тему" },
+    { ev: "answer_end", id: 7 },
+  ]);
+  await shot(hi, "hints-continue.png");
   // «У камеры»: the hints as a strip; then click-through on the transcript.
   hi.setSize(640, 168);
   hi.webContents.send("ui", { kind: "mode", mini: true, clickThrough: false });
@@ -96,8 +108,14 @@ app.whenReady().then(async () => {
     await s.webContents.executeJavaScript(`document.querySelector('[data-section="${id}"]').click()`);
     await shot(s, `settings-${id}.png`);
   }
+  await s.webContents.executeJavaScript(`document.querySelector('[data-section="answers"]').click(); document.querySelector('fieldset:not([hidden]) .models').scrollIntoView({ block: "center" })`);
+  await shot(s, "settings-mt.png");
   await s.webContents.executeJavaScript(`document.querySelector('#f-vad-minSilenceMs').value='450'; document.querySelector('#form').dispatchEvent(new Event('input'))`);
   await shot(s, "settings-dirty.png");
+  await s.webContents.executeJavaScript(`document.querySelector('[data-section="guide"]').click()`);
+  await shot(s, "settings-guide.png");
+  await s.webContents.executeJavaScript(`document.querySelector('#guide').scrollTop = 900`);
+  await shot(s, "settings-guide-2.png");
 
   // «Звонки» with mock storage.
   const D = "C:\\Users\\me\\Documents\\Call Assistant";

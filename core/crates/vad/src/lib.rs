@@ -21,7 +21,8 @@ pub const WINDOW: usize = 512;
 const CONTEXT: usize = 64;
 const STATE_LEN: usize = 2 * 1 * 128;
 
-fn env() -> Result<&'static Environment> {
+/// The process-wide ONNX Runtime environment; other ONNX models (translation) share it.
+pub fn env() -> Result<&'static Environment> {
     static ENV: OnceLock<Environment> = OnceLock::new();
     if let Some(e) = ENV.get() {
         return Ok(e);

@@ -14,6 +14,12 @@ pub struct Config {
     pub quick_model: String,
     pub effort: String,
     pub language: String,
+    /// The user's own language (ISO 639-1): hint bullets, glosses and translations are in it.
+    pub user_language: String,
+    /// Translate the other side's speech into `user_language` from the start.
+    pub translate: bool,
+    /// Opus-MT model directory (`crates/mt`), relative to the config's folder.
+    pub translate_model: String,
     pub user_context: String,
     pub auto_detect: bool,
     pub answer_mode: AnswerMode,
@@ -156,6 +162,9 @@ impl Default for Config {
             quick_model: "claude-haiku-5-5".into(),
             effort: "low".into(),
             language: "auto".into(),
+            user_language: "ru".into(),
+            translate: false,
+            translate_model: "models/opus-mt-en-ru".into(),
             user_context: String::new(),
             auto_detect: true,
             answer_mode: AnswerMode::Confirmed,

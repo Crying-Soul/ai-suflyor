@@ -44,6 +44,9 @@ footer .switch { padding-right: var(--space-sm); }
 /* The floor stays at 0.55: lower, a working periwinkle mark reads as the grey idle one. */
 @keyframes breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.55; transform: scale(0.7); } }
 
+/* New content rises in, short and soft: reading is not interrupted. Instant under reduced motion (base.css). */
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } }
+
 /* Scroll areas: a thin thumb in the rule colour, no native arrows. */
 #transcript, #turns { scrollbar-width: thin; scrollbar-color: var(--color-rule) transparent; }
 

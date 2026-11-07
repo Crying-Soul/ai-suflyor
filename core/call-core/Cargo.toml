@@ -16,6 +16,7 @@ audio.workspace = true
 vad.workspace = true
 stt.workspace = true
 textproc.workspace = true
+mt.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2"] }
 futures-util = "0.3"
 pdf-extract = "0.12"

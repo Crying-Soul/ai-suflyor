@@ -8,3 +8,4 @@ core/target/
 ui/node_modules/
 ui/dist/
 ui/release/
+models/opus-mt-en-ru/

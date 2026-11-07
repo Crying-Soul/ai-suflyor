@@ -16,9 +16,9 @@ pub fn tokens(s: &str) -> u64 {
 }
 
 /// One document may take at most this many tokens; the rest is cut and the UI warned.
-const DOC_TOKENS: u64 = 15_000;
+const DOC_TOKENS: u64 = 60_000;
 /// The whole context (documents, notes, earlier summaries) stays under this.
-const TOTAL_TOKENS: u64 = 60_000;
+const TOTAL_TOKENS: u64 = 150_000;
 /// Earlier calls of the folder whose summaries go into the context.
 const PREVIOUS_CALLS: usize = 3;
 /// Whisper reads ~224 tokens of prompt; the glossary takes at most this many characters of it.
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn budgets_cut_and_warn() {
-        let big = "строка текста\n".repeat(10_000); // ~47k tokens
+        let big = "строка текста\n".repeat(20_000); // ~94k tokens, over DOC_TOKENS
         let (c, t) = cut(&big, 1_000);
         assert!(t && tokens(&c) <= 1_020 && c.ends_with("символов]"));
         let root = tempfile::tempdir().unwrap();

@@ -51,6 +51,10 @@ let current = -1;
 let shown = -1;
 const HISTORY_LIMIT = 50;
 
+/** How the card names its ask: a fixed title for the suggestion kinds, else the question itself. */
+const KIND_TITLE: Record<string, string> = { questions: "Что спросить у собеседника", continue: "Как продолжить разговор" };
+const TRIGGER_LABEL: Record<string, string> = { auto: "авто", early: "авто", picked: "выбрано", screen: "экран", questions: "мои вопросы", continue: "что сказать" };
+
 function newTurn(id: number, question: string, trigger: string): Turn {
   const prev = turns.get(current);
   prev?.card.classList.remove("current");
@@ -58,8 +62,8 @@ function newTurn(id: number, question: string, trigger: string): Turn {
   const head = el("header", "q");
   const state = el("span", "state-word");
   head.append(
-    el("span", "qtext", trigger === "questions" ? "Что спросить у собеседника" : question ? `«${question}»` : trigger === "screen" ? "Вопрос с экрана" : "Без вопроса: подсказка по разговору"),
-    el("span", "trigger", trigger === "auto" || trigger === "early" ? "авто" : trigger === "picked" ? "выбрано" : trigger === "screen" ? "экран" : trigger === "questions" ? "мои вопросы" : "вручную"),
+    el("span", "qtext", KIND_TITLE[trigger] ?? (question ? `«${question}»` : trigger === "screen" ? "Задача с экрана" : "Без вопроса: подсказка по разговору")),
+    el("span", "trigger", TRIGGER_LABEL[trigger] ?? "вручную"),
     state,
   );
   const quick = el("p", "quick");
@@ -266,7 +270,9 @@ api.onEvent((e: CoreEvent) => {
 });
 
 $("btn-ask").onclick = () => api.send({ cmd: "ask", screenshot: false });
-$("btn-questions").onclick = () => api.send({ cmd: "ask", screenshot: false, questions: true });
+$("btn-questions").onclick = () => api.send({ cmd: "ask", screenshot: false, kind: "questions" });
+$("btn-continue").onclick = () => api.send({ cmd: "ask", screenshot: false, kind: "continue" });
+$("btn-help").onclick = () => api.openSettings("guide");
 $("btn-shot").onclick = () => {
   setPhase("looking");
   api.send({ cmd: "ask", screenshot: true });

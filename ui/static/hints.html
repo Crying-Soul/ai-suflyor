@@ -13,6 +13,9 @@
       <span class="title">Подсказки</span>
       <span class="spacer"></span>
       <button id="btn-model" class="btn-ghost small" type="button" title="Переключить модель">модель</button>
+      <button id="btn-help" class="icon-btn" type="button" title="Справка: что умеет приложение и как оно устроено" aria-label="Справка">
+        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><path d="M7.8 7.8a2.3 2.3 0 1 1 3.2 2.1c-.6.3-1 .8-1 1.5v.4" /><path d="M10 14.6v.1" /></svg>
+      </button>
       <button id="btn-hide" class="icon-btn" type="button" title="Скрыть это окно. Ctrl+Shift+H скрывает оба" aria-label="Скрыть">
         <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" /></svg>
       </button>
@@ -29,8 +32,9 @@
 
     <footer>
       <button id="btn-ask" class="btn" type="button" title="Ctrl+Shift+Space">Спросить</button>
-      <button id="btn-shot" class="btn-ghost" type="button" title="Ctrl+Shift+S">Экран + вопрос</button>
-      <button id="btn-questions" class="btn-ghost" type="button" title="Что спросить у собеседника. Ctrl+Alt+Q">Мои вопросы</button>
+      <button id="btn-shot" class="btn-ghost" type="button" title="Снимок активного окна с последним вопросом; без вопроса решает задачу на экране. Ctrl+Shift+S">Экран</button>
+      <button id="btn-continue" class="btn-ghost" type="button" title="Три фразы, как продолжить разговор. Ctrl+Alt+W">Что сказать</button>
+      <button id="btn-questions" class="btn-ghost" type="button" title="Что спросить у собеседника. Ctrl+Alt+Q">Вопросы</button>
     </footer>
   </div>
   <script src="hints.js"></script>

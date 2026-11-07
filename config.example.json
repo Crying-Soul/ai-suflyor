@@ -5,6 +5,8 @@
   "quickModel": "claude-haiku-5-5",
   "effort": "low",
   "language": "auto",
+  "userLanguage": "ru",
+  "translate": false,
   "userContext": "I am a backend developer (Go, PostgreSQL, Kubernetes). Interview for a Senior Backend position.",
   "autoDetect": true,
   "answerMode": "confirmed",

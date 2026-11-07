@@ -215,6 +215,14 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
         let seg = crate::FinalSegment { speaker, t_ms: t, end_ms: t + (job.utt.speech_end_sample - start) / 16, text: text.clone() };
         crate::call::save_final(shared, &seg);
         shared.transcript.lock().unwrap().push(seg);
+        // The local model has one pair: English speech, a Russian-speaking user (the detected language, or the configured one).
+        let english = lang.as_deref().or(opts_language(cfg)) == Some(crate::translate::FROM);
+        let wanted = english && cfg.user_language == crate::translate::TO;
+        if speaker == Speaker::Them && wanted && shared.status.lock().unwrap().translate {
+            if let Some(tr) = shared.translator.get() {
+                tr.push(t, text.clone());
+            }
+        }
         last_text[idx] = text;
         if speaker == Speaker::Them {
             if let Some(a) = shared.answerer.get() {
@@ -223,6 +231,11 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The configured speech language, None for "auto".
+fn opts_language(cfg: &Config) -> Option<&str> {
+    Some(cfg.language.as_str()).filter(|l| !l.is_empty() && *l != "auto")
 }
 
 /// True when "me" text at `t` repeats "them" speech of the last 20 s (or their live partial).
