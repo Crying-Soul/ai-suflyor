@@ -1,4 +1,4 @@
-//! Claude client: two backends behind one session type (docs/ARCHITECTURE.md §8).
+//! Claude client: two backends behind one session type.
 //! A session keeps the conversation itself; each turn sends only the new transcript.
 
 pub mod api;
