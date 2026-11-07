@@ -6,6 +6,7 @@ import path from "node:path";
 import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, SaveResult, Status, UiMessage } from "../shared/protocol";
 import * as calls from "./calls";
 import * as models from "./models";
+import * as mt from "./mt";
 import { createTray } from "./tray";
 import { startLogs } from "./log";
 import { CoreProcess, resolveCoreExe } from "./core";
@@ -17,13 +18,14 @@ interface Hotkeys {
   toggleAuto: string;
   clickThrough: string;
   cameraMode: string;
-  opacity: string;
   prevAnswer: string;
   nextAnswer: string;
   copyAnswer: string;
   zoomIn: string;
   zoomOut: string;
   myQuestions: string;
+  continueTalk: string;
+  translate: string;
 }
 
 const DEFAULT_HOTKEYS: Hotkeys = {
@@ -34,13 +36,14 @@ const DEFAULT_HOTKEYS: Hotkeys = {
   // In-call keys live under Ctrl+Alt: Ctrl+Shift combos collide with call apps (Teams answers on Ctrl+Shift+S/A).
   clickThrough: "CommandOrControl+Alt+X",
   cameraMode: "CommandOrControl+Alt+M",
-  opacity: "CommandOrControl+Alt+O",
   prevAnswer: "CommandOrControl+Alt+PageUp",
   nextAnswer: "CommandOrControl+Alt+PageDown",
   copyAnswer: "CommandOrControl+Alt+C",
   zoomIn: "CommandOrControl+Alt+=",
   zoomOut: "CommandOrControl+Alt+-",
   myQuestions: "CommandOrControl+Alt+Q",
+  continueTalk: "CommandOrControl+Alt+W",
+  translate: "CommandOrControl+Alt+T",
 };
 
 /** Window background before the page paints (Dusk paper, approximated in sRGB). */
@@ -89,7 +92,6 @@ function emit(e: CoreEvent): void {
     lastCall = e;
     tray?.setCall(e.dir ? e.title : null);
   }
-  if ((e.ev === "vad" && e.active) || e.ev === "partial" || (e.ev === "final" && e.text) || e.ev === "answer_start" || e.ev === "answer_delta") activity();
   // A restarted core knows nothing of the open call: open it again (its transcript is replayed).
   if (e.ev === "ready" && lastCall?.dir) openCall(lastCall.dir);
   // Level meters live in the transcript window only; ~20 events/s need not reach the hints.
@@ -120,13 +122,12 @@ function webPreferences(): Electron.WebPreferences {
 
 const stateFile = () => path.join(app.getPath("userData"), "windows.json");
 
-/** Two position presets (at the desk, by the camera), the chosen opacity and the text zoom. */
+/** Two position presets (at the desk, by the camera) and the text zoom. */
 type Preset = "normal" | "camera";
 interface WinState {
   preset: Preset;
   normal: Partial<Record<OverlayName, Rectangle>>;
   camera: Partial<Record<OverlayName, Rectangle>>;
-  opacity: number;
   zoom: number;
 }
 
@@ -137,7 +138,7 @@ function loadState(): WinState {
   } catch {}
   // The first version stored {transcript, hints} only: that is the normal preset.
   const normal = (raw.normal ?? { transcript: raw.transcript, hints: raw.hints }) as WinState["normal"];
-  return { preset: raw.preset === "camera" ? "camera" : "normal", normal, camera: (raw.camera ?? {}) as WinState["camera"], opacity: Number(raw.opacity) || 1, zoom: Number(raw.zoom) || 1 };
+  return { preset: raw.preset === "camera" ? "camera" : "normal", normal, camera: (raw.camera ?? {}) as WinState["camera"], zoom: Number(raw.zoom) || 1 };
 }
 
 const win = loadState();
@@ -222,36 +223,14 @@ function createOverlay(name: OverlayName): void {
   w.on("resized", save);
   w.on("closed", () => delete overlays[name]);
   overlays[name] = w;
-  applyOpacity();
 }
 
-// ---------- in-call comfort: presets, click-through, opacity and idle dimming, zoom ----------
+// ---------- in-call comfort: presets, click-through, zoom ----------
 
 let clickThrough = false;
-let dimmed = false;
-let idleTimer: NodeJS.Timeout | undefined;
-/** No speech and no answer for this long: the overlays fade to IDLE_DIM of their opacity. */
-const IDLE_MS = 8000;
-const IDLE_DIM = 0.45;
 
 function sendUi(w: BrowserWindow | undefined, m?: UiMessage): void {
   w?.webContents.send("ui", m ?? { kind: "mode", mini: win.preset === "camera", clickThrough });
-}
-
-function applyOpacity(): void {
-  for (const w of Object.values(overlays)) w.setOpacity(win.opacity * (dimmed ? IDLE_DIM : 1));
-}
-
-function activity(): void {
-  if (dimmed) {
-    dimmed = false;
-    applyOpacity();
-  }
-  clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => {
-    dimmed = true;
-    applyOpacity();
-  }, IDLE_MS);
 }
 
 function togglePreset(): void {
@@ -262,7 +241,6 @@ function togglePreset(): void {
     sendUi(w);
   }
   saveState();
-  activity();
 }
 
 function toggleClickThrough(): void {
@@ -273,23 +251,16 @@ function toggleClickThrough(): void {
   }
 }
 
-function cycleOpacity(): void {
-  const steps = [1, 0.8, 0.6];
-  win.opacity = steps[(steps.indexOf(win.opacity) + 1) % steps.length] ?? 1;
-  dimmed = false;
-  applyOpacity();
-  saveState();
-  activity();
-}
-
 function zoom(delta: number): void {
   win.zoom = Math.round(Math.min(1.6, Math.max(0.7, win.zoom + delta)) * 10) / 10;
   for (const w of Object.values(overlays)) w.webContents.setZoomFactor(win.zoom);
   saveState();
 }
 
-function openSettings(): void {
+/** `section`: the Settings section to show ("guide" is the in-app guide). */
+function openSettings(section?: string): void {
   if (settingsWin) {
+    if (section) sendUi(settingsWin, { kind: "section", id: section });
     settingsWin.focus();
     return;
   }
@@ -307,7 +278,7 @@ function openSettings(): void {
   });
   // Settings show the API key and the user context: keep them out of screen sharing too.
   settingsWin.setContentProtection(true);
-  settingsWin.loadFile(path.join(__dirname, "settings.html"));
+  settingsWin.loadFile(path.join(__dirname, "settings.html"), section ? { hash: section } : undefined);
   settingsWin.on("closed", () => (settingsWin = null));
 }
 
@@ -353,13 +324,14 @@ function registerHotkeys(): void {
     [hotkeys.toggleAuto, () => core.send({ cmd: "set", auto: !(lastStatus?.auto ?? true) })],
     [hotkeys.clickThrough, toggleClickThrough],
     [hotkeys.cameraMode, togglePreset],
-    [hotkeys.opacity, cycleOpacity],
-    [hotkeys.prevAnswer, () => (activity(), sendUi(overlays.hints, { kind: "nav", dir: -1 }))],
-    [hotkeys.nextAnswer, () => (activity(), sendUi(overlays.hints, { kind: "nav", dir: 1 }))],
+    [hotkeys.prevAnswer, () => sendUi(overlays.hints, { kind: "nav", dir: -1 })],
+    [hotkeys.nextAnswer, () => sendUi(overlays.hints, { kind: "nav", dir: 1 })],
     [hotkeys.copyAnswer, () => sendUi(overlays.hints, { kind: "copy" })],
     [hotkeys.zoomIn, () => zoom(0.1)],
     [hotkeys.zoomOut, () => zoom(-0.1)],
-    [hotkeys.myQuestions, () => core.send({ cmd: "ask", screenshot: false, questions: true })],
+    [hotkeys.myQuestions, () => core.send({ cmd: "ask", screenshot: false, kind: "questions" })],
+    [hotkeys.continueTalk, () => core.send({ cmd: "ask", screenshot: false, kind: "continue" })],
+    [hotkeys.translate, () => core.send({ cmd: "set", translate: !(lastStatus?.translate ?? false) })],
   ];
   for (const [accel, fn] of map) {
     try {
@@ -498,8 +470,18 @@ function activeModel(): string {
   return path.resolve(path.dirname(configPath ?? newConfigPath()), p);
 }
 
+/** translateModel as an absolute path, resolved like the core does. */
+function mtDir(): string {
+  const p = (readRaw(configPath).translateModel as string | undefined) || "models/opus-mt-en-ru";
+  return path.resolve(path.dirname(configPath ?? newConfigPath()), p);
+}
+
 function registerModelsIpc(): void {
   models.useFetch(net.fetch as typeof fetch);
+  ipcMain.handle("mt:status", () => mt.status(mtDir()));
+  // Not awaited, like the whisper download: progress arrives as models:changed.
+  ipcMain.handle("mt:download", () => void mt.download(mtDir(), () => settingsWin?.webContents.send("models:changed")));
+  ipcMain.on("mt:cancel", () => mt.cancel());
   const changed = () => settingsWin?.webContents.send("models:changed");
   ipcMain.handle("models:list", () => models.list(modelsDir(), activeModel()));
   // Not awaited: the download outlives the request; progress arrives as models:changed.
@@ -602,8 +584,7 @@ app.whenReady().then(() => {
     if (cmd.cmd === "clear") emit({ ev: "cleared" });
   });
   ipcMain.on("hide", (e) => BrowserWindow.fromWebContents(e.sender)?.hide());
-  ipcMain.on("settings:open", openSettings);
-  ipcMain.on("ui:active", activity);
+  ipcMain.on("settings:open", (_e, section?: string) => openSettings(typeof section === "string" ? section : undefined));
   ipcMain.on("ui:copy", (_e, text: string) => clipboard.writeText(text));
   ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
   ipcMain.handle("config:load", loadConfig);
@@ -616,7 +597,6 @@ app.whenReady().then(() => {
   createOverlay("transcript");
   createOverlay("hints");
   tray = createTray({ toggleWindows, openCalls, openSettings, togglePreset, toggleClickThrough, quit: () => app.quit() });
-  activity();
   setTimeout(checkProtection, 3000);
   registerHotkeys();
   // The core reads the migrated profile, so it starts after the migration.

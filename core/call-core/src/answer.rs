@@ -61,6 +61,8 @@ pub struct Answerer {
     next_id: Arc<AtomicU64>,
     /// "them" finals, early decodes and resumes for auto-detect.
     auto: mpsc::UnboundedSender<Auto>,
+    /// `brief::key` of the context now in use: a brief made for an older one is not applied.
+    context_key: Arc<std::sync::Mutex<String>>,
 }
 
 /// Rolling summary of a long call: the transcript before `upto` is replaced by `text` in new sessions.
@@ -107,11 +109,12 @@ impl Answerer {
     /// `context`: the assembled context block (`context::assemble`) for the system prompt.
     pub fn start(cfg: &Config, shared: Arc<Shared>, context: &str) -> Answerer {
         let cfg = Arc::new(cfg.clone());
-        let make = |tier: &'static str| session(&cfg, tier, llm::system_prompt(tier == "quick", context));
+        let make = |tier: &'static str| session(&cfg, tier, llm::system_prompt(tier == "quick", context, &cfg.user_language));
         let full = spawn_tier("full", make("full"), cfg.model.clone(), shared.clone());
         let quick = cfg.two_tier.then(|| (spawn_tier("quick", make("quick"), cfg.quick_model.clone(), shared.clone()), cfg.quick_model.clone()));
         let (auto, auto_rx) = mpsc::unbounded_channel();
-        let a = Answerer { cfg: cfg.clone(), full, quick, next_id: Arc::new(AtomicU64::new(1)), auto };
+        let context_key = Arc::new(std::sync::Mutex::new(crate::brief::key(context)));
+        let a = Answerer { cfg: cfg.clone(), full, quick, next_id: Arc::new(AtomicU64::new(1)), auto, context_key };
         tokio::spawn(auto_detect(a.clone(), shared, auto_rx));
         a
     }
@@ -245,11 +248,45 @@ impl Answerer {
     }
 
     /// Both tiers restart on a system prompt with this context; the next ask resends the transcript.
-    pub fn reconfigure(&self, context: &str) {
-        let _ = self.full.send(Msg::Reconfigure(llm::system_prompt(false, context)));
+    /// `quick_context`: what the quick tier gets instead (the brief of a large context, or the same).
+    pub fn reconfigure(&self, context: &str, quick_context: &str) {
+        *self.context_key.lock().unwrap() = crate::brief::key(context);
+        let lang = &self.cfg.user_language;
+        let _ = self.full.send(Msg::Reconfigure(llm::system_prompt(false, context, lang)));
         if let Some((tx, _)) = &self.quick {
-            let _ = tx.send(Msg::Reconfigure(llm::system_prompt(true, context)));
+            let _ = tx.send(Msg::Reconfigure(llm::system_prompt(true, quick_context, lang)));
         }
+    }
+
+    /// A brief finished: the quick tier switches to it, unless the context changed meanwhile.
+    pub fn set_brief(&self, key: &str, brief: &str) -> bool {
+        if *self.context_key.lock().unwrap() != key {
+            return false;
+        }
+        if let Some((tx, _)) = &self.quick {
+            let _ = tx.send(Msg::Reconfigure(llm::system_prompt(true, brief, &self.cfg.user_language)));
+        }
+        true
+    }
+
+    /// Only the quick tier reads a brief; without it there is nothing to make one for.
+    pub fn has_quick(&self) -> bool {
+        self.quick.is_some()
+    }
+
+    /// The brief of `context`, written by the full model.
+    pub async fn brief(&self, context: &str) -> anyhow::Result<String> {
+        let mut s = session(&self.cfg, "brief", crate::brief::SYSTEM.replace("{user_language}", &self.cfg.user_language));
+        let model = &self.cfg.model;
+        s.prepare(model).await?;
+        let mut out = String::new();
+        s.ask(model, &llm::Turn { text: format!("{context}\n\nWrite the brief."), image: None }, &mut |c| {
+            if let Chunk::Text(t) = c {
+                out.push_str(&t);
+            }
+        })
+        .await?;
+        Ok(out.trim().to_string())
     }
 
     /// A fresh answer/turn id (also used to replay saved answers).
@@ -285,7 +322,7 @@ fn hints_block(answers: &[crate::call::AnswerRecord]) -> String {
     if items.is_empty() { String::new() } else { format!("<hints>\n{}\n</hints>\n", items.join("\n")) }
 }
 
-fn session(cfg: &Config, tier: &'static str, system: String) -> Session {
+pub(crate) fn session(cfg: &Config, tier: &'static str, system: String) -> Session {
     if cfg.llm.backend == Backend::ClaudeCode {
         Session::Code(llm::claude_code::CodeSession::new(cfg.claude_code.command.clone(), system, cfg.effort.clone(), tier))
     } else {
@@ -296,6 +333,7 @@ fn session(cfg: &Config, tier: &'static str, system: String) -> Session {
         let max_tokens = match tier {
             "quick" => 200,
             "summary" => 1500,
+            "brief" => 6000,
             _ => 2048,
         };
         Session::Api(llm::api::ApiSession::new(key, system, cfg.effort.clone(), max_tokens))
@@ -682,7 +720,7 @@ mod tests {
         let (mock, _) = MockSession::new(delay, vec!["ok"], 0);
         let (full, shared, rx) = tier(mock);
         let (auto, _) = mpsc::unbounded_channel();
-        let a = Answerer { cfg: Arc::new(Config::default()), full, quick: None, next_id: Arc::new(AtomicU64::new(1)), auto };
+        let a = Answerer { cfg: Arc::new(Config::default()), full, quick: None, next_id: Arc::new(AtomicU64::new(1)), auto, context_key: Default::default() };
         (a, shared, rx)
     }
 

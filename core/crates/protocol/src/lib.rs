@@ -30,6 +30,19 @@ pub enum AnswerMode {
     Speculative,
 }
 
+/// What an ask is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AskKind {
+    /// Answer the detected (or picked) question.
+    #[default]
+    Answer,
+    /// Questions the user can ask the other side.
+    Questions,
+    /// Ways the user can continue the conversation now.
+    Continue,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Command {
@@ -39,9 +52,8 @@ pub enum Command {
         /// Ask about this text instead of the detected question (a transcript row the user picked).
         #[serde(default)]
         question: Option<String>,
-        /// Suggest questions the user can ask the other side instead of answering.
         #[serde(default)]
-        questions: bool,
+        kind: AskKind,
     },
     Set {
         #[serde(default)]
@@ -50,6 +62,9 @@ pub enum Command {
         model: Option<String>,
         #[serde(default)]
         answer_mode: Option<AnswerMode>,
+        /// Translate the other side's speech into the user's language.
+        #[serde(default)]
+        translate: Option<bool>,
     },
     Clear,
     /// Opens a call directory (`<dataDir>/folders/<folder>/calls/<call>`): its context goes into the
@@ -98,6 +113,7 @@ pub struct Status {
     pub auto: bool,
     pub model: String,
     pub answer_mode: AnswerMode,
+    pub translate: bool,
     pub busy: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recording_dir: Option<String>,
@@ -174,6 +190,11 @@ pub enum Event {
         height: u32,
         thumb: String,
     },
+    /// Translation of the other side's utterances `ts` (their `t`), sent as one piece.
+    Translation {
+        ts: Vec<u64>,
+        text: String,
+    },
     /// The context now in use. `dir` is null when no call is open (profile only).
     Call {
         dir: Option<String>,
@@ -199,11 +220,15 @@ mod tests {
     #[test]
     fn parses_commands() {
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","screenshot":true}"#).unwrap();
-        assert!(matches!(c, Command::Ask { screenshot: true, question: None, questions: false }));
+        assert!(matches!(c, Command::Ask { screenshot: true, question: None, kind: AskKind::Answer }));
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","question":"Почему Go?"}"#).unwrap();
-        assert!(matches!(c, Command::Ask { screenshot: false, question: Some(ref q), questions: false } if q == "Почему Go?"));
-        let c: Command = serde_json::from_str(r#"{"cmd":"ask","questions":true}"#).unwrap();
-        assert!(matches!(c, Command::Ask { questions: true, .. }));
+        assert!(matches!(c, Command::Ask { screenshot: false, question: Some(ref q), kind: AskKind::Answer } if q == "Почему Go?"));
+        let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"questions"}"#).unwrap();
+        assert!(matches!(c, Command::Ask { kind: AskKind::Questions, .. }));
+        let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"continue"}"#).unwrap();
+        assert!(matches!(c, Command::Ask { kind: AskKind::Continue, .. }));
+        let c: Command = serde_json::from_str(r#"{"cmd":"set","translate":true}"#).unwrap();
+        assert!(matches!(c, Command::Set { translate: Some(true), .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"set","answer_mode":"speculative"}"#).unwrap();
         assert!(matches!(c, Command::Set { answer_mode: Some(AnswerMode::Speculative), .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"clear"}"#).unwrap();

@@ -113,8 +113,9 @@ The transcript comes from speech recognition and may contain recognition errors;
 Help the user answer the question in <question>.\n\n\
 Format: the first line is a short answer the user can say out loud, at most 20 words. \
 Then at most 5 short bullets with the key points, facts or numbers. \
-Write code only if the question asks for code. No preamble, no headings, do not restate the question. \
-Answer in the language of the question.\n\n\
+Write code only if the question asks for code. No preamble, no headings, do not restate the question.\n\n\
+Language: the first line is in the language the other side speaks, since the user says it aloud. \
+The bullets are in the user's language ({user_language}), technical terms stay in English. Code and its comments are in English.\n\n\
 Context about the user, the company and this call may follow in <about_user>, <document>, <company>, <previous_calls> and <this_call>. \
 Answer from the user's real experience in <about_user> and the documents; never invent experience they do not have. \
 Stay consistent with what the user said earlier in this call and in previous calls. Use the company and call context.\n\n\
@@ -125,7 +126,7 @@ const QUICK_SYSTEM: &str = "You are a silent assistant helping the user during a
 You receive a live transcript in <transcript> blocks: lines starting with \"Q:\" are the other side, lines starting with \"A:\" are the user. \
 It comes from speech recognition and may contain errors. \
 Reply with one line of at most 15 words: the key point the user should say in answer to <question>. \
-No preamble, no markdown. Answer in the language of the question. \
+No preamble, no markdown. Answer in the language of the question; the user's own language is {user_language}. \
 Base it on the user's real experience from the context below, if any. \
 An attached image is the user's screen: if it shows code or a task, the line is about that.";
 
@@ -142,13 +143,20 @@ Skip a section with nothing in it. No preamble.";
 /// The "question" of «Мои вопросы»: what the user could ask the other side now.
 pub const MY_QUESTIONS: &str = "Suggest three short questions the user can ask the other side now, \
 based on the context (company, role, people) and the conversation so far. Skip what was already answered. \
-Reply in the language the people in the transcript speak, not in the language of this instruction. First line: the best one. Then a list of all three, each with a few words on why it is worth asking.";
+Each question is in the language the other side speaks, followed by \" — \" and a few words in the user's language on why it is worth asking. \
+First line: the best one. Then a list of all three.";
+
+/// The "question" of «Что сказать»: ways the user can continue the conversation now.
+pub const CONTINUE: &str = "Suggest three ways the user can continue the conversation right now: what to say next to keep it going, \
+steer it towards their strengths from the context, or close the current topic well. \
+Each is one line: a phrase in the language the other side speaks, ready to say aloud, then \" — \" and a few words in the user's language on when to use it. \
+First line: the best one. Then a list of all three. No preamble.";
 
 /// Instructions, then the assembled context (`context::assemble`): the prefix stays the same
-/// for the whole call, so the prompt cache holds it.
-pub fn system_prompt(quick: bool, context: &str) -> String {
-    let base = if quick { QUICK_SYSTEM } else { FULL_SYSTEM };
-    if context.trim().is_empty() { base.to_string() } else { format!("{base}\n\n{}", context.trim()) }
+/// for the whole call, so the prompt cache holds it. `user_language`: ISO code, e.g. "ru".
+pub fn system_prompt(quick: bool, context: &str, user_language: &str) -> String {
+    let base = if quick { QUICK_SYSTEM } else { FULL_SYSTEM }.replace("{user_language}", user_language);
+    if context.trim().is_empty() { base } else { format!("{base}\n\n{}", context.trim()) }
 }
 
 pub fn summary_system(context: &str) -> String {

@@ -15,7 +15,7 @@ use tracing::{info, warn};
 
 use crate::answer::Answerer;
 use crate::config::Config;
-use crate::context;
+use crate::{brief, context};
 use crate::{FinalSegment, Shared};
 
 /// One finished answer of one tier, as saved in `answers.jsonl`.
@@ -82,27 +82,81 @@ pub fn save_answer(shared: &Shared, rec: AnswerRecord) {
 }
 
 /// Assembles the context of `dir` (or the profile alone), hands it to the answerer and the STT
-/// glossary, and tells the UI. Returns the assembled text.
-pub fn apply(cfg: &Config, shared: &Shared, answerer: &Answerer, dir: Option<&Path>) -> String {
+/// glossary, and tells the UI. A large context gets its brief for the quick tier (`brief.rs`):
+/// from `brief.md` when it is current, else made in the background while the quick tier reads the
+/// whole context.
+pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Option<&Path>) {
     let a = context::assemble(&cfg.profile_dir(), dir, &cfg.user_context, &cfg.glossary);
     for w in &a.warnings {
         warn!("context: {w}");
     }
     info!("context: {} tokens, glossary: {}", a.tokens(), a.glossary.join(", "));
     *shared.glossary.write().unwrap() = a.glossary.clone();
-    answerer.reconfigure(&a.text);
-    let _ = shared.events.send(Event::Call {
+    let mut ev = Event::Call {
         dir: dir.map(|d| d.display().to_string()),
         title: a.title.clone(),
         folder: a.folder.clone(),
         tokens: a.tokens(),
         parts: a.parts.clone(),
         warnings: a.warnings.clone(),
+    };
+    if !answerer.has_quick() || a.tokens() < brief::MIN_TOKENS {
+        answerer.reconfigure(&a.text, &a.text);
+        let _ = shared.events.send(ev);
+        return;
+    }
+    let place = dir.map(Path::to_path_buf).unwrap_or_else(|| cfg.profile_dir());
+    let key = brief::key(&a.text);
+    if let Some(b) = brief::cached(&place, &key) {
+        answerer.reconfigure(&a.text, &b);
+        add_brief_part(&mut ev, &b, false);
+        let _ = shared.events.send(ev);
+        return;
+    }
+    answerer.reconfigure(&a.text, &a.text);
+    add_brief_part(&mut ev, "", true);
+    let _ = shared.events.send(ev.clone());
+    info!("brief: building for {}", place.display());
+    let (shared, answerer, text) = (shared.clone(), answerer.clone(), a.text);
+    tokio::spawn(async move {
+        let started = std::time::Instant::now();
+        match answerer.brief(&text).await {
+            Ok(b) if !b.is_empty() => {
+                if let Err(e) = brief::store(&place, &key, &b) {
+                    warn!("brief: cannot save in {}: {e}", place.display());
+                }
+                info!("brief: {} tokens in {} ms", context::tokens(&b), started.elapsed().as_millis());
+                if answerer.set_brief(&key, &b) {
+                    let mut ev = ev;
+                    add_brief_part(&mut ev, &b, false);
+                    let _ = shared.events.send(ev);
+                }
+            }
+            Ok(_) => warn!("brief: empty reply"),
+            Err(e) => {
+                warn!("brief: {e:#}");
+                let _ = shared.events.send(Event::Error { message: format!("досье: {e:#}") });
+            }
+        }
     });
-    a.text
 }
 
-pub fn open(cfg: &Config, shared: &Shared, answerer: &Answerer, dir: PathBuf) -> Result<()> {
+/// The «Досье» row of the UI's context breakdown; `building` adds the note that it is on its way.
+fn add_brief_part(ev: &mut Event, brief: &str, building: bool) {
+    if let Event::Call { parts, warnings, .. } = ev {
+        parts.retain(|p| p.name != BRIEF_PART);
+        warnings.retain(|w| w != BRIEF_BUILDING);
+        parts.push(protocol::ContextPart { name: BRIEF_PART.into(), tokens: context::tokens(brief), truncated: false });
+        if building {
+            warnings.push(BRIEF_BUILDING.into());
+        }
+    }
+}
+
+const BRIEF_PART: &str = "Досье для быстрой подсказки (brief.md)";
+const BRIEF_BUILDING: &str = "Досье собирается, пока быстрая подсказка читает весь контекст";
+
+pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBuf) -> Result<()> {
     if !dir.is_dir() {
         bail!("no call directory {}", dir.display());
     }
@@ -134,7 +188,7 @@ fn replay(shared: &Shared, answerer: &Answerer, answers: Vec<AnswerRecord>) {
     }
 }
 
-pub fn reload(cfg: &Config, shared: &Shared, answerer: &Answerer) {
+pub fn reload(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
     let dir = shared.call.lock().unwrap().clone();
     apply(cfg, shared, answerer, dir.as_deref());
 }

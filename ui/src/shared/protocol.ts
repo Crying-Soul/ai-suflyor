@@ -2,10 +2,12 @@
 
 export type Speaker = "me" | "them";
 export type AnswerMode = "confirmed" | "speculative";
+/** What an ask is for: answer the question, suggest questions to ask, or ways to continue. */
+export type AskKind = "answer" | "questions" | "continue";
 
 export type Command =
-  | { cmd: "ask"; screenshot: boolean; question?: string; questions?: boolean }
-  | { cmd: "set"; auto?: boolean; model?: string; answer_mode?: AnswerMode }
+  | { cmd: "ask"; screenshot: boolean; question?: string; kind?: AskKind }
+  | { cmd: "set"; auto?: boolean; model?: string; answer_mode?: AnswerMode; translate?: boolean }
   | { cmd: "clear" }
   | { cmd: "open_call"; dir: string }
   | { cmd: "reload_context" }
@@ -41,6 +43,7 @@ export interface Status {
   auto: boolean;
   model: string;
   answer_mode: AnswerMode;
+  translate: boolean;
   busy: boolean;
   recording_dir?: string;
 }
@@ -63,6 +66,8 @@ export type CoreEvent =
   | { ev: "error"; message: string }
   /** The screen that goes with answer turn `turn`; `thumb` is a small JPEG data URL. */
   | { ev: "screenshot"; turn: number; width: number; height: number; thumb: string }
+  /** Translation of the other side's utterances `ts` (their `t`), as one piece. */
+  | { ev: "translation"; ts: number[]; text: string }
   | ({ ev: "call" } & CallInfo)
   | { ev: "summary"; dir: string; ok: boolean; error?: string }
   // Emitted by the UI main process itself, not the core:
@@ -157,6 +162,13 @@ export interface ModelInfo {
   error?: string;
 }
 
+/** The local translation model: one entry, installed or not. Changes arrive through `ModelsApi.onChange`. */
+export interface MtApi {
+  status(): Promise<ModelInfo>;
+  download(): Promise<void>;
+  cancel(): void;
+}
+
 export interface ModelsApi {
   list(): Promise<ModelInfo[]>;
   download(id: string): Promise<void>;
@@ -176,7 +188,9 @@ export type UiMessage =
   /** Copy the answer on show. */
   | { kind: "copy" }
   /** The screen hotkey was pressed: a capture and an answer are coming. */
-  | { kind: "looking" };
+  | { kind: "looking" }
+  /** Settings: show this section (the guide is "guide"). */
+  | { kind: "section"; id: string };
 
 export interface PrivacyReport {
   /** PNG data URL of the display with the overlays, as other apps capture it. */
@@ -191,7 +205,8 @@ export interface RendererApi {
   send(cmd: Command): void;
   hide(): void;
   onEvent(cb: (e: CoreEvent) => void): void;
-  openSettings(): void;
+  /** Opens Settings, on `section` if given ("guide": the in-app guide). */
+  openSettings(section?: string): void;
   closeWindow(): void;
   loadConfig(): Promise<ConfigSnapshot>;
   /** Dotted keys ("vad.minSilenceMs") to values; written into config.json, then the core restarts. */
@@ -199,11 +214,10 @@ export interface RendererApi {
   listMics(): Promise<string[]>;
   openCalls(): void;
   onUi(cb: (m: UiMessage) => void): void;
-  /** The pointer is over an overlay: it must not be dimmed. */
-  uiActive(): void;
   copy(text: string): void;
   calls: CallsApi;
   models: ModelsApi;
+  mt: MtApi;
   privacyTest(): Promise<PrivacyReport>;
   openLogs(): void;
   /** Disk path of a file dropped on the page. */

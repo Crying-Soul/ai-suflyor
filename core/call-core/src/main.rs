@@ -2,6 +2,7 @@
 //! Talks NDJSON over stdio to the Electron UI (see the `protocol` crate).
 
 mod answer;
+mod brief;
 mod call;
 mod config;
 mod context;
@@ -9,12 +10,13 @@ mod llm;
 mod screen;
 mod streams;
 mod stt_worker;
+mod translate;
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::Result;
-use protocol::{Command, Event, Speaker, Status};
+use protocol::{AskKind, Command, Event, Speaker, Status};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -43,6 +45,8 @@ pub struct Shared {
     pub them_speaking: std::sync::atomic::AtomicBool,
     /// Set once at startup; the STT worker reports "them" finals to it.
     pub answerer: std::sync::OnceLock<answer::Answerer>,
+    /// Set once at startup; the STT worker hands it "them" finals while translation is on.
+    pub translator: std::sync::OnceLock<translate::Translator>,
     /// Whisper spelling hints of the current context (call, folder, profile, config).
     pub glossary: RwLock<Vec<String>>,
     /// Directory of the open call; finals and answers are appended to it.
@@ -72,6 +76,7 @@ impl Shared {
                 auto: false,
                 model: "test".into(),
                 answer_mode: Default::default(),
+                translate: false,
                 busy: false,
                 recording_dir: None,
             }),
@@ -79,6 +84,7 @@ impl Shared {
             transcript: Default::default(),
             them_speaking: Default::default(),
             answerer: Default::default(),
+            translator: Default::default(),
             glossary: Default::default(),
             call: Default::default(),
             notes: Default::default(),
@@ -162,7 +168,7 @@ fn main() -> Result<()> {
             anyhow::bail!("no call directory {}", d.display());
         }
         let a = context::assemble(&cfg.profile_dir(), dir, &cfg.user_context, &cfg.glossary);
-        println!("{}", llm::system_prompt(false, &a.text));
+        println!("{}", llm::system_prompt(false, &a.text, &cfg.user_language));
         // Read by the «Звонки» window: Russian, one line each.
         eprintln!("≈{} токенов. Глоссарий: {}", a.tokens(), if a.glossary.is_empty() { "пусто".into() } else { a.glossary.join(", ") });
         for w in &a.warnings {
@@ -213,6 +219,7 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
             auto: cfg.auto_detect,
             model: cfg.model.clone(),
             answer_mode: cfg.answer_mode,
+            translate: cfg.translate,
             busy: false,
             recording_dir: record_dir.as_ref().map(|d| d.display().to_string()),
         }),
@@ -220,6 +227,7 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
         transcript: Mutex::new(Vec::new()),
         them_speaking: Default::default(),
         answerer: Default::default(),
+        translator: Default::default(),
         glossary: Default::default(),
         call: Default::default(),
         notes: Default::default(),
@@ -236,6 +244,7 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
     let streams = StreamSet::start(&cfg, shared.clone(), queue.clone(), record_dir)?;
     let answerer = answer::Answerer::start(&cfg, shared.clone(), &profile.text);
     let _ = shared.answerer.set(answerer.clone());
+    let _ = shared.translator.set(translate::Translator::start(&cfg, shared.clone()));
 
     // stdin reader: commands from the UI. EOF means the UI died -> shut down.
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
@@ -269,10 +278,13 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
 
 fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::Answerer) {
     match cmd {
-        Command::Ask { questions: true, .. } => {
+        Command::Ask { kind: AskKind::Questions, .. } => {
             answerer.ask(shared, "questions", Some((llm::MY_QUESTIONS.to_string(), None)), None);
         }
-        Command::Ask { screenshot, question, .. } => {
+        Command::Ask { kind: AskKind::Continue, .. } => {
+            answerer.ask(shared, "continue", Some((llm::CONTINUE.to_string(), None)), None);
+        }
+        Command::Ask { kind: AskKind::Answer, screenshot, question } => {
             let picked = question.filter(|q| !q.trim().is_empty()).map(|q| (q, None));
             if !screenshot {
                 answerer.ask(shared, if picked.is_some() { "picked" } else { "hotkey" }, picked, None);
@@ -298,7 +310,10 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
                 answerer.ask(&shared, "screen", picked, shot);
             });
         }
-        Command::Set { auto, model, answer_mode } => shared.update_status(|s| {
+        Command::Set { auto, model, answer_mode, translate } => shared.update_status(|s| {
+            if let Some(t) = translate {
+                s.translate = t;
+            }
             if let Some(a) = auto {
                 s.auto = a;
             }
@@ -317,6 +332,9 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
             shared.transcript.lock().unwrap().clear();
             answer::Answerer::forget_notes(shared);
             answerer.clear();
+            if let Some(t) = shared.translator.get() {
+                t.clear();
+            }
         }
         // shortcut: assembly runs on the command loop; a large uncached PDF stalls commands for a second or two.
         Command::OpenCall { dir } => {

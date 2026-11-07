@@ -64,11 +64,12 @@ Useful:
 | Ctrl+Shift+H | Hide or show both windows |
 | Ctrl+Alt+M | «У камеры»: hints as a strip at the top centre, near the camera |
 | Ctrl+Alt+X | Clicks pass through the overlays (again to undo) |
-| Ctrl+Alt+O | Opacity 100 / 80 / 60 % (idle overlays fade further after 8 s) |
 | Ctrl+Alt+PageUp / PageDown | Older / newer answer |
 | Ctrl+Alt+C | Copy the answer on show |
 | Ctrl+Alt+= / Ctrl+Alt+- | Larger / smaller text |
 | Ctrl+Alt+Q | «Мои вопросы»: three questions to ask the other side now |
+| Ctrl+Alt+W | «Что сказать»: three phrases to continue the conversation |
+| Ctrl+Alt+T | Translate the other side's speech on/off (local Opus-MT model: download it once in Settings → «Ответы») |
 
 The tray icon (it may sit in the `^` overflow) shows or hides the windows, opens «Звонки» and «Настройки», and quits. Logs go to `%APPDATA%\call-assistant-ui\logs\YYYY-MM-DD.log` and are kept 7 days (Settings → «Отладка» → «Открыть папку логов»).
 

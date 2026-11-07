@@ -36,17 +36,33 @@ export function modelLabel(s: Status): string {
  */
 export function follow(box: HTMLElement, pill: HTMLElement): () => void {
   let pinned = true;
-  box.addEventListener("scroll", () => {
+  /** Our own smooth scroll is under way: its midway positions must not unpin the view. */
+  let gliding = false;
+  const check = () => {
     pinned = box.scrollHeight - box.scrollTop - box.clientHeight < 32;
     if (pinned) pill.hidden = true;
+  };
+  box.addEventListener("scroll", () => gliding || check());
+  box.addEventListener("scrollend", () => {
+    if (!gliding) return check();
+    // Text may have grown during the glide: finish at the very bottom, still pinned.
+    gliding = false;
+    box.scrollTop = box.scrollHeight;
   });
   pill.addEventListener("click", () => {
     box.scrollTop = box.scrollHeight;
     pill.hidden = true;
   });
   return () => {
-    if (pinned) box.scrollTop = box.scrollHeight;
-    else pill.hidden = false;
+    if (!pinned) {
+      pill.hidden = false;
+      return;
+    }
+    // Small steps glide; a big jump (a replayed call) goes at once.
+    const step = box.scrollHeight - box.clientHeight - box.scrollTop;
+    if (step <= 0) return;
+    gliding = step < box.clientHeight && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    box.scrollTo({ top: box.scrollHeight, behavior: gliding ? "smooth" : "instant" });
   };
 }
 
@@ -69,7 +85,7 @@ export function icon(name: keyof typeof ICONS): SVGSVGElement {
 
 /**
  * Overlay window modes from main: `mini` (the camera strip) and `through` (clicks pass through)
- * as body classes. The pointer over the window keeps it from dimming. Other messages go to `cb`.
+ * as body classes. Other messages go to `cb`.
  */
 export function overlayUi(cb: (m: Exclude<UiMessage, { kind: "mode" }>) => void = () => {}): void {
   api.onUi((m) => {
@@ -78,8 +94,6 @@ export function overlayUi(cb: (m: Exclude<UiMessage, { kind: "mode" }>) => void 
     document.body.classList.toggle("through", m.clickThrough);
   });
   guardPopups();
-  document.addEventListener("mouseenter", () => api.uiActive());
-  document.addEventListener("mousemove", () => api.uiActive(), { passive: true });
 }
 
 /**

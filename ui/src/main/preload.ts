@@ -7,7 +7,7 @@ const api: RendererApi = {
   onEvent: (cb) => {
     ipcRenderer.on("core-event", (_e, ev: CoreEvent) => cb(ev));
   },
-  openSettings: () => ipcRenderer.send("settings:open"),
+  openSettings: (section) => ipcRenderer.send("settings:open", section),
   closeWindow: () => ipcRenderer.send("window:close"),
   loadConfig: () => ipcRenderer.invoke("config:load"),
   saveConfig: (patch) => ipcRenderer.invoke("config:save", patch),
@@ -16,7 +16,6 @@ const api: RendererApi = {
   onUi: (cb) => {
     ipcRenderer.on("ui", (_e, m: UiMessage) => cb(m));
   },
-  uiActive: () => ipcRenderer.send("ui:active"),
   copy: (text) => ipcRenderer.send("ui:copy", text),
   calls: {
     tree: () => ipcRenderer.invoke("calls:tree"),
@@ -31,6 +30,11 @@ const api: RendererApi = {
     preview: (dir) => ipcRenderer.invoke("calls:preview", dir),
     reveal: (dir) => ipcRenderer.send("calls:reveal", dir),
     current: () => ipcRenderer.invoke("calls:current"),
+  },
+  mt: {
+    status: () => ipcRenderer.invoke("mt:status"),
+    download: () => ipcRenderer.invoke("mt:download"),
+    cancel: () => ipcRenderer.send("mt:cancel"),
   },
   models: {
     list: () => ipcRenderer.invoke("models:list"),
