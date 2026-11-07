@@ -162,6 +162,24 @@ export interface ModelInfo {
   error?: string;
 }
 
+/** An update from GitHub Releases. "dev": not installed, nothing to update. */
+export interface UpdateState {
+  state: "dev" | "idle" | "checking" | "latest" | "available" | "downloading" | "ready" | "error";
+  /** The running version. */
+  version: string;
+  latest?: string;
+  percent?: number;
+  error?: string;
+}
+
+export interface UpdateApi {
+  state(): Promise<UpdateState>;
+  check(): void;
+  download(): void;
+  install(): void;
+  onChange(cb: (s: UpdateState) => void): void;
+}
+
 /** Optional downloads: the translation model and the CUDA backend. Changes arrive through `ModelsApi.onChange`. */
 export type PackId = "mt" | "cuda";
 export interface PacksApi {
@@ -219,6 +237,7 @@ export interface RendererApi {
   calls: CallsApi;
   models: ModelsApi;
   packs: PacksApi;
+  update: UpdateApi;
   privacyTest(): Promise<PrivacyReport>;
   openLogs(): void;
   /** Disk path of a file dropped on the page. */

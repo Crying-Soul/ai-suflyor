@@ -31,6 +31,15 @@ const api: RendererApi = {
     reveal: (dir) => ipcRenderer.send("calls:reveal", dir),
     current: () => ipcRenderer.invoke("calls:current"),
   },
+  update: {
+    state: () => ipcRenderer.invoke("update:state"),
+    check: () => ipcRenderer.send("update:check"),
+    download: () => ipcRenderer.send("update:download"),
+    install: () => ipcRenderer.send("update:install"),
+    onChange: (cb) => {
+      ipcRenderer.on("update:changed", (_e, s) => cb(s));
+    },
+  },
   packs: {
     status: (id) => ipcRenderer.invoke("pack:status", id),
     download: (id) => ipcRenderer.invoke("pack:download", id),

@@ -81,6 +81,14 @@ export class CoreProcess {
     const p = this.proc;
     setTimeout(() => p.kill(), 1500);
   }
+
+  /** `stop`, resolved once the process is gone (at most ~1.5 s). */
+  stopped(): Promise<void> {
+    const p = this.proc;
+    this.stop();
+    if (!p || p.exitCode !== null) return Promise.resolve();
+    return new Promise((resolve) => p.once("exit", () => resolve()));
+  }
 }
 
 /** Dev: ../core/target/release/suflyor-core.exe; packaged: resources/suflyor-core.exe; override: SUFLYOR_CORE_PATH. */
