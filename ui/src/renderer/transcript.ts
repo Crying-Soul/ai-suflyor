@@ -5,7 +5,6 @@ const list = $("transcript");
 const statusEl = $("status");
 const autoBtn = $<HTMLButtonElement>("btn-auto");
 const translateBtn = $<HTMLButtonElement>("btn-translate");
-const metricsEl = $("metrics");
 const meters: Record<Speaker, HTMLElement> = { me: $("meter-me"), them: $("meter-them") };
 const sources: Record<Speaker, HTMLElement> = { me: $("src-me"), them: $("src-them") };
 const labels: Record<Speaker, HTMLElement> = { me: $("lbl-me"), them: $("lbl-them") };
@@ -200,11 +199,12 @@ function clearRows(): void {
 
 // ---------- status ----------
 
+/** The row shows the level only; which device it is lives in the tooltip. */
 function renderCapture(speaker: Speaker, c: CaptureStatus): void {
   const e = sources[speaker];
-  e.textContent = c.state === "error" ? `⚠ ${c.error ?? c.source}` : c.source || "…";
+  e.textContent = c.state === "error" ? (speaker === "me" ? "микрофон недоступен" : "звук недоступен") : "";
   e.classList.toggle("error", c.state === "error");
-  e.title = c.error ?? c.source;
+  e.parentElement!.title = c.error ?? c.source;
 }
 
 function renderStatus(s: Status): void {
@@ -215,7 +215,7 @@ function renderStatus(s: Status): void {
   renderCapture("them", s.them);
   statusEl.textContent = s.recording_dir ? `${sttLabel(s.stt)}, пишу WAV` : sttLabel(s.stt);
   statusEl.classList.toggle("error", s.stt.startsWith("error"));
-  statusEl.title = s.stt.startsWith("error") ? s.stt.slice(6).trim() : "";
+  statusEl.title = s.stt.startsWith("error") ? s.stt.slice(6).trim() : metricsTip;
 }
 
 function setMeter(speaker: Speaker, peak: number): void {
@@ -225,12 +225,14 @@ function setMeter(speaker: Speaker, peak: number): void {
 }
 
 const metrics: Record<string, number> = {};
+/** Timings of the last final: the status line's tooltip. */
+let metricsTip = "";
 function renderMetrics(): void {
   const { speech_end_to_final: e2f, stt_decode: dec } = metrics;
   // Both arrive with every final; until the pair is in, show nothing rather than half a sentence.
   if (e2f === undefined || dec === undefined) return;
-  metricsEl.textContent = `Текст за ${e2f.toFixed(0)}\u00a0мс, декод ${dec.toFixed(0)}\u00a0мс`;
-  metricsEl.title = `Текст пришёл через ${e2f.toFixed(0)}\u00a0мс после конца фразы, распознавание заняло ${dec.toFixed(0)}\u00a0мс`;
+  metricsTip = `Текст пришёл через ${e2f.toFixed(0)}\u00a0мс после конца фразы, распознавание заняло ${dec.toFixed(0)}\u00a0мс`;
+  if (!statusEl.classList.contains("error")) statusEl.title = metricsTip;
 }
 
 // ---------- events ----------
@@ -286,6 +288,10 @@ api.onEvent((e: CoreEvent) => {
       break;
     }
     case "error":
+      statusEl.textContent = "ошибка, подробности в подсказке";
+      statusEl.title = e.message;
+      statusEl.classList.add("error");
+      break;
     case "core_down":
       statusEl.textContent = "ядро остановлено";
       statusEl.title = e.message;

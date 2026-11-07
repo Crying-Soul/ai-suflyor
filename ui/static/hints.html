@@ -12,7 +12,7 @@
     <header id="bar">
       <span class="title">Подсказки</span>
       <span class="spacer"></span>
-      <button id="btn-model" class="btn-ghost small" type="button" title="Переключить модель">модель</button>
+      <button id="btn-model" class="btn-ghost small" type="button" title="Переключить модель" hidden></button>
       <button id="btn-help" class="icon-btn" type="button" title="Справка: что умеет приложение и как оно устроено" aria-label="Справка">
         <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="7.5" /><path d="M7.8 7.8a2.3 2.3 0 1 1 3.2 2.1c-.6.3-1 .8-1 1.5v.4" /><path d="M10 14.6v.1" /></svg>
       </button>
@@ -27,7 +27,10 @@
     </div>
 
     <section id="turns" aria-label="Подсказки" aria-live="polite">
-      <p class="empty">Здесь появится подсказка, как только собеседник задаст вопрос. Спросить вручную: Ctrl+Shift+Space.</p>
+      <div class="empty">
+        <p>Здесь появится подсказка, как только собеседник задаст вопрос. Спросить вручную: Ctrl+Shift+Space.</p>
+        <p id="no-claude" class="empty-hint" hidden>Claude не подключён, подсказок не будет. <button id="btn-ready" class="btn-ghost small" type="button">Подключить</button></p>
+      </div>
     </section>
 
     <footer>

@@ -1,4 +1,4 @@
-import type { CoreEvent, Status } from "../shared/protocol";
+import type { CoreEvent, ReadyItem, Status } from "../shared/protocol";
 import { $, api, el, icon, modelLabel, overlayUi } from "./common";
 import { render } from "./md";
 
@@ -125,11 +125,23 @@ function schedule(t: Turn): void {
   });
 }
 
+/** A failed answer: what happened in words, the raw cause folded away. */
+function failure(raw: string): HTMLElement {
+  const title = /timed? ?out|timeout/i.test(raw)
+    ? "Claude не ответил вовремя"
+    : /401|api[_ ]?key|auth|login/i.test(raw)
+      ? "Claude не подключён: проверьте ключ или вход"
+      : "Claude не ответил";
+  const box = el("details", "error");
+  box.append(el("summary", "", title), el("p", "", raw));
+  return box;
+}
+
 function paint(t: Turn): void {
-  t.quick.textContent = t.error.quick ? `Ошибка: ${t.error.quick}` : t.text.quick;
+  t.quick.replaceChildren(t.error.quick ? failure(t.error.quick) : t.text.quick);
   t.quick.classList.toggle("error", Boolean(t.error.quick));
   t.full.replaceChildren(render(t.text.full));
-  if (t.error.full) t.full.append(el("p", "error", `Ошибка: ${t.error.full}`));
+  if (t.error.full) t.full.append(failure(t.error.full));
 }
 
 /** The pane's own status: answering (open, apricot), done (periwinkle check) or failed. */
@@ -198,6 +210,7 @@ api.onEvent((e: CoreEvent) => {
     case "status":
       status = e;
       modelBtn.textContent = modelLabel(e);
+      modelBtn.hidden = false;
       break;
     case "vad":
       if (e.speaker !== "them") break;
@@ -281,3 +294,9 @@ modelBtn.onclick = () => api.send({ cmd: "set", model: "toggle" });
 $("btn-hide").onclick = () => api.hide();
 setPhase("idle");
 overlayUi((m) => (m.kind === "nav" ? nav(m.dir) : m.kind === "looking" ? setPhase("looking") : copyShown()));
+
+// The empty pane says why no hint will come when Claude is not set up.
+const showNoClaude = (items: ReadyItem[]) => ($("no-claude").hidden = items.find((i) => i.id === "claude")?.ok !== false);
+api.ready.onChange(showNoClaude);
+void api.ready.list().then(showNoClaude);
+$("btn-ready").onclick = () => api.ready.open();

@@ -20,7 +20,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = ""
 export function sttLabel(stt: string): string {
   if (stt === "off") return "распознавание выключено";
   if (stt === "loading") return "загружаю модель речи…";
-  if (stt.startsWith("ready")) return stt.includes("gpu") ? "распознавание готово (GPU)" : "распознавание готово (CPU)";
+  if (stt.startsWith("ready")) return stt.includes("gpu") ? "готово, GPU" : "готово, CPU";
   // The raw cause goes to the tooltip; «Подготовка к работе» names the fix.
   if (stt.startsWith("error")) return "распознавание не запущено";
   return stt;

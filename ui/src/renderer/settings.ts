@@ -45,7 +45,6 @@ const SECTIONS: Section[] = [
   {
     id: "answers",
     title: "Ответы",
-    note: "Сохранение перезапускает ядро.",
     fields: [
       {
         key: "llm.backend",
@@ -175,7 +174,6 @@ const nav = $("sections");
 const form = $<HTMLFormElement>("form");
 const saveState = $("save-state");
 const saveBtn = $<HTMLButtonElement>("btn-save");
-const pathEl = $("cfg-path");
 
 let snapshot: ConfigSnapshot;
 /** Value of each field as loaded, to send only what changed. */
@@ -246,7 +244,8 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
     case "logs": {
       const open = el("button", { type: "button", className: "btn-ghost", textContent: "Открыть папку логов" });
       open.onclick = () => api.openLogs();
-      return [open, () => undefined];
+      // The file this window edits: for support, not in the title bar.
+      return [el("div", { className: "control" }, open, el("p", { className: "hint", textContent: `Файл настроек: ${snapshot.path}` })), () => undefined];
     }
     case "privacy": {
       const out = el("div", { className: "privacy-out" });
@@ -416,7 +415,6 @@ form.addEventListener("submit", async (e) => {
     return;
   }
   for (const [k, v] of Object.entries(patch)) initial.set(k, JSON.stringify(v));
-  pathEl.textContent = res.path ?? "";
   saveState.className = "done";
   saveState.textContent = "Сохранено. Ядро перезапускается.";
 });
@@ -437,7 +435,6 @@ document.addEventListener("keydown", (e) => {
 
 (async () => {
   snapshot = await api.loadConfig();
-  pathEl.textContent = snapshot.path;
   const mics = await api.listMics().catch(() => []);
   render(mics);
 })();
