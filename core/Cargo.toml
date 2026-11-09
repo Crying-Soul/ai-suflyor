@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/protocol", "crates/audio", "crates/vad", "crates/stt", "crates/textproc", "crates/mt", "suflyor-core"]
+members = ["crates/protocol", "crates/audio", "crates/vad", "crates/stt", "crates/textproc", "suflyor-core"]
 
 [workspace.package]
 edition = "2024"
@@ -23,7 +23,6 @@ audio = { path = "crates/audio" }
 vad = { path = "crates/vad" }
 stt = { path = "crates/stt" }
 textproc = { path = "crates/textproc" }
-mt = { path = "crates/mt" }
 
 [profile.release]
 opt-level = 3

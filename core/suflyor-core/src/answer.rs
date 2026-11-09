@@ -333,6 +333,7 @@ pub(crate) fn session(cfg: &Config, tier: &'static str, system: String) -> Sessi
             "quick" => 200,
             "summary" => 1500,
             "brief" => 6000,
+            "translate" => 400,
             _ => 2048,
         };
         Session::Api(llm::api::ApiSession::new(key, system, cfg.effort.clone(), max_tokens))

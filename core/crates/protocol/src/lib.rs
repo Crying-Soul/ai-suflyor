@@ -41,6 +41,8 @@ pub enum AskKind {
     Questions,
     /// Ways the user can continue the conversation now.
     Continue,
+    /// The next part of the answer just given.
+    More,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -65,6 +67,11 @@ pub enum Command {
         /// Translate the other side's speech into the user's language.
         #[serde(default)]
         translate: Option<bool>,
+        /// Mute a source: its audio is replaced by silence before VAD, so nothing is transcribed.
+        #[serde(default)]
+        mute_me: Option<bool>,
+        #[serde(default)]
+        mute_them: Option<bool>,
     },
     Clear,
     /// Opens a call directory (`<dataDir>/folders/<folder>/calls/<call>`): its context goes into the
@@ -114,6 +121,8 @@ pub struct Status {
     pub model: String,
     pub answer_mode: AnswerMode,
     pub translate: bool,
+    pub mute_me: bool,
+    pub mute_them: bool,
     pub busy: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recording_dir: Option<String>,
@@ -227,8 +236,12 @@ mod tests {
         assert!(matches!(c, Command::Ask { kind: AskKind::Questions, .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"continue"}"#).unwrap();
         assert!(matches!(c, Command::Ask { kind: AskKind::Continue, .. }));
+        let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"more"}"#).unwrap();
+        assert!(matches!(c, Command::Ask { kind: AskKind::More, .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"set","translate":true}"#).unwrap();
         assert!(matches!(c, Command::Set { translate: Some(true), .. }));
+        let c: Command = serde_json::from_str(r#"{"cmd":"set","mute_them":true}"#).unwrap();
+        assert!(matches!(c, Command::Set { mute_me: None, mute_them: Some(true), .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"set","answer_mode":"speculative"}"#).unwrap();
         assert!(matches!(c, Command::Set { answer_mode: Some(AnswerMode::Speculative), .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"clear"}"#).unwrap();

@@ -4,11 +4,11 @@ release/
 whisper/
 config.json
 recordings/
+data/
 core/target/
 ui/node_modules/
 ui/dist/
 ui/release/
-models/opus-mt-en-ru/
 
 # Coding agents and their tools: local to each developer
 CLAUDE.md

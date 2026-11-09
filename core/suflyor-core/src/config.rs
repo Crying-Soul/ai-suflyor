@@ -18,8 +18,6 @@ pub struct Config {
     pub user_language: String,
     /// Translate the other side's speech into `user_language` from the start.
     pub translate: bool,
-    /// Opus-MT model directory (`crates/mt`), relative to the config's folder.
-    pub translate_model: String,
     pub user_context: String,
     pub auto_detect: bool,
     pub answer_mode: AnswerMode,
@@ -168,7 +166,6 @@ impl Default for Config {
             language: "auto".into(),
             user_language: "ru".into(),
             translate: false,
-            translate_model: "models/opus-mt-en-ru".into(),
             user_context: String::new(),
             auto_detect: true,
             answer_mode: AnswerMode::Confirmed,

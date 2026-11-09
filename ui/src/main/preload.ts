@@ -17,6 +17,8 @@ const api: RendererApi = {
     ipcRenderer.on("ui", (_e, m: UiMessage) => cb(m));
   },
   copy: (text) => ipcRenderer.send("ui:copy", text),
+  action: (a) => ipcRenderer.send("ui:action", a),
+  hotkeys: () => ipcRenderer.invoke("hotkeys:get"),
   calls: {
     tree: () => ipcRenderer.invoke("calls:tree"),
     node: (dir) => ipcRenderer.invoke("calls:node", dir),

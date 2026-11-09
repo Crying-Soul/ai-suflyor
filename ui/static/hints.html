@@ -23,7 +23,14 @@
 
     <div class="state">
       <span id="chip" class="chip" role="status" data-phase="idle">Слушаю</span>
+      <span class="spacer"></span>
       <span id="latency" class="num"></span>
+      <span id="nav" class="nav" hidden>
+        <button id="btn-prev" class="icon-btn" type="button" data-action="prevAnswer" data-label="Предыдущий ответ"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M12 5l-5 5 5 5" /></svg></button>
+        <span id="nav-pos" class="num"></span>
+        <button id="btn-next" class="icon-btn" type="button" data-action="nextAnswer" data-label="Следующий ответ"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M8 5l5 5-5 5" /></svg></button>
+      </span>
+      <button id="btn-copy" class="icon-btn" type="button" data-action="copyAnswer" data-label="Копировать ответ" disabled><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="7" y="7" width="9" height="10" rx="1.5" /><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v8a1.5 1.5 0 0 0 1.5 1.5H7" /></svg></button>
     </div>
 
     <section id="turns" aria-label="Подсказки" aria-live="polite">
@@ -34,10 +41,10 @@
     </section>
 
     <footer>
-      <button id="btn-ask" class="btn" type="button" title="Ctrl+Shift+Space">Спросить</button>
-      <button id="btn-shot" class="btn-ghost" type="button" title="Снимок активного окна с последним вопросом; без вопроса решает задачу на экране. Ctrl+Shift+S">Экран</button>
-      <button id="btn-continue" class="btn-ghost" type="button" title="Три фразы, как продолжить разговор. Ctrl+Alt+W">Что сказать</button>
-      <button id="btn-questions" class="btn-ghost" type="button" title="Что спросить у собеседника. Ctrl+Alt+Q">Вопросы</button>
+      <button id="btn-ask" class="btn" type="button" data-action="ask" data-label="Подсказка на последний вопрос"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h9A1.5 1.5 0 0 1 16 5.5v6a1.5 1.5 0 0 1-1.5 1.5H9l-3.5 3v-3h0A1.5 1.5 0 0 1 4 11.5z" /></svg><span class="label">Спросить</span></button>
+      <button id="btn-shot" class="btn-ghost" type="button" data-action="screenshotAsk" data-label="Снимок активного окна с последним вопросом; без вопроса решает задачу на экране"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="3" y="4" width="14" height="9.5" rx="1.5" /><path d="M7.5 16.5h5M10 13.5v3" /></svg><span class="label">Экран</span></button>
+      <button id="btn-continue" class="btn-ghost" type="button" data-action="continueTalk" data-label="Три фразы, как продолжить ваш ответ"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M3 10h10M10 6l4 4-4 4" /><path d="M17 5v10" /></svg><span class="label">Что сказать</span></button>
+      <button id="btn-questions" class="btn-ghost" type="button" data-action="myQuestions" data-label="Что спросить у собеседника"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="M8 8a2 2 0 1 1 2.8 1.8c-.5.3-.8.7-.8 1.3v.3M10 14v.1" /></svg><span class="label">Вопросы</span></button>
     </footer>
   </div>
   <script src="hints.js"></script>

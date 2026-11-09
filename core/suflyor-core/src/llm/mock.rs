@@ -17,13 +17,15 @@ pub struct MockSession {
     /// This many first asks never answer (a hung backend).
     pub stall: usize,
     pub seen: Seen,
+    /// Every ask fails (a backend that is down).
+    pub fail: bool,
     fresh: bool,
 }
 
 impl MockSession {
     pub fn new(delay: Duration, reply: Vec<&'static str>, stall: usize) -> (MockSession, Seen) {
         let seen = Seen::default();
-        (MockSession { delay, reply, stall, seen: seen.clone(), fresh: true }, seen)
+        (MockSession { delay, reply, stall, seen: seen.clone(), fail: false, fresh: true }, seen)
     }
 
     pub fn prepare(&mut self) -> bool {
@@ -40,6 +42,9 @@ impl MockSession {
             seen.push((turn.text.clone(), turn.image.is_some()));
             seen.len()
         };
+        if self.fail {
+            anyhow::bail!("backend down");
+        }
         if n <= self.stall {
             std::future::pending::<()>().await;
         }

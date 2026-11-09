@@ -1,5 +1,5 @@
 import type { ConfigSnapshot, ModelInfo, PackId, RendererApi, SaveResult, UpdateState } from "../shared/protocol";
-import { askConfirm, guardPopups } from "./common";
+import { askConfirm, guardPopups, keyLabel } from "./common";
 import { el, packOps, renderModels, small, WHISPER } from "./model-row";
 
 declare global {
@@ -62,7 +62,6 @@ const SECTIONS: Section[] = [
         hint: "Пункты подсказок, пояснения и перевод на этом языке. Первая строка подсказки всегда на языке собеседника.",
       },
       { key: "translate", label: "Перевод с начала", kind: "bool", hint: "Переводить речь собеседника сразу после запуска. В звонке: кнопка «Перевод» или Ctrl+Alt+T." },
-      { key: "translateModel", label: "Модель перевода", kind: "pack", pack: "mt" },
       {
         key: "claudeCode.command",
         label: "Команда Claude Code",
@@ -131,7 +130,8 @@ const SECTIONS: Section[] = [
       { key: "hotkeys.ask", label: "Спросить", kind: "text" },
       { key: "hotkeys.screenshotAsk", label: "Снимок экрана и вопрос", kind: "text" },
       { key: "hotkeys.myQuestions", label: "Мои вопросы собеседнику", kind: "text" },
-      { key: "hotkeys.continueTalk", label: "Что сказать: как продолжить разговор", kind: "text" },
+      { key: "hotkeys.continueTalk", label: "Что сказать: как продолжить ваш ответ", kind: "text" },
+      { key: "hotkeys.moreAnswer", label: "Продолжить ответ: ещё 2–3 предложения", kind: "text" },
       { key: "hotkeys.translate", label: "Перевод вкл./выкл.", kind: "text" },
       { key: "hotkeys.toggleWindow", label: "Показать или скрыть окна", kind: "text" },
       { key: "hotkeys.toggleAuto", label: "Автоответы вкл./выкл.", kind: "text" },
@@ -332,7 +332,7 @@ function renderGuideKeys(): void {
   $("guide-keys").replaceChildren(
     ...keys.map((f) => {
       const accel = String(get(snapshot.effective, f.key) ?? "");
-      return el("tr", {}, el("td", { textContent: f.label }), el("td", { textContent: accel.replace(/CommandOrControl|CmdOrCtrl/g, "Ctrl") }));
+      return el("tr", {}, el("td", { textContent: f.label }), el("td", { textContent: keyLabel(accel) }));
     }),
   );
 }

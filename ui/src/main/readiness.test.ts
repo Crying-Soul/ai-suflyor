@@ -11,8 +11,6 @@ const base: Facts = {
   nvidia: false,
   cudaInstalled: false,
   status: null,
-  translate: false,
-  mtInstalled: false,
 };
 
 test("a fresh install: no model, no key", () => {

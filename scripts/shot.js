@@ -7,7 +7,7 @@ const out = path.resolve(__dirname, "../recordings/shots");
 const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config.json"), "utf8"));
 const wp = { preload: path.join(dist, "preload.js"), contextIsolation: true, sandbox: true, backgroundThrottling: false };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const status = { ev: "status", me: { state: "running", source: "mic: Focusrite USB (2- Focusrite USB Audio) [48000 Hz, 2 ch]" }, them: { state: "running", source: "system loopback: Speakers [192000 Hz, 2 ch]" }, stt: "ready (gpu)", auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", translate: true, busy: false };
+const status = { ev: "status", me: { state: "running", source: "mic: Focusrite USB (2- Focusrite USB Audio) [48000 Hz, 2 ch]" }, them: { state: "running", source: "system loopback: Speakers [192000 Hz, 2 ch]" }, stt: "ready (gpu)", auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", translate: true, mute_me: false, mute_them: true, busy: false };
 const T = 1000;
 // Live phase: speech just started, then a partial with a settled prefix, then a question final.
 const callEv = { ev: "call", dir: "C:\\Users\\me\\Documents\\Suflyor\\folders\\yandex\\calls\\2026-11-05-1200-sys", title: "Системный дизайн", folder: "Яндекс Маркет", tokens: 5320, parts: [], warnings: [] };
@@ -50,8 +50,9 @@ app.whenReady().then(async () => {
     { id: "audio", level: "required", ok: true, title: "Микрофон и звук собеседника", why: "Приложение слушает ваш микрофон и звук звонка из колонок или наушников." },
   ];
   ipcMain.handle("ready:list", () => fresh);
+  ipcMain.handle("hotkeys:get", () => ({ ask: "CommandOrControl+Shift+Space", screenshotAsk: "CommandOrControl+Shift+S", toggleWindow: "CommandOrControl+Shift+H", toggleAuto: "CommandOrControl+Shift+A", clickThrough: "CommandOrControl+Alt+X", cameraMode: "CommandOrControl+Alt+M", prevAnswer: "CommandOrControl+Alt+PageUp", nextAnswer: "CommandOrControl+Alt+PageDown", copyAnswer: "CommandOrControl+Alt+C", zoomIn: "CommandOrControl+Alt+=", zoomOut: "CommandOrControl+Alt+-", myQuestions: "CommandOrControl+Alt+Q", continueTalk: "CommandOrControl+Alt+W", translate: "CommandOrControl+Alt+T", moreAnswer: "CommandOrControl+Alt+E" }));
   ipcMain.handle("update:state", () => ({ state: "available", version: "0.1.0", latest: "0.2.0" }));
-  ipcMain.handle("pack:status", (_e, id) => id === "cuda" ? ({ id: "cuda", label: "CUDA для Whisper", sizeMb: 653, note: "Распознавание на видеокарте NVIDIA.", state: "absent", received: 0, total: 0, active: false }) : ({ id: "mt", label: "Opus-MT, английский → русский", sizeMb: 112, note: "Перевод речи собеседника на процессоре, без интернета и токенов.", state: "installed", received: 0, total: 0, active: true }));
+  ipcMain.handle("pack:status", () => ({ id: "cuda", label: "CUDA для Whisper", sizeMb: 653, note: "Распознавание на видеокарте NVIDIA.", state: "absent", received: 0, total: 0, active: false }));
   ipcMain.handle("config:load", () => ({ path: "C:\\dev\\suflyor\\config.json", raw: cfg, effective: cfg }));
   ipcMain.handle("config:mics", () => ["Focusrite USB (2- Focusrite USB Audio)", "Microphone (Realtek High Definition Audio)"]);
   ipcMain.handle("privacy:test", () => ({
@@ -110,6 +111,13 @@ app.whenReady().then(async () => {
   tr.webContents.send("ui", { kind: "mode", mini: false, clickThrough: true });
   await shot(tr, "transcript-through.png");
   tr.webContents.send("ui", { kind: "mode", mini: false, clickThrough: false });
+  // The narrowest overlay (minimum width 320): the panels must not wrap or clip.
+  tr.setSize(320, 640);
+  hi.setSize(320, 560);
+  await shot(tr, "transcript-narrow.png");
+  await shot(hi, "hints-narrow.png");
+  tr.setSize(420, 640);
+  hi.setSize(460, 560);
   await shot(hi, "hints-caught.png");
   const rw = new BrowserWindow({ width: 600, height: 760, show: false, backgroundColor: "#13151b", webPreferences: wp });
   await rw.loadFile(path.join(dist, "ready.html"));
@@ -126,8 +134,6 @@ app.whenReady().then(async () => {
     await s.webContents.executeJavaScript(`document.querySelector('[data-section="${id}"]').click()`);
     await shot(s, `settings-${id}.png`);
   }
-  await s.webContents.executeJavaScript(`document.querySelector('[data-section="answers"]').click(); document.querySelector('fieldset:not([hidden]) .models').scrollIntoView({ block: "center" })`);
-  await shot(s, "settings-mt.png");
   await s.webContents.executeJavaScript(`document.querySelector('[data-section="stt"]').click(); [...document.querySelectorAll('fieldset:not([hidden]) .models')].at(-1).scrollIntoView({ block: "center" })`);
   await shot(s, "settings-cuda.png");
   await s.webContents.executeJavaScript(`document.querySelector('#f-vad-minSilenceMs').value='450'; document.querySelector('#form').dispatchEvent(new Event('input'))`);

@@ -1,5 +1,5 @@
 import type { CaptureStatus, CoreEvent, ReadyItem, Speaker, Status } from "../shared/protocol";
-import { $, api, el, follow, icon, overlayUi, sttLabel } from "./common";
+import { $, api, bindActions, el, follow, icon, keyLabel, overlayUi, sttLabel } from "./common";
 
 const list = $("transcript");
 const statusEl = $("status");
@@ -8,6 +8,7 @@ const translateBtn = $<HTMLButtonElement>("btn-translate");
 const meters: Record<Speaker, HTMLElement> = { me: $("meter-me"), them: $("meter-them") };
 const sources: Record<Speaker, HTMLElement> = { me: $("src-me"), them: $("src-them") };
 const labels: Record<Speaker, HTMLElement> = { me: $("lbl-me"), them: $("lbl-them") };
+const mutes: Record<Speaker, HTMLButtonElement> = { me: $<HTMLButtonElement>("mute-me"), them: $<HTMLButtonElement>("mute-them") };
 const WHO: Record<Speaker, string> = { me: "Я", them: "Собеседник" };
 
 let status: Status | null = null;
@@ -213,6 +214,11 @@ function renderStatus(s: Status): void {
   translateBtn.setAttribute("aria-checked", String(s.translate));
   renderCapture("me", s.me);
   renderCapture("them", s.them);
+  for (const sp of ["me", "them"] as const) {
+    const muted = sp === "me" ? s.mute_me : s.mute_them;
+    mutes[sp].setAttribute("aria-checked", String(!muted));
+    mutes[sp].parentElement!.classList.toggle("muted", muted);
+  }
   statusEl.textContent = s.recording_dir ? `${sttLabel(s.stt)}, пишу WAV` : sttLabel(s.stt);
   statusEl.classList.toggle("error", s.stt.startsWith("error"));
   statusEl.title = s.stt.startsWith("error") ? s.stt.slice(6).trim() : metricsTip;
@@ -306,7 +312,6 @@ const SETUP: Record<ReadyItem["id"], string> = {
   claude: "Claude не подключён",
   audio: "нет звука",
   cuda: "нет CUDA",
-  mt: "нет модели перевода",
 };
 
 // While something required is missing: one line naming it, and the way to the fix.
@@ -319,11 +324,18 @@ $("btn-setup").onclick = () => api.ready.open();
 api.ready.onChange(renderSetup);
 void api.ready.list().then(renderSetup);
 
-autoBtn.onclick = () => api.send({ cmd: "set", auto: !(status?.auto ?? true) });
-translateBtn.onclick = () => api.send({ cmd: "set", translate: !(status?.translate ?? false) });
+mutes.me.onclick = () => api.send({ cmd: "set", mute_me: !(status?.mute_me ?? false) });
+mutes.them.onclick = () => api.send({ cmd: "set", mute_them: !(status?.mute_them ?? false) });
 $("btn-help").onclick = () => api.openSettings("guide");
 $("btn-clear").onclick = () => api.send({ cmd: "clear" });
 $("btn-hide").onclick = () => api.hide();
 $("btn-settings").onclick = () => api.openSettings();
 $("btn-call").onclick = () => api.openCalls();
-overlayUi();
+// Footer buttons run through main, like their hotkeys; tooltips show the keys in effect.
+const refreshKeys = bindActions();
+const renderThroughNote = () =>
+  void api.hotkeys().then((k) => ($("through-note").textContent = `Клики проходят сквозь окна. Выключить: ${keyLabel(k.clickThrough)}`));
+renderThroughNote();
+overlayUi((m) => {
+  if (m.kind === "hotkeys") (refreshKeys(), renderThroughNote());
+});

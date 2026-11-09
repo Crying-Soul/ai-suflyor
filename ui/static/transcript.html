@@ -30,8 +30,8 @@
     </div>
 
     <div class="sources">
-      <div class="src"><span id="lbl-me" class="lbl">Я</span><div class="meter"><div id="meter-me"></div></div><span id="src-me" class="srcname"></span></div>
-      <div class="src"><span id="lbl-them" class="lbl">Собеседник</span><div class="meter"><div id="meter-them"></div></div><span id="src-them" class="srcname"></span></div>
+      <div class="src"><button id="mute-me" class="icon-btn mic" type="button" role="switch" aria-checked="true" title="Микрофон: распознавать вашу речь. Выключен — ваш звук не слушаю" aria-label="Микрофон: распознавать вашу речь. Выключен — ваш звук не слушаю"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M10 3a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 0 0 5 0v-4A2.5 2.5 0 0 0 10 3zM5 9.5a5 5 0 0 0 10 0M10 14.5V17" /><path class="slash" d="M4 4l12 12" /></svg></button><span id="lbl-me" class="lbl">Я</span><div class="meter"><div id="meter-me"></div></div><span id="src-me" class="srcname"></span></div>
+      <div class="src"><button id="mute-them" class="icon-btn mic" type="button" role="switch" aria-checked="true" title="Звук собеседника: распознавать его речь. Выключен — его звук не слушаю" aria-label="Звук собеседника: распознавать его речь. Выключен — его звук не слушаю"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M10 3a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 0 0 5 0v-4A2.5 2.5 0 0 0 10 3zM5 9.5a5 5 0 0 0 10 0M10 14.5V17" /><path class="slash" d="M4 4l12 12" /></svg></button><span id="lbl-them" class="lbl">Собеседник</span><div class="meter"><div id="meter-them"></div></div><span id="src-them" class="srcname"></span></div>
     </div>
 
     <div class="scroll-wrap">
@@ -52,12 +52,25 @@
     </div>
 
     <footer>
-      <button id="btn-auto" class="switch" type="button" role="switch" aria-checked="false" title="Отвечать на вопросы автоматически (Ctrl+Shift+A)">Авто</button>
-      <button id="btn-translate" class="switch" type="button" role="switch" aria-checked="false" title="Переводить речь собеседника на ваш язык (Ctrl+Alt+T)">Перевод</button>
-      <span id="status" role="status">запускаю ядро…</span>
-      <button id="btn-clear" class="icon-btn" type="button" title="Очистить транскрипт и подсказки" aria-label="Очистить транскрипт и подсказки">
-        <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10" /></svg>
-      </button>
+      <div class="panel" role="toolbar" aria-label="Управление">
+        <div class="grp">
+        <button id="btn-auto" class="switch" type="button" role="switch" aria-checked="false" data-action="toggleAuto" data-label="Отвечать на вопросы автоматически">Авто</button>
+        <button id="btn-translate" class="switch" type="button" role="switch" aria-checked="false" data-action="translate" data-label="Переводить речь собеседника на ваш язык">Перевод</button>
+        </div>
+        <div class="grp tools">
+        <button id="btn-camera" class="icon-btn mode" type="button" data-action="cameraMode" data-label="«У камеры»: подсказки полоской у камеры"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2" /><path d="M6.5 7.5h7" /></svg></button>
+        <button id="btn-through" class="icon-btn mode" type="button" data-action="clickThrough" data-label="Клики сквозь окна. Выключается только клавишами: кнопки в этом режиме не нажимаются"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4.5 3.5l4 11 1.6-4.6 4.6-1.6z" /><path d="M12.5 12.5l3.5 3.5" /></svg></button>
+        <span class="sep" aria-hidden="true"></span>
+        <button class="icon-btn" type="button" data-action="zoomOut" data-label="Мельче текст"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5" /><path d="M12.2 12.2l4 4M6.3 8.5h4.4" /></svg></button>
+        <button class="icon-btn" type="button" data-action="zoomIn" data-label="Крупнее текст"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5" /><path d="M12.2 12.2l4 4M6.3 8.5h4.4M8.5 6.3v4.4" /></svg></button>
+        <span class="sep" aria-hidden="true"></span>
+        <button class="icon-btn" type="button" data-action="toggleWindow" data-label="Скрыть оба окна (вернуть — те же клавиши или значок в трее)"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M3 10s2.6-5 7-5 7 5 7 5-2.6 5-7 5-7-5-7-5z" /><circle cx="10" cy="10" r="2" /><path d="M4 4l12 12" /></svg></button>
+        <button id="btn-clear" class="icon-btn" type="button" title="Очистить транскрипт и подсказки" aria-label="Очистить транскрипт и подсказки">
+          <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 10h6l1-10" /></svg>
+        </button>
+        </div>
+      </div>
+      <p class="statusline"><span id="status" role="status">запускаю ядро…</span><span id="through-note" class="through-note"></span></p>
     </footer>
   </div>
   <script src="transcript.js"></script>

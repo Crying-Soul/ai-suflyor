@@ -77,6 +77,8 @@ impl Shared {
                 model: "test".into(),
                 answer_mode: Default::default(),
                 translate: false,
+                mute_me: false,
+                mute_them: false,
                 busy: false,
                 recording_dir: None,
             }),
@@ -218,6 +220,8 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
             model: cfg.model.clone(),
             answer_mode: cfg.answer_mode,
             translate: cfg.translate,
+            mute_me: false,
+            mute_them: false,
             busy: false,
             recording_dir: record_dir.as_ref().map(|d| d.display().to_string()),
         }),
@@ -242,7 +246,11 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
     let streams = StreamSet::start(&cfg, shared.clone(), queue.clone(), record_dir)?;
     let answerer = answer::Answerer::start(&cfg, shared.clone(), &profile.text);
     let _ = shared.answerer.set(answerer.clone());
-    let _ = shared.translator.set(translate::Translator::start(&cfg, shared.clone()));
+    let translator = translate::Translator::start(&cfg, shared.clone());
+    if cfg.translate {
+        translator.warm();
+    }
+    let _ = shared.translator.set(translator);
 
     // stdin reader: commands from the UI. EOF means the UI died -> shut down.
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
@@ -282,6 +290,9 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
         Command::Ask { kind: AskKind::Continue, .. } => {
             answerer.ask(shared, "continue", Some((llm::CONTINUE.to_string(), None)), None);
         }
+        Command::Ask { kind: AskKind::More, .. } => {
+            answerer.ask(shared, "more", Some((llm::MORE.to_string(), None)), None);
+        }
         Command::Ask { kind: AskKind::Answer, screenshot, question } => {
             let picked = question.filter(|q| !q.trim().is_empty()).map(|q| (q, None));
             if !screenshot {
@@ -308,9 +319,20 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
                 answerer.ask(&shared, "screen", picked, shot);
             });
         }
-        Command::Set { auto, model, answer_mode, translate } => shared.update_status(|s| {
+        Command::Set { auto, model, answer_mode, translate, mute_me, mute_them } => shared.update_status(|s| {
             if let Some(t) = translate {
+                if t && !s.translate
+                    && let Some(tr) = shared.translator.get()
+                {
+                    tr.warm();
+                }
                 s.translate = t;
+            }
+            if let Some(m) = mute_me {
+                s.mute_me = m;
+            }
+            if let Some(m) = mute_them {
+                s.mute_them = m;
             }
             if let Some(a) = auto {
                 s.auto = a;

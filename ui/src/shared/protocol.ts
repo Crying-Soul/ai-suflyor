@@ -3,11 +3,11 @@
 export type Speaker = "me" | "them";
 export type AnswerMode = "confirmed" | "speculative";
 /** What an ask is for: answer the question, suggest questions to ask, or ways to continue. */
-export type AskKind = "answer" | "questions" | "continue";
+export type AskKind = "answer" | "questions" | "continue" | "more";
 
 export type Command =
   | { cmd: "ask"; screenshot: boolean; question?: string; kind?: AskKind }
-  | { cmd: "set"; auto?: boolean; model?: string; answer_mode?: AnswerMode; translate?: boolean }
+  | { cmd: "set"; auto?: boolean; model?: string; answer_mode?: AnswerMode; translate?: boolean; mute_me?: boolean; mute_them?: boolean }
   | { cmd: "clear" }
   | { cmd: "open_call"; dir: string }
   | { cmd: "reload_context" }
@@ -44,6 +44,8 @@ export interface Status {
   model: string;
   answer_mode: AnswerMode;
   translate: boolean;
+  mute_me: boolean;
+  mute_them: boolean;
   busy: boolean;
   recording_dir?: string;
 }
@@ -164,7 +166,7 @@ export interface ModelInfo {
 
 /** One line of «Готовность»: something the app needs, whether it is there, and what fixes it. */
 export interface ReadyItem {
-  id: "core" | "whisper" | "cuda" | "claude" | "audio" | "mt";
+  id: "core" | "whisper" | "cuda" | "claude" | "audio";
   /** required: nothing works without it; recommended: works, but worse; optional: one feature. */
   level: "required" | "recommended" | "optional";
   ok: boolean;
@@ -209,7 +211,7 @@ export interface UpdateApi {
 }
 
 /** Optional downloads: the translation model and the CUDA backend. Changes arrive through `ModelsApi.onChange`. */
-export type PackId = "mt" | "cuda";
+export type PackId = "cuda";
 export interface PacksApi {
   status(id: PackId): Promise<ModelInfo>;
   download(id: PackId): Promise<void>;
@@ -227,6 +229,25 @@ export interface ModelsApi {
   onChange(cb: () => void): void;
 }
 
+/** Global hotkeys by action; every action also has a button in an overlay (`data-action`). */
+export type HotkeyAction =
+  | "ask"
+  | "screenshotAsk"
+  | "toggleWindow"
+  | "toggleAuto"
+  | "clickThrough"
+  | "cameraMode"
+  | "prevAnswer"
+  | "nextAnswer"
+  | "copyAnswer"
+  | "zoomIn"
+  | "zoomOut"
+  | "myQuestions"
+  | "continueTalk"
+  | "translate"
+  | "moreAnswer";
+export type Hotkeys = Record<HotkeyAction, string>;
+
 /** Main -> overlay messages that are not core events: window mode and hotkey actions. */
 export type UiMessage =
   | { kind: "mode"; mini: boolean; clickThrough: boolean }
@@ -237,7 +258,9 @@ export type UiMessage =
   /** The screen hotkey was pressed: a capture and an answer are coming. */
   | { kind: "looking" }
   /** Settings: show this section (the guide is "guide"). */
-  | { kind: "section"; id: string };
+  | { kind: "section"; id: string }
+  /** The hotkeys changed: re-read them for the button tooltips. */
+  | { kind: "hotkeys" };
 
 export interface PrivacyReport {
   /** PNG data URL of the display with the overlays, as other apps capture it. */
@@ -261,6 +284,10 @@ export interface RendererApi {
   listMics(): Promise<string[]>;
   openCalls(): void;
   onUi(cb: (m: UiMessage) => void): void;
+  /** Runs what a hotkey runs (the overlay buttons). */
+  action(a: HotkeyAction): void;
+  /** The hotkeys in effect, for tooltips. */
+  hotkeys(): Promise<Hotkeys>;
   copy(text: string): void;
   calls: CallsApi;
   models: ModelsApi;

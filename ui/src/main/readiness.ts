@@ -11,8 +11,6 @@ export interface Facts {
   nvidia: boolean;
   cudaInstalled: boolean;
   status: Status | null;
-  translate: boolean;
-  mtInstalled: boolean;
 }
 
 /** The whisper model to offer: the q8 Turbo is as accurate in half the memory; small is the one that keeps up on a CPU. */
@@ -59,15 +57,6 @@ export function check(f: Facts): ReadyItem[] {
       title: "Микрофон и звук собеседника",
       why: "Приложение слушает ваш микрофон и звук звонка из колонок или наушников.",
       problem: failed.map((s) => `${s === "me" ? "Микрофон" : "Звук собеседника"}: ${f.status![s].error ?? "недоступен"}`).join(" ") || undefined,
-    });
-  }
-  if (f.translate) {
-    items.push({
-      id: "mt",
-      level: "optional",
-      ok: f.mtInstalled,
-      title: "Модель перевода",
-      why: "Перевод английской речи собеседника на русский. Нужна только для собеседований на английском.",
     });
   }
   return items;

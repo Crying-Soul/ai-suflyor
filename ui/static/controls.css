@@ -20,7 +20,7 @@
 .btn-ghost:hover, .switch:hover { background: color-mix(in oklab, var(--color-light) 8%, transparent); color: var(--color-ink); }
 .icon-btn { min-height: 32px; width: 32px; padding: 0; background: transparent; color: var(--color-muted); }
 .icon-btn:hover { background: color-mix(in oklab, var(--color-light) 7%, transparent); color: var(--color-ink); }
-.icon-btn svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.icon-btn svg, .btn svg, .btn-ghost svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .btn:active, .btn-ghost:active, .icon-btn:active, .switch:active { transform: translateY(1px); }
 .btn:focus-visible, .btn-ghost:focus-visible, .icon-btn:focus-visible, .switch:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; transition: none; }
 .btn:disabled, .btn-ghost:disabled, .icon-btn:disabled, .switch:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }

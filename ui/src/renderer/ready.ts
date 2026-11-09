@@ -91,7 +91,6 @@ function action(item: ReadyItem): HTMLElement {
       return el("div", { className: "act" }, models(ops), el("div", { className: "row" }, small("Другие модели", () => api.openSettings("stt"))));
     }
     case "cuda":
-    case "mt":
       return el("div", { className: "act" }, models(packOps(item.id)));
     case "claude":
       return claude(item);

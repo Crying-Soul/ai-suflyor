@@ -1,4 +1,4 @@
-import type { RendererApi, Status, UiMessage } from "../shared/protocol";
+import type { HotkeyAction, Hotkeys, RendererApi, Status, UiMessage } from "../shared/protocol";
 
 declare global {
   interface Window {
@@ -14,6 +14,31 @@ export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = ""
   if (className) e.className = className;
   if (text) e.textContent = text;
   return e;
+}
+
+/** "CommandOrControl+Alt+PageUp" as the user reads it: "Ctrl+Alt+PageUp". */
+export function keyLabel(accel: string): string {
+  return accel.replace(/CommandOrControl|CmdOrCtrl/g, "Ctrl");
+}
+
+/**
+ * Buttons with `data-action` run that hotkey's action in main; the tooltip is `data-label` plus
+ * the keys in effect, re-read when the hotkeys change (`{kind: "hotkeys"}` through `overlayUi`).
+ */
+export function bindActions(): () => void {
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>("button[data-action]")];
+  for (const b of buttons) b.addEventListener("click", () => api.action(b.dataset.action as HotkeyAction));
+  const refresh = () =>
+    void api.hotkeys().then((keys: Hotkeys) => {
+      for (const b of buttons) {
+        const key = keys[b.dataset.action as HotkeyAction];
+        const label = b.dataset.label ?? "";
+        b.title = key ? `${label} · ${keyLabel(key)}` : label;
+        if (!b.textContent?.trim()) b.setAttribute("aria-label", label);
+      }
+    });
+  refresh();
+  return refresh;
 }
 
 /** Russian label of the core's STT state ("loading", "ready (gpu)", "error: …"). */

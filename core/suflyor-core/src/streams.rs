@@ -166,6 +166,7 @@ fn drain(
     let mut last_flush = Instant::now();
     // (utterance start, its length at the last partial job).
     let mut partial_at: Option<(u64, usize)> = None;
+    let mut silence: Vec<f32> = Vec::new();
 
     while !stop.load(Ordering::Relaxed) && !capture.failed() {
         let n = capture.consumer.slots();
@@ -175,7 +176,15 @@ fn drain(
             continue;
         }
         let Ok(chunk) = capture.consumer.read_chunk(n) else { continue };
-        let (a, b) = chunk.as_slices();
+        let muted = {
+            let s = shared.status.lock().unwrap();
+            if speaker == Speaker::Me { s.mute_me } else { s.mute_them }
+        };
+        // Muted: silence instead of skipping, so the sample timeline (utterance keys) stays true
+        // and a phrase in progress ends the normal way.
+        silence.clear();
+        silence.resize(if muted { n } else { 0 }, 0.0);
+        let (a, b) = if muted { (&silence[..], &[][..]) } else { chunk.as_slices() };
 
         if let Some(sil) = silero.as_mut() {
             let t = Instant::now();

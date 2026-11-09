@@ -18,6 +18,11 @@
 .chip[data-phase="error"] { color: var(--color-error); }
 .chip[data-phase="error"]::before { background: var(--color-error); }
 #latency { flex: none; color: var(--color-muted); }
+.state .icon-btn { min-height: 28px; width: 28px; }
+.nav { display: inline-flex; align-items: center; gap: var(--space-3xs); color: var(--color-muted); }
+.nav[hidden] { display: none; }
+#nav-pos { min-width: 3ch; text-align: center; }
+body.mini .nav, body.mini #btn-copy { display: none; }
 
 #turns { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: 0 var(--space-2xs) var(--space-sm) 0; }
 #turns:not(:has(.turn)) .empty { display: block; }
@@ -89,3 +94,16 @@ body.mini .empty { font-size: var(--text-sm); }
 .empty-hint { margin-top: var(--space-sm); color: var(--color-accent-2); font-size: var(--text-sm); display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
 details.error summary { cursor: pointer; color: var(--color-error); }
 details.error p { margin-top: var(--space-2xs); color: var(--color-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+
+/* Footer: Спросить stays labelled; the other three drop to icons in a narrow window (the tooltip names them). */
+footer { gap: var(--space-2xs); }
+footer .btn, footer .btn-ghost { gap: 6px; padding-inline: var(--space-xs); }
+@media (max-width: 439px) {
+  footer .btn-ghost .label { display: none; }
+  footer .btn-ghost { width: 40px; padding: 0; }
+}
+
+/* «Продолжить ответ»: on the current answer only, once it is done. */
+.turn .more { display: none; justify-self: start; }
+.turn.current[data-state="done"] .more { display: inline-flex; }
+body.mini .turn .more { display: none; }

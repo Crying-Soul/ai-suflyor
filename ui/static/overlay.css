@@ -27,6 +27,9 @@ body { overflow: hidden; font-size: var(--text-sm); }
 footer { display: flex; align-items: center; gap: var(--space-xs); min-height: 44px; }
 footer .btn, footer .btn-ghost { padding-inline: var(--space-sm); }
 footer .switch { padding-right: var(--space-sm); }
+/* Thin divider between groups of controls. */
+.sep { flex: none; width: 1px; height: 18px; background: var(--color-rule); }
+body.mini .mode[data-action="cameraMode"], body.through .mode[data-action="clickThrough"] { color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 14%, transparent); }
 .btn-ghost.small { min-height: 28px; padding-inline: var(--space-sm); font-size: var(--text-xs); }
 
 .empty { display: none; max-width: 40ch; padding: var(--space-md) 0; color: var(--color-muted); }

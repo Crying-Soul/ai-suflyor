@@ -1,5 +1,5 @@
 import type { CoreEvent, ReadyItem, Status } from "../shared/protocol";
-import { $, api, el, icon, modelLabel, overlayUi } from "./common";
+import { $, api, bindActions, el, icon, keyLabel, modelLabel, overlayUi } from "./common";
 import { render } from "./md";
 
 const turnsEl = $("turns");
@@ -50,10 +50,12 @@ let current = -1;
 /** The turn on show: the newest, or an older one picked with Ctrl+Alt+PageUp. */
 let shown = -1;
 const HISTORY_LIMIT = 50;
+/** Tooltip of the «Продолжить ответ» buttons, with the key in effect. */
+let moreTip = "Ещё 2–3 предложения к этому ответу";
 
 /** How the card names its ask: a fixed title for the suggestion kinds, else the question itself. */
-const KIND_TITLE: Record<string, string> = { questions: "Что спросить у собеседника", continue: "Как продолжить разговор" };
-const TRIGGER_LABEL: Record<string, string> = { auto: "авто", early: "авто", picked: "выбрано", screen: "экран", questions: "мои вопросы", continue: "что сказать" };
+const KIND_TITLE: Record<string, string> = { questions: "Что спросить у собеседника", continue: "Как продолжить ваш ответ", more: "Продолжение ответа" };
+const TRIGGER_LABEL: Record<string, string> = { auto: "авто", early: "авто", picked: "выбрано", screen: "экран", questions: "мои вопросы", continue: "что сказать", more: "продолжение" };
 
 function newTurn(id: number, question: string, trigger: string): Turn {
   const prev = turns.get(current);
@@ -85,6 +87,17 @@ function newTurn(id: number, question: string, trigger: string): Turn {
     card.append(fig);
   }
   card.append(quick, full);
+  if (trigger !== "questions" && trigger !== "continue") {
+    // The next part of this answer: shown on the current card once it is done (CSS).
+    const more = el("button", "more btn-ghost small", "Продолжить ответ");
+    more.type = "button";
+    more.title = moreTip;
+    more.addEventListener("click", (e) => {
+      e.stopPropagation();
+      api.action("moreAnswer");
+    });
+    card.append(more);
+  }
   card.tabIndex = 0;
   card.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target === card) {
@@ -109,6 +122,7 @@ function newTurn(id: number, question: string, trigger: string): Turn {
     t.card.remove();
     turns.delete(oldest);
   }
+  renderNav();
   turnsEl.scrollTop = 0;
   return turn;
 }
@@ -147,6 +161,7 @@ function paint(t: Turn): void {
 /** The pane's own status: answering (open, apricot), done (periwinkle check) or failed. */
 function setTurnState(t: Turn, st: "answering" | "done" | "error" | "retracted"): void {
   t.state.dataset.state = st;
+  t.card.dataset.state = st;
   t.state.replaceChildren();
   const label = { done: "готово", answering: "отвечаю", error: "ошибка", retracted: "отменено, собеседник продолжил" }[st];
   t.state.append(st === "done" ? icon("check") : el("span", "mark"), label);
@@ -160,6 +175,23 @@ function show(id: number): void {
   t.card.classList.add("shown");
   if (id !== current) t.card.classList.add("open");
   t.card.scrollIntoView({ block: "nearest" });
+  renderNav();
+}
+
+const navEl = $("nav");
+const navPos = $("nav-pos");
+const prevBtn = $<HTMLButtonElement>("btn-prev");
+const nextBtn = $<HTMLButtonElement>("btn-next");
+const copyBtn = $<HTMLButtonElement>("btn-copy");
+/** «‹ 3/5 ›»: which answer is on show; the arrows stop at the ends, the counter hides under two answers. */
+function renderNav(): void {
+  const ids = [...turns.keys()];
+  const i = ids.indexOf(shown);
+  navEl.hidden = ids.length < 2;
+  navPos.textContent = i < 0 ? "" : `${i + 1}/${ids.length}`;
+  prevBtn.disabled = i <= 0;
+  nextBtn.disabled = i < 0 || i >= ids.length - 1;
+  copyBtn.disabled = i < 0;
 }
 
 /** -1: an older answer, 1: a newer one. Turns are kept in the order they were asked. */
@@ -189,6 +221,7 @@ function clearTurns(): void {
   shown = -1;
   shots.clear();
   setPhase("idle");
+  renderNav();
 }
 
 // ---------- events ----------
@@ -282,18 +315,27 @@ api.onEvent((e: CoreEvent) => {
   }
 });
 
-$("btn-ask").onclick = () => api.send({ cmd: "ask", screenshot: false });
-$("btn-questions").onclick = () => api.send({ cmd: "ask", screenshot: false, kind: "questions" });
-$("btn-continue").onclick = () => api.send({ cmd: "ask", screenshot: false, kind: "continue" });
 $("btn-help").onclick = () => api.openSettings("guide");
-$("btn-shot").onclick = () => {
-  setPhase("looking");
-  api.send({ cmd: "ask", screenshot: true });
-};
 modelBtn.onclick = () => api.send({ cmd: "set", model: "toggle" });
 $("btn-hide").onclick = () => api.hide();
 setPhase("idle");
-overlayUi((m) => (m.kind === "nav" ? nav(m.dir) : m.kind === "looking" ? setPhase("looking") : copyShown()));
+renderNav();
+// Ask, screen, continue, questions and the answer arrows run through main, like their hotkeys.
+const bound = bindActions();
+const refreshKeys = () => {
+  bound();
+  void api.hotkeys().then((k) => {
+    moreTip = `Ещё 2–3 предложения к этому ответу · ${keyLabel(k.moreAnswer)}`;
+    document.querySelectorAll<HTMLElement>(".turn .more").forEach((b) => (b.title = moreTip));
+  });
+};
+refreshKeys();
+overlayUi((m) => {
+  if (m.kind === "nav") nav(m.dir);
+  else if (m.kind === "looking") setPhase("looking");
+  else if (m.kind === "copy") copyShown();
+  else if (m.kind === "hotkeys") refreshKeys();
+});
 
 // The empty pane says why no hint will come when Claude is not set up.
 const showNoClaude = (items: ReadyItem[]) => ($("no-claude").hidden = items.find((i) => i.id === "claude")?.ok !== false);

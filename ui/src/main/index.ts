@@ -4,33 +4,16 @@ import { promisify } from "node:util";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, ReadyItem, SaveResult, Status, UiMessage } from "../shared/protocol";
+import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, ReadyItem, SaveResult, Status, UiMessage, Hotkeys, HotkeyAction } from "../shared/protocol";
 import * as calls from "./calls";
 import * as models from "./models";
 import * as readiness from "./readiness";
 import { cuda } from "./cuda";
-import { mt } from "./mt";
 import * as update from "./update";
 import { createTray } from "./tray";
 import { startLogs } from "./log";
 import { CoreProcess, resolveCoreExe } from "./core";
 
-interface Hotkeys {
-  ask: string;
-  screenshotAsk: string;
-  toggleWindow: string;
-  toggleAuto: string;
-  clickThrough: string;
-  cameraMode: string;
-  prevAnswer: string;
-  nextAnswer: string;
-  copyAnswer: string;
-  zoomIn: string;
-  zoomOut: string;
-  myQuestions: string;
-  continueTalk: string;
-  translate: string;
-}
 
 const DEFAULT_HOTKEYS: Hotkeys = {
   ask: "CommandOrControl+Shift+Space",
@@ -48,6 +31,7 @@ const DEFAULT_HOTKEYS: Hotkeys = {
   myQuestions: "CommandOrControl+Alt+Q",
   continueTalk: "CommandOrControl+Alt+W",
   translate: "CommandOrControl+Alt+T",
+  moreAnswer: "CommandOrControl+Alt+E",
 };
 
 /** Window background before the page paints (Dusk paper, approximated in sRGB). */
@@ -103,6 +87,8 @@ function emit(e: CoreEvent): void {
   }
   // A restarted core knows nothing of the open call: open it again (its transcript is replayed).
   if (e.ev === "ready" && lastCall?.dir) openCall(lastCall.dir);
+  // A muted source stays muted across a core restart (a settings change must not start listening).
+  if (e.ev === "ready" && (lastStatus?.mute_me || lastStatus?.mute_them)) core.send({ cmd: "set", mute_me: lastStatus.mute_me, mute_them: lastStatus.mute_them });
   // Level meters live in the transcript window only; ~20 events/s need not reach the hints.
   const targets: (BrowserWindow | undefined)[] = e.ev === "level" ? [overlays.transcript] : Object.values(overlays);
   if (e.ev === "call" || e.ev === "summary") targets.push(callsWin ?? undefined);
@@ -323,25 +309,31 @@ function toggleWindows(): void {
   }
 }
 
+/** What each hotkey does; the overlay buttons run the same through `ui:action`. */
+const actions: Record<HotkeyAction, () => void> = {
+  ask: () => core.send({ cmd: "ask", screenshot: false }),
+  screenshotAsk: () => (sendUi(overlays.hints, { kind: "looking" }), core.send({ cmd: "ask", screenshot: true })),
+  toggleWindow: () => toggleWindows(),
+  toggleAuto: () => core.send({ cmd: "set", auto: !(lastStatus?.auto ?? true) }),
+  clickThrough: () => toggleClickThrough(),
+  cameraMode: () => togglePreset(),
+  prevAnswer: () => sendUi(overlays.hints, { kind: "nav", dir: -1 }),
+  nextAnswer: () => sendUi(overlays.hints, { kind: "nav", dir: 1 }),
+  copyAnswer: () => sendUi(overlays.hints, { kind: "copy" }),
+  zoomIn: () => zoom(0.1),
+  zoomOut: () => zoom(-0.1),
+  myQuestions: () => core.send({ cmd: "ask", screenshot: false, kind: "questions" }),
+  continueTalk: () => core.send({ cmd: "ask", screenshot: false, kind: "continue" }),
+  moreAnswer: () => core.send({ cmd: "ask", screenshot: false, kind: "more" }),
+  translate: () => core.send({ cmd: "set", translate: !(lastStatus?.translate ?? false) }),
+};
+
 function registerHotkeys(): void {
   globalShortcut.unregisterAll();
   const hotkeys = loadHotkeys();
-  const map: [string, () => void][] = [
-    [hotkeys.ask, () => core.send({ cmd: "ask", screenshot: false })],
-    [hotkeys.screenshotAsk, () => (sendUi(overlays.hints, { kind: "looking" }), core.send({ cmd: "ask", screenshot: true }))],
-    [hotkeys.toggleWindow, toggleWindows],
-    [hotkeys.toggleAuto, () => core.send({ cmd: "set", auto: !(lastStatus?.auto ?? true) })],
-    [hotkeys.clickThrough, toggleClickThrough],
-    [hotkeys.cameraMode, togglePreset],
-    [hotkeys.prevAnswer, () => sendUi(overlays.hints, { kind: "nav", dir: -1 })],
-    [hotkeys.nextAnswer, () => sendUi(overlays.hints, { kind: "nav", dir: 1 })],
-    [hotkeys.copyAnswer, () => sendUi(overlays.hints, { kind: "copy" })],
-    [hotkeys.zoomIn, () => zoom(0.1)],
-    [hotkeys.zoomOut, () => zoom(-0.1)],
-    [hotkeys.myQuestions, () => core.send({ cmd: "ask", screenshot: false, kind: "questions" })],
-    [hotkeys.continueTalk, () => core.send({ cmd: "ask", screenshot: false, kind: "continue" })],
-    [hotkeys.translate, () => core.send({ cmd: "set", translate: !(lastStatus?.translate ?? false) })],
-  ];
+  const map = (Object.keys(actions) as HotkeyAction[]).map((k) => [hotkeys[k], actions[k]] as const);
+  // Button tooltips show the keys in effect.
+  for (const w of Object.values(overlays)) sendUi(w, { kind: "hotkeys" });
   for (const [accel, fn] of map) {
     try {
       if (!globalShortcut.register(accel, fn)) console.warn(`[hotkey] failed to register ${accel}`);
@@ -517,7 +509,6 @@ function cudaDir(): string {
 }
 
 const PACKS = {
-  mt: { pack: mt, dir: () => configRel((readRaw(configPath).translateModel as string | undefined) || "models/opus-mt-en-ru") },
   cuda: { pack: cuda, dir: cudaDir },
 };
 type PackId = keyof typeof PACKS;
@@ -601,8 +592,6 @@ async function readyItems(): Promise<ReadyItem[]> {
     nvidia: await nvidia,
     cudaInstalled: cuda.status(cudaDir()).state === "installed",
     status: lastStatus,
-    translate: Boolean(raw.translate ?? lastStatus?.translate),
-    mtInstalled: mt.status(PACKS.mt.dir()).state === "installed",
   });
 }
 
@@ -749,6 +738,8 @@ app.whenReady().then(() => {
   ipcMain.on("hide", (e) => BrowserWindow.fromWebContents(e.sender)?.hide());
   ipcMain.on("settings:open", (_e, section?: string) => openSettings(typeof section === "string" ? section : undefined));
   ipcMain.on("ui:copy", (_e, text: string) => clipboard.writeText(text));
+  ipcMain.on("ui:action", (_e, a: HotkeyAction) => Object.hasOwn(actions, a) && actions[a]());
+  ipcMain.handle("hotkeys:get", loadHotkeys);
   ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
   ipcMain.handle("config:load", loadConfig);
   ipcMain.handle("config:save", (_e, patch: Record<string, unknown>) => saveConfig(patch));
