@@ -1,6 +1,6 @@
 {
   "name": "suflyor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Suflyor, a live call prompter: hears mic + system audio, transcribes locally with whisper.cpp, answers with Claude",
   "main": "dist/main.js",
   "private": true,
