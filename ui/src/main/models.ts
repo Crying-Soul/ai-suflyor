@@ -21,7 +21,11 @@ export const CATALOG: Omit<ModelInfo, "state" | "received" | "total" | "active" 
   { id: "base", label: "Base", sizeMb: 148, note: "Только проверить, что всё работает." },
 ];
 
-export const fileOf = (id: string) => `ggml-${id}.bin`;
+/** The file of a catalog model. Ids come from the renderer: anything else ("../x") is refused. */
+export function fileOf(id: string): string {
+  if (!CATALOG.some((m) => m.id === id)) throw new Error(`неизвестная модель: ${id}`);
+  return `ggml-${id}.bin`;
+}
 
 export interface Job {
   controller: AbortController;
@@ -59,7 +63,7 @@ async function expected(id: string, signal: AbortSignal): Promise<{ size: number
   return { size: f?.lfs?.size ?? f?.size ?? 0, sha256: /^[0-9a-f]{64}$/.test(oid) ? oid : null };
 }
 
-async function sha256(file: string): Promise<string> {
+export async function sha256(file: string): Promise<string> {
   const h = createHash("sha256");
   for await (const chunk of fs.createReadStream(file)) h.update(chunk as Buffer);
   return h.digest("hex");

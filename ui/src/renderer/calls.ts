@@ -11,6 +11,8 @@ let current: NodeData | null = null;
 /** The call the core has open now (its context is in use and its transcript is being saved). */
 let live: CallInfo | null = null;
 let dirty = false;
+/** The form's values as typed, for a re-render that must keep unsaved edits. */
+let typed: (() => Pick<NodeData, "title" | "context" | "glossary">) | null = null;
 
 const KIND_NOTE: Record<NodeKind, string> = {
   profile: "Общий для всех звонков: кто вы, опыт, стек, чем гордитесь. Сюда же резюме.",
@@ -145,6 +147,7 @@ function renderPane(n: NodeData): void {
   const title = Object.assign(el("input", "input"), { type: "text", value: n.title, required: true });
   const notes = Object.assign(el("textarea", "textarea notes"), { value: n.context, rows: 9 });
   const glossary = Object.assign(el("textarea", "textarea"), { value: n.glossary.join("\n"), rows: 4 });
+  typed = () => ({ title: title.value, context: notes.value, glossary: glossary.value.split("\n") });
   if (n.kind !== "profile") form.append(field("Название", title));
   form.append(
     field("Заметки", notes, "Markdown. Claude читает это перед каждым ответом."),
@@ -320,7 +323,8 @@ api.onEvent((e) => {
   if (e.ev === "call") {
     live = e.dir ? e : null;
     loadTree().catch(fail);
-    if (current) renderPane(current);
+    // The live state changes the buttons; unsaved notes must survive that re-render.
+    if (current) renderPane(dirty && typed ? { ...current, ...typed() } : current);
     if (e.warnings.length) setState("error", e.warnings.join(". "));
   } else if (e.ev === "summary") {
     loadTree().catch(fail);

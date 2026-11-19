@@ -154,8 +154,19 @@ function failure(raw: string): HTMLElement {
 function paint(t: Turn): void {
   t.quick.replaceChildren(t.error.quick ? failure(t.error.quick) : t.text.quick);
   t.quick.classList.toggle("error", Boolean(t.error.quick));
-  t.full.replaceChildren(render(t.text.full));
+  patch(t.full, render(t.text.full));
   if (t.error.full) t.full.append(failure(t.error.full));
+}
+
+/** Replaces `target`'s children with `next`, keeping the leading ones that did not change: a streaming
+ * answer only grows at the end, so finished paragraphs stay as they are (and a selection in them survives). */
+function patch(target: HTMLElement, next: DocumentFragment): void {
+  const fresh = [...next.childNodes];
+  const old = [...target.childNodes];
+  let same = 0;
+  while (same < fresh.length && same < old.length && old[same].isEqualNode(fresh[same])) same++;
+  for (const n of old.slice(same)) n.remove();
+  target.append(...fresh.slice(same));
 }
 
 /** The pane's own status: answering (open, apricot), done (periwinkle check) or failed. */

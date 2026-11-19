@@ -22,6 +22,8 @@ const segs = new Map<string, HTMLElement>();
 const dropped = new Set<string>();
 /** A same-speaker utterance starting this long after the block's last one opens a new block (utterances are capped at 20 s). */
 const BLOCK_GAP_MS = 30_000;
+/** Blocks kept on screen: a two-hour call must not grow the page without end. The saved transcript keeps everything. */
+const MAX_BLOCKS = 400;
 const clock = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" });
 
 /** Text of a block's question to ask about: its last unanswered question, else the whole block. */
@@ -55,6 +57,18 @@ function newBlock(speaker: Speaker, t: number): HTMLElement {
   }
   b.append(head, el("p", "text"));
   list.append(b);
+  const blocks = list.querySelectorAll<HTMLElement>(".block");
+  for (const old of [...blocks].slice(0, Math.max(0, blocks.length - MAX_BLOCKS))) {
+    for (const g of old.querySelectorAll<HTMLElement>(".seg")) {
+      for (const sp of ["me", "them"]) segs.delete(`${sp}-${g.dataset.t}`);
+    }
+    old.remove();
+  }
+  // Dropped keys only stop late partials of recent utterances; old ones go first (insertion order).
+  for (const key of dropped) {
+    if (dropped.size <= 1000) break;
+    dropped.delete(key);
+  }
   return b;
 }
 

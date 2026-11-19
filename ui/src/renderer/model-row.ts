@@ -1,8 +1,6 @@
 // Rows of downloadable models (whisper models, the translation model, CUDA): shared by Settings and «Готовность».
-import type { ModelInfo, PackId, RendererApi, SaveResult } from "../shared/protocol";
-import { askConfirm } from "./common";
-
-const api = (window as unknown as { api: RendererApi }).api;
+import type { ModelInfo, PackId, SaveResult } from "../shared/protocol";
+import { api, askConfirm } from "./common";
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, unknown> = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
   const e = Object.assign(document.createElement(tag), props);

@@ -5,9 +5,12 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { sha256 } from "./models";
 import { fetchFile, pack } from "./pack";
 
 const ZIP_URL = "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-win-cuda-12.4.0-x64.zip";
+/** Pinned: these DLLs load into the core, so a swapped archive must not install. GitHub's asset digest. */
+const ZIP_SHA256 = "afef0b881c500958921c3f5523b50e59ee2ec9b6f5cbd25b324c51ed308a957a";
 const ZIP = "whisper-cuda.zip";
 /** What ggml-cuda.dll needs; the rest of the archive duplicates the bundled DLLs. */
 const FILES = ["ggml-cuda.dll", "cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll"];
@@ -19,6 +22,10 @@ export const cuda = pack({
   async install(dir, job) {
     const zip = path.join(dir, ZIP);
     await fetchFile(ZIP_URL, zip, job);
+    if ((await sha256(zip)) !== ZIP_SHA256) {
+      fs.rmSync(zip, { force: true });
+      throw new Error("архив CUDA повреждён или подменён (sha256 не совпал), скачайте ещё раз");
+    }
     const tmp = path.join(dir, "unpack");
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.mkdirSync(tmp);
