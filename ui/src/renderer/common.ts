@@ -1,5 +1,6 @@
 import type { HotkeyAction, Hotkeys, RendererApi, Status, UiMessage } from "../shared/protocol";
 import { DEFAULT_THEME, isTheme } from "../shared/protocol";
+import { MARK_SVG } from "../shared/mark";
 
 declare global {
   interface Window {
@@ -16,6 +17,11 @@ api.onUi((m) => {
   if (m.kind === "theme") document.documentElement.dataset.theme = m.id;
 });
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+/** Window headers carry the app's mark: `<span data-mark>` becomes its SVG (a constant, not user text). */
+for (const slot of document.querySelectorAll("[data-mark]")) {
+  slot.replaceWith(document.importNode(new DOMParser().parseFromString(MARK_SVG, "image/svg+xml").documentElement, true));
+}
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);

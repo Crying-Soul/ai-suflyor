@@ -25,3 +25,10 @@ button, input, select, textarea { font: inherit; }
 @media (prefers-reduced-motion: reduce) { *:not(.keep-motion), *:not(.keep-motion)::before, *:not(.keep-motion)::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; } }
 /* photographs: natural con=4 vib=6 */
 [data-slot] > img { filter: contrast(1.04) saturate(1.03); }
+
+/* The app's mark (src/shared/mark.ts) in window headers: the same shape as the app icon, in the theme's colors. */
+.mark { flex: none; align-self: center; width: 22px; height: 22px; }
+.mark-tile { fill: var(--color-paper-3); }
+.mark-arch { stroke: var(--color-accent); }
+.mark-stage { fill: var(--color-ink); }
+.mark-tally { fill: var(--color-accent-2); }
