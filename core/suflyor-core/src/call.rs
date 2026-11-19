@@ -86,6 +86,10 @@ pub fn save_answer(shared: &Shared, rec: AnswerRecord) {
 /// from `brief.md` when it is current, else made in the background while the quick tier reads the
 /// whole context.
 pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Option<&Path>) {
+    // A brief still being made is for the context this call replaces: stop paying for it.
+    if let Some(old) = BRIEF_TASK.lock().unwrap().take() {
+        old.abort();
+    }
     let a = context::assemble(&cfg.profile_dir(), dir, &cfg.user_context, &cfg.glossary);
     for w in &a.warnings {
         warn!("context: {w}");
@@ -118,7 +122,7 @@ pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Optio
     let _ = shared.events.send(ev.clone());
     info!("brief: building for {}", place.display());
     let (shared, answerer, text) = (shared.clone(), answerer.clone(), a.text);
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let started = std::time::Instant::now();
         match answerer.brief(&text).await {
             Ok(b) if !b.is_empty() => {
@@ -139,7 +143,11 @@ pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Optio
             }
         }
     });
+    *BRIEF_TASK.lock().unwrap() = Some(task.abort_handle());
 }
+
+/// The brief being made in the background, if any.
+static BRIEF_TASK: std::sync::Mutex<Option<tokio::task::AbortHandle>> = std::sync::Mutex::new(None);
 
 /// The «Досье» row of the UI's context breakdown; `building` adds the note that it is on its way.
 fn add_brief_part(ev: &mut Event, brief: &str, building: bool) {

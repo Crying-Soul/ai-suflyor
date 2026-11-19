@@ -35,7 +35,11 @@ pub struct CodeSession {
 
 impl CodeSession {
     pub fn new(command: Vec<String>, system: String, effort: String, tier: &str) -> CodeSession {
-        let dir = std::env::temp_dir().join(format!("suflyor-core-claude-{tier}"));
+        // One directory per session: two sessions of one tier (notes and call summary) or two cores
+        // must not overwrite each other's system.txt.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("suflyor-core-claude-{tier}-{}-{n}", std::process::id()));
         CodeSession { command, system, effort, dir, proc: None, fresh: true, next_request: 1 }
     }
 
@@ -175,5 +179,12 @@ impl CodeSession {
     pub async fn reset(&mut self) {
         self.proc = None;
         self.fresh = true;
+    }
+}
+
+impl Drop for CodeSession {
+    fn drop(&mut self) {
+        self.proc = None; // kill_on_drop: the process lets go of its working directory
+        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }

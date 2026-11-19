@@ -99,50 +99,66 @@ impl ApiSession {
             tokio::time::sleep(Duration::from_millis(400 * attempt)).await;
         };
 
-        let mut stream = resp.bytes_stream();
-        let mut buf: Vec<u8> = Vec::new();
-        let mut answer = String::new();
-        let (mut input, mut cache_read, mut cache_write, mut output) = (0, 0, 0, 0);
-        let mut stop_reason = String::new();
-        'read: while let Some(bytes) = stream.next().await {
-            buf.extend_from_slice(&bytes?);
-            while let Some(end) = find_event_end(&buf) {
-                let event: Vec<u8> = buf.drain(..end).collect();
-                let event = String::from_utf8_lossy(&event);
-                for data in event.lines().filter_map(|l| l.strip_prefix("data:")) {
-                    let Ok(v) = serde_json::from_str::<Value>(data.trim()) else { continue };
-                    match v["type"].as_str().unwrap_or("") {
-                        "message_start" => {
-                            let u = &v["message"]["usage"];
-                            input = u["input_tokens"].as_u64().unwrap_or(0);
-                            cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
-                            cache_write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                        }
-                        "content_block_delta" if v["delta"]["type"] == "text_delta" => {
-                            let t = v["delta"]["text"].as_str().unwrap_or("");
-                            answer.push_str(t);
-                            out(Chunk::Text(t.to_string()));
-                        }
-                        "message_delta" => {
-                            stop_reason = v["delta"]["stop_reason"].as_str().unwrap_or("").to_string();
-                            output = v["usage"]["output_tokens"].as_u64().unwrap_or(output);
-                        }
-                        "message_stop" => break 'read,
-                        "error" => bail!("stream error: {}", v["error"]["message"].as_str().unwrap_or("unknown")),
-                        _ => {}
-                    }
-                }
-            }
-        }
-        out(Chunk::Usage { input, cache_read, cache_write, output });
-        if stop_reason == "refusal" {
-            bail!("Claude declined to answer this request");
-        }
+        let answer = read_stream(resp.bytes_stream(), out).await?;
         if !answer.is_empty() {
             self.messages.push(json!({"role": "assistant", "content": [{"type": "text", "text": answer}]}));
         }
         Ok(())
     }
+}
+
+/// Reads an SSE answer stream, passing text deltas and usage to `out`; returns the whole text.
+async fn read_stream<B: AsRef<[u8]>, E: Into<anyhow::Error>>(
+    mut stream: impl futures_util::Stream<Item = std::result::Result<B, E>> + Unpin,
+    out: &mut (dyn FnMut(Chunk) + Send),
+) -> Result<String> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut answer = String::new();
+    let (mut input, mut cache_read, mut cache_write, mut output) = (0, 0, 0, 0);
+    let mut stop_reason = String::new();
+    let mut stopped = false;
+    'read: while let Some(bytes) = stream.next().await {
+        buf.extend_from_slice(bytes.map_err(Into::into)?.as_ref());
+        while let Some(end) = find_event_end(&buf) {
+            let event: Vec<u8> = buf.drain(..end).collect();
+            let event = String::from_utf8_lossy(&event);
+            for data in event.lines().filter_map(|l| l.strip_prefix("data:")) {
+                let Ok(v) = serde_json::from_str::<Value>(data.trim()) else { continue };
+                match v["type"].as_str().unwrap_or("") {
+                    "message_start" => {
+                        let u = &v["message"]["usage"];
+                        input = u["input_tokens"].as_u64().unwrap_or(0);
+                        cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                        cache_write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                    }
+                    "content_block_delta" if v["delta"]["type"] == "text_delta" => {
+                        let t = v["delta"]["text"].as_str().unwrap_or("");
+                        answer.push_str(t);
+                        out(Chunk::Text(t.to_string()));
+                    }
+                    "message_delta" => {
+                        stop_reason = v["delta"]["stop_reason"].as_str().unwrap_or("").to_string();
+                        output = v["usage"]["output_tokens"].as_u64().unwrap_or(output);
+                    }
+                    "message_stop" => {
+                        stopped = true;
+                        break 'read;
+                    }
+                    "error" => bail!("stream error: {}", v["error"]["message"].as_str().unwrap_or("unknown")),
+                    _ => {}
+                }
+            }
+        }
+    }
+    out(Chunk::Usage { input, cache_read, cache_write, output });
+    // A connection cut mid-answer ends the stream without message_stop: not a finished answer.
+    if !stopped {
+        bail!("the answer stream was cut off");
+    }
+    if stop_reason == "refusal" {
+        bail!("Claude declined to answer this request");
+    }
+    Ok(answer)
 }
 
 fn fallback_supported(model: &str) -> bool {
@@ -172,6 +188,19 @@ mod tests {
         assert_eq!(find_event_end(b"event: a\ndata: {}\n\nrest"), Some(19));
         assert_eq!(find_event_end(b"data: {}\r\n\r\n"), Some(12));
         assert_eq!(find_event_end(b"data: {"), None);
+    }
+
+    async fn read(parts: &[&str]) -> Result<String> {
+        let chunks: Vec<std::result::Result<Vec<u8>, std::io::Error>> = parts.iter().map(|p| Ok(p.as_bytes().to_vec())).collect();
+        read_stream(futures_util::stream::iter(chunks), &mut |_| {}).await
+    }
+
+    #[tokio::test]
+    async fn cut_stream_is_an_error() {
+        let delta = "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Лёгкий\"}}\n\n";
+        let stop = "data: {\"type\":\"message_stop\"}\n\n";
+        assert_eq!(read(&[delta, stop]).await.unwrap(), "Лёгкий");
+        assert!(read(&[delta]).await.is_err(), "no message_stop: the connection was cut");
     }
 
     #[test]
