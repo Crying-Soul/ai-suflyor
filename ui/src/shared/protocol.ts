@@ -100,6 +100,17 @@ export interface CallsTree {
   folders: { dir: string; title: string; calls: { dir: string; title: string; hasSummary: boolean }[] }[];
 }
 
+/** A call or folder whose text matches a search, with the matching line. */
+export interface SearchHit {
+  dir: string;
+  title: string;
+  /** The folder's title for a call; absent for a folder. */
+  folder?: string;
+  /** Where the words are: название, заметки, итог, транскрипт. */
+  where: string;
+  snippet: string;
+}
+
 export interface NodeFile {
   name: string;
   size: number;
@@ -150,6 +161,12 @@ export interface CallsApi {
   reveal(dir: string): void;
   /** The last `call` event, so a freshly opened window knows the open call. */
   current(): Promise<CallInfo | null>;
+  /** Calls and folders whose title, notes, summary or transcript contain `query`. */
+  search(query: string): Promise<SearchHit[]>;
+  /** Asks where to save the call as Markdown; resolves to the saved path, or null if cancelled. */
+  exportMd(dir: string): Promise<string | null>;
+  /** Moves a call to another folder; resolves to its new directory. */
+  move(dir: string, folder: string): Promise<string>;
 }
 
 export interface ModelInfo {

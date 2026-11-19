@@ -26,6 +26,10 @@ nav ul { margin: 0; padding: 0; list-style: none; }
 #tree > li + li { border-top: 1px solid var(--color-rule); }
 #tree > li { padding: var(--space-2xs) 0; }
 .calls { padding-left: var(--space-md); }
+#hits .sub { white-space: normal; }
+#hits .empty { padding: var(--space-xs); color: var(--color-muted); font-size: var(--text-sm); }
+.move { display: flex; align-items: center; gap: var(--space-xs); }
+.move .select { width: auto; max-width: 14rem; }
 nav button[data-dir] {
   display: grid; grid-template-columns: 6px minmax(0, 1fr) auto; align-items: center; column-gap: var(--space-xs); width: 100%; min-height: 36px; padding: var(--space-2xs) var(--space-xs);
   border: 0; border-radius: var(--radius-inner); background: transparent; color: var(--color-ink-2);

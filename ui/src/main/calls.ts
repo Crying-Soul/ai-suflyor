@@ -2,11 +2,11 @@
 // Every node has context.md, meta.json {title, glossary, ...} and files/. The core reads the same layout.
 import fs from "node:fs";
 import path from "node:path";
-import type { CallsTree, NodeData, NodeFile, NodeKind, NodePatch, TranscriptLine } from "../shared/protocol";
+import type { CallsTree, NodeData, NodeFile, NodeKind, NodePatch, SearchHit, TranscriptLine } from "../shared/protocol";
 
 const CONTEXT_EXT = new Set([".md", ".txt", ".pdf"]);
 
-function readJson(p: string): Record<string, unknown> {
+export function readJson(p: string): Record<string, unknown> {
   try {
     return JSON.parse(fs.readFileSync(p, "utf8"));
   } catch {
@@ -212,4 +212,86 @@ export function migrate(dataDir: string, userContext: string, glossary: string[]
   writeAtomic(metaPath, JSON.stringify(meta, null, 2) + "\n");
   fs.mkdirSync(path.join(dir, "files"), { recursive: true });
   return true;
+}
+
+/** The line of `text` around the first match of `q` (lowercase), trimmed for a list row. */
+function snippet(text: string, q: string): string | null {
+  const i = text.toLowerCase().indexOf(q);
+  if (i < 0) return null;
+  const start = Math.max(0, i - 40);
+  const s = text.slice(start, i + q.length + 80).replace(/\s+/g, " ").trim();
+  return (start ? "…" : "") + s;
+}
+
+/** Folders and calls whose title, notes, summary or transcript contain `query` (any case). */
+export function search(dataDir: string, query: string, limit = 50): SearchHit[] {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const hits: SearchHit[] = [];
+  const look = (dir: string, folder: string | undefined, parts: [string, string][]) => {
+    for (const [where, text] of parts) {
+      const s = snippet(text, q);
+      if (s !== null) return void hits.push({ dir, title: title(dir), folder, where, snippet: s });
+    }
+  };
+  for (const f of subdirs(path.join(dataDir, "folders"))) {
+    const ft = title(f);
+    look(f, undefined, [["название", ft], ["заметки", readText(path.join(f, "context.md"))]]);
+    for (const c of subdirs(path.join(f, "calls")).reverse()) {
+      const lines = transcript(c).map((l) => l.text).join("\n");
+      look(c, ft, [
+        ["название", title(c)],
+        ["заметки", readText(path.join(c, "context.md"))],
+        ["итог", readText(path.join(c, "summary.md"))],
+        ["транскрипт", lines],
+      ]);
+      if (hits.length >= limit) return hits;
+    }
+  }
+  return hits;
+}
+
+/** The call as one Markdown document: summary, notes, the transcript and the full hints. */
+export function exportMarkdown(dataDir: string, dir: string): string {
+  if (kindOf(dataDir, dir) !== "call") throw new Error("экспортируется только звонок");
+  const n = node(dataDir, dir);
+  const clock = (t: number) => new Date(t).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  const out = [`# ${n.title}`, ""];
+  out.push(`Папка: ${title(path.dirname(path.dirname(dir)))}`);
+  if (n.started) out.push(`Начало: ${new Date(n.started).toLocaleString("ru-RU", { dateStyle: "long", timeStyle: "short" })}`);
+  if (n.summary?.trim()) out.push("", "## Итог", "", n.summary.trim());
+  if (n.context.trim()) out.push("", "## Заметки", "", n.context.trim());
+  const lines = transcript(dir);
+  if (lines.length) {
+    out.push("", "## Транскрипт", "");
+    for (const l of lines) out.push(`**${clock(l.t)} ${l.speaker === "them" ? "Собеседник" : "Я"}:** ${l.text}`, "");
+  }
+  const hints = readText(path.join(dir, "answers.jsonl"))
+    .split("\n")
+    .flatMap((l) => {
+      try {
+        const a = JSON.parse(l);
+        return a.tier === "full" && a.text ? [a as { question: string; text: string }] : [];
+      } catch {
+        return [];
+      }
+    });
+  if (hints.length) {
+    out.push("", "## Подсказки", "");
+    for (const h of hints) out.push(`### ${h.question || "Без вопроса"}`, "", h.text.trim(), "");
+  }
+  return out.join("\n").trimEnd() + "\n";
+}
+
+/** Moves a call into another folder (its directory keeps its name, made unique there). */
+export function move(dataDir: string, dir: string, folder: string): string {
+  if (kindOf(dataDir, dir) !== "call") throw new Error("переносится только звонок");
+  if (kindOf(dataDir, folder) !== "folder") throw new Error("переносить можно только в папку");
+  if (path.dirname(path.dirname(dir)) === folder) return dir;
+  const parent = path.join(folder, "calls");
+  fs.mkdirSync(parent, { recursive: true });
+  let to = path.join(parent, path.basename(dir));
+  for (let i = 2; fs.existsSync(to); i++) to = path.join(parent, `${path.basename(dir)}-${i}`);
+  fs.renameSync(dir, to);
+  return to;
 }

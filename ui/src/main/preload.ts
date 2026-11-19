@@ -33,6 +33,9 @@ const api: RendererApi = {
     preview: (dir) => ipcRenderer.invoke("calls:preview", dir),
     reveal: (dir) => ipcRenderer.send("calls:reveal", dir),
     current: () => ipcRenderer.invoke("calls:current"),
+    search: (q) => ipcRenderer.invoke("calls:search", q),
+    exportMd: (dir) => ipcRenderer.invoke("calls:export", dir),
+    move: (dir, folder) => ipcRenderer.invoke("calls:move", dir, folder),
   },
   ready: {
     list: () => ipcRenderer.invoke("ready:list"),

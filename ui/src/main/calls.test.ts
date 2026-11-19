@@ -39,3 +39,43 @@ test("folders, calls, files, save and migration", () => {
   assert.throws(() => calls.kindOf(data, path.join(data, "folders")));
   fs.rmSync(data, { recursive: true, force: true });
 });
+
+test("setDotted writes nested keys and skips prototype keys", () => {
+  const raw: Record<string, unknown> = { stt: { dll: "a.dll" } };
+  calls.setDotted(raw, { "stt.model": "m.bin", "__proto__.polluted": true, "a.constructor.prototype.x": 1 });
+  assert.deepEqual(raw, { stt: { dll: "a.dll", model: "m.bin" } });
+  assert.equal(({} as Record<string, unknown>).polluted, undefined);
+});
+
+test("search, export and move of a call", () => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), "calls-"));
+  const a = calls.createFolder(data, "Яндекс");
+  const b = calls.createFolder(data, "Озон");
+  const c = calls.createCall(data, a, "Тех секция");
+  fs.writeFileSync(path.join(c, "transcript.jsonl"), [
+    JSON.stringify({ speaker: "them", t_ms: 1_000, end_ms: 2_000, text: "Как устроен Kafka consumer group?" }),
+    JSON.stringify({ speaker: "me", t_ms: 3_000, end_ms: 4_000, text: "Партиции делятся между консьюмерами." }),
+  ].join("\n") + "\n");
+  fs.writeFileSync(path.join(c, "answers.jsonl"), JSON.stringify({ turn: 1, tier: "full", trigger: "auto", question: "Kafka?", model: "m", text: "Ребалансировка." }) + "\n");
+  fs.writeFileSync(path.join(c, "summary.md"), "Обсудили очереди.\n");
+
+  const hit = calls.search(data, "KAFKA consumer");
+  assert.deepEqual(hit.map((h) => [h.dir, h.where, h.folder]), [[c, "транскрипт", "Яндекс"]]);
+  assert.match(hit[0].snippet, /Kafka consumer group/);
+  assert.equal(calls.search(data, "яндекс")[0].dir, a);
+  assert.deepEqual(calls.search(data, "к"), [], "one letter is not a search");
+
+  const md = calls.exportMarkdown(data, c);
+  assert.match(md, /^# Тех секция\n/);
+  assert.match(md, /## Итог\n\nОбсудили очереди\./);
+  assert.match(md, /\*\*\d\d:\d\d Собеседник:\*\* Как устроен Kafka/);
+  assert.match(md, /### Kafka\?\n\nРебалансировка\./);
+  assert.throws(() => calls.exportMarkdown(data, a));
+
+  const moved = calls.move(data, c, b);
+  assert.equal(path.dirname(path.dirname(moved)), b);
+  assert.ok(!fs.existsSync(c));
+  assert.equal(calls.tree(data).folders.find((f) => f.dir === b)?.calls[0].title, "Тех секция");
+  assert.throws(() => calls.move(data, moved, path.join(data, "profile")));
+  fs.rmSync(data, { recursive: true, force: true });
+});

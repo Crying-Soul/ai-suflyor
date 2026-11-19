@@ -14,6 +14,8 @@
   </header>
   <div class="layout">
     <nav aria-label="Папки и звонки">
+      <input id="search" class="input" type="search" placeholder="Поиск по звонкам" aria-label="Поиск по названиям, заметкам, итогам и транскриптам" />
+      <ul id="hits" aria-live="polite" hidden></ul>
       <ul id="tree"></ul>
       <button id="btn-new-folder" class="btn-ghost" type="button">Новая папка</button>
     </nav>

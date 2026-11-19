@@ -132,7 +132,13 @@ function renderPane(n: NodeData): void {
     } else {
       actions.append(button(n.transcript?.length ? "Продолжить звонок" : "Начать звонок", "btn", () => api.send({ cmd: "open_call", dir: n.dir })));
     }
-    actions.append(button("Предпросмотр контекста", "btn-ghost", () => preview(n.dir)));
+    actions.append(
+      button("Предпросмотр контекста", "btn-ghost", () => preview(n.dir)),
+      button("Экспорт в Markdown", "btn-ghost", () =>
+        api.calls.exportMd(n.dir).then((p) => p && setState("done", `Сохранено: ${p}`)).catch(fail),
+      ),
+    );
+    if (!isLive) actions.append(moveControl(n));
   } else if (n.kind === "folder") {
     actions.append(
       button("Новый звонок", "btn", async () => select(await api.calls.createCall(n.dir, "Новый звонок")).then(loadTree)),
@@ -193,6 +199,34 @@ function renderPane(n: NodeData): void {
     else body.append(form, summary, log);
   } else body.append(form);
   pane.replaceChildren(body, footer);
+}
+
+/** A folder picker and a button that moves the call there (not the open one: the core writes into it). */
+function moveControl(n: NodeData): HTMLElement {
+  const here = tree.folders.find((f) => f.calls.some((c) => c.dir === n.dir));
+  const others = tree.folders.filter((f) => f !== here);
+  const box = el("div", "move");
+  if (!others.length) return box;
+  const pick = el("select", "select");
+  pick.setAttribute("aria-label", "Папка, куда перенести звонок");
+  pick.append(...others.map((f) => Object.assign(el("option", "", f.title), { value: f.dir })));
+  box.append(
+    pick,
+    button("Перенести", "btn-ghost", async () => {
+      if (dirty && !(await askConfirm("Перенести без сохранения изменений?", "Перенести"))) return;
+      try {
+        const to = await api.calls.move(n.dir, pick.value);
+        dirty = false;
+        current = null;
+        await loadTree();
+        await select(to);
+        setState("done", `Перенесено в «${pick.selectedOptions[0].textContent}».`);
+      } catch (err) {
+        fail(err);
+      }
+    }),
+  );
+  return box;
 }
 
 function filesField(n: NodeData): HTMLElement {
@@ -331,6 +365,38 @@ api.onEvent((e) => {
     if (current?.dir === e.dir) {
       select(e.dir).then(() => setState(e.ok ? "done" : "error", e.ok ? "Итог записан." : `Итог не записан: ${e.error}`));
     }
+  }
+});
+
+// ---------- search ----------
+
+const searchEl = $<HTMLInputElement>("search");
+const hitsEl = $("hits");
+let searchSeq = 0;
+searchEl.addEventListener("input", async () => {
+  const q = searchEl.value.trim();
+  const seq = ++searchSeq;
+  const on = q.length >= 2;
+  hitsEl.hidden = !on;
+  treeEl.hidden = on;
+  if (!on) return;
+  const hits = await api.calls.search(q).catch(() => []);
+  if (seq !== searchSeq) return;
+  hitsEl.replaceChildren(
+    ...(hits.length
+      ? hits.map((h) => {
+          const li = el("li");
+          li.append(treeButton(h.dir, h.title, `${h.folder ? `${h.folder} · ` : ""}${h.where}: ${h.snippet}`));
+          return li;
+        })
+      : [el("li", "empty", "Ничего не нашлось")]),
+  );
+});
+searchEl.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && searchEl.value) {
+    e.stopPropagation();
+    searchEl.value = "";
+    searchEl.dispatchEvent(new Event("input"));
   }
 });
 
