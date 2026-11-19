@@ -74,5 +74,18 @@ Ctrl+Shift+S отправляет в Claude снимок активного ок
 - **Интерфейс на Electron** (`ui/`): окна, хоткеи и настройки.
 - **Связь:** ядро и интерфейс обмениваются NDJSON через stdio ядра.
 
+## Сборка из исходников
+
+Windows, Rust (stable), Node.js 24, видеокарта NVIDIA необязательна.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\get-whisper.ps1 -Cuda   # DLL whisper.cpp и модель в .\whisper
+copy config.example.json config.json                                     # ключ API или llm.backend = "claude-code"
+cargo build --release --manifest-path core\Cargo.toml
+cd ui; npm install; npm start
+```
+
+Тесты: `cargo test --manifest-path core\Cargo.toml`, а в `ui/`: `npm run typecheck` и `npm test`. Их же запускает CI на каждый push (`.github/workflows/ci.yml`). Установщик собирает `npm run dist` в `ui/`.
+
 > [!WARNING]
 > Записывать звонки без согласия собеседников может быть незаконно. Проверьте правила своей страны и платформы.
