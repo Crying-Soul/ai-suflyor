@@ -66,6 +66,8 @@ app.whenReady().then(async () => {
     windows: [{ name: "Транскрипт", hidden: true }, { name: "Подсказки", hidden: true }, { name: "Настройки", hidden: true }],
     osOk: true,
   }));
+  ipcMain.handle("hotkeys:failed", () => ["screenshotAsk"]);
+  ipcMain.handle("config:audio-apps", () => ["chrome.exe", "Teams.exe", "Zoom.exe"]);
   ipcMain.handle("config:save", () => ({ ok: true, path: "C:\\dev\\suflyor\\config.json" }));
   const M = (id, label, sizeMb, note, state, extra = {}) => ({ id, label, sizeMb, note, state, received: 0, total: 0, active: false, ...extra });
   ipcMain.handle("models:list", () => [
@@ -90,7 +92,10 @@ app.whenReady().then(async () => {
   send([tr, hi], live);
   await shot(tr, "transcript-live.png");
   await shot(hi, "hints-listening.png");
-  send([tr, hi], done);
+  send([tr, hi], [...done,
+    { ev: "usage", tier: "quick", model: "claude-haiku-5-5", api: true, input: 6200, cache_read: 0, cache_write: 5300, output: 40 },
+    { ev: "usage", tier: "full", model: "claude-sonnet-5-5", api: true, input: 410, cache_read: 5300, cache_write: 900, output: 380 },
+  ]);
   await wait(500);
   await shot(tr, "transcript-full.png");
   await shot(hi, "hints-full.png");
@@ -142,6 +147,8 @@ app.whenReady().then(async () => {
   }
   await s.webContents.executeJavaScript(`document.querySelector('[data-section="stt"]').click(); [...document.querySelectorAll('fieldset:not([hidden]) .models')].at(-1).scrollIntoView({ block: "center" })`);
   await shot(s, "settings-cuda.png");
+  await s.webContents.executeJavaScript(`document.querySelector('[data-section="hotkeys"]').click(); document.querySelector('#f-hotkeys-translate').dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyQ', key: 'q', ctrlKey: true, altKey: true, bubbles: true }))`);
+  await shot(s, "settings-hotkeys.png");
   await s.webContents.executeJavaScript(`document.querySelector('#f-vad-minSilenceMs').value='450'; document.querySelector('#form').dispatchEvent(new Event('input'))`);
   await shot(s, "settings-dirty.png");
   await s.webContents.executeJavaScript(`document.querySelector('[data-section="guide"]').click()`);
@@ -183,6 +190,11 @@ app.whenReady().then(async () => {
   await shot(c, "calls-live.png");
   await c.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(b => b.textContent === 'Предпросмотр контекста').click()`);
   await shot(c, "calls-preview.png");
+  ipcMain.handle("calls:search", () => [
+    { dir: callEv.dir, title: "Системный дизайн", folder: "Яндекс Маркет", where: "транскрипт", snippet: "…как устроен Kafka consumer group и что будет при ребалансировке" },
+  ]);
+  await c.webContents.executeJavaScript(`document.querySelector('dialog[open]')?.close(); const i = document.querySelector('#search'); i.value = 'kafka'; i.dispatchEvent(new Event('input'))`);
+  await shot(c, "calls-search.png");
 
   // «Экран + вопрос»: the chip while capturing, then a card with the screen thumb.
   hi.webContents.send("ui", { kind: "looking" });

@@ -11,6 +11,7 @@ export interface TrayActions {
   toggleClickThrough(): void;
   openReady(): void;
   checkUpdates(): void;
+  restartCore(): void;
   quit(): void;
 }
 
@@ -38,6 +39,7 @@ export function createTray(a: TrayActions): { setCall(title: string | null): voi
       { label: "Справка", click: () => a.openSettings("guide") },
       { label: "Проверка готовности", click: a.openReady },
       { label: "Проверить обновления", click: a.checkUpdates },
+      { label: "Перезапустить ядро", click: a.restartCore },
       { type: "separator" },
       { label: "«У камеры»", click: a.togglePreset },
       { label: "Клики сквозь окна", click: a.toggleClickThrough },

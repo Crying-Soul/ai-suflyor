@@ -46,6 +46,7 @@ const api: RendererApi = {
     useClaudeCode: () => ipcRenderer.invoke("ready:claudeCode"),
     getModel: (id) => ipcRenderer.send("ready:model", id),
     openLogs: () => ipcRenderer.send("ready:logs"),
+    restartCore: () => ipcRenderer.send("core:restart"),
     onChange: (cb) => {
       ipcRenderer.on("ready:changed", (_e, items) => cb(items));
     },

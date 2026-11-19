@@ -208,6 +208,8 @@ export interface ReadyApi {
   /** Downloads and selects the whisper model. */
   getModel(id: string): void;
   openLogs(): void;
+  /** Starts the core again, also after it gave up restarting by itself. */
+  restartCore(): void;
   onChange(cb: (items: ReadyItem[]) => void): void;
 }
 

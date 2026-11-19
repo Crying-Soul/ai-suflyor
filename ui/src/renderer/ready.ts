@@ -1,10 +1,8 @@
 // «Подготовка к работе»: one card per thing the app needs, kept in place while the list updates,
 // so a download in progress or a key being typed is never redrawn away.
-import type { ReadyItem, RendererApi } from "../shared/protocol";
-import { $, guardPopups } from "./common";
+import type { ReadyItem } from "../shared/protocol";
+import { $, api, guardPopups } from "./common";
 import { el, packOps, renderModels, small, type ModelOps } from "./model-row";
-
-const api = (window as unknown as { api: RendererApi }).api;
 
 const LEVEL: Record<ReadyItem["level"], string> = { required: "обязательно", recommended: "рекомендуется", optional: "по желанию" };
 
@@ -97,7 +95,7 @@ function action(item: ReadyItem): HTMLElement {
     case "audio":
       return el("div", { className: "act" }, el("div", { className: "row" }, small("Настройки звука", () => api.openSettings("audio"), "btn small")));
     case "core":
-      return el("div", { className: "act" }, el("div", { className: "row" }, small("Открыть логи", () => api.ready.openLogs(), "btn small")));
+      return el("div", { className: "act" }, el("div", { className: "row" }, small("Перезапустить ядро", () => api.ready.restartCore(), "btn small"), small("Открыть логи", () => api.ready.openLogs())));
   }
 }
 
