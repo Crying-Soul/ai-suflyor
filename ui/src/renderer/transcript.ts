@@ -216,9 +216,29 @@ function clearRows(): void {
 // ---------- status ----------
 
 /** The row shows the level only; which device it is lives in the tooltip. */
+/** When each side last had any signal at all (above -80 dBFS: a live mic never goes that low). */
+const heard: Record<Speaker, number> = { me: Date.now(), them: Date.now() };
+const SILENT_AFTER_MS = 30_000;
+
+/** "тишина 45 с" once a running source gave nothing for half a minute: a dead device, not a quiet room. */
+function silenceNote(speaker: Speaker): string {
+  const c = status?.[speaker];
+  const muted = speaker === "me" ? status?.mute_me : status?.mute_them;
+  // A muted side is silent on purpose: the count starts when it is unmuted.
+  if (muted) heard[speaker] = Date.now();
+  const ms = Date.now() - heard[speaker];
+  if (!c || c.state === "error" || ms < SILENT_AFTER_MS) return "";
+  const s = Math.floor(ms / 1000);
+  return s < 120 ? `тишина ${s} с` : `тишина ${Math.floor(s / 60)} мин`;
+}
+
+setInterval(() => {
+  for (const sp of ["me", "them"] as const) if (status) renderCapture(sp, status[sp]);
+}, 1000);
+
 function renderCapture(speaker: Speaker, c: CaptureStatus): void {
   const e = sources[speaker];
-  e.textContent = c.state === "error" ? (speaker === "me" ? "микрофон недоступен" : "звук недоступен") : "";
+  e.textContent = c.state === "error" ? (speaker === "me" ? "микрофон недоступен" : "звук недоступен") : silenceNote(speaker);
   e.classList.toggle("error", c.state === "error");
   e.parentElement!.title = c.error ?? c.source;
 }
@@ -240,6 +260,7 @@ function renderStatus(s: Status): void {
 }
 
 function setMeter(speaker: Speaker, peak: number): void {
+  if (peak > 1e-4) heard[speaker] = Date.now();
   // -60 dBFS .. 0 dBFS -> 0..1
   const db = 20 * Math.log10(Math.max(peak, 1e-6));
   meters[speaker].style.transform = `scaleX(${Math.max(0, Math.min(1, (db + 60) / 60))})`;
