@@ -1,4 +1,5 @@
 import type { CaptureStatus, CoreEvent, ReadyItem, Speaker, Status } from "../shared/protocol";
+import { addTurn, emptyUsage, type Usage } from "../shared/usage";
 import { $, api, bindActions, el, follow, icon, keyLabel, overlayUi, sttLabel } from "./common";
 
 const list = $("transcript");
@@ -255,6 +256,23 @@ function renderMetrics(): void {
   if (!statusEl.classList.contains("error")) statusEl.title = metricsTip;
 }
 
+/** Claude's tokens since the call (or the app) opened, and their price on the API. */
+let usage: Usage = emptyUsage();
+const usageEl = $("usage");
+function renderUsage(): void {
+  const total = usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
+  usageEl.hidden = total === 0;
+  const k = (n: number) => (n >= 10_000 ? `${Math.round(n / 1000)}k` : n.toLocaleString("ru-RU"));
+  const usd = usage.usd > 0 ? ` · $${usage.usd < 0.01 ? usage.usd.toFixed(3) : usage.usd.toFixed(2)}` : "";
+  usageEl.textContent = `${k(total)} ток.${usd}`;
+  usageEl.title = [
+    "Расход Claude в этом звонке:",
+    `вход ${usage.input.toLocaleString("ru-RU")}, из кэша ${usage.cacheRead.toLocaleString("ru-RU")}, в кэш ${usage.cacheWrite.toLocaleString("ru-RU")}, ответ ${usage.output.toLocaleString("ru-RU")}`,
+    usage.usd > 0 ? `≈$${usage.usd.toFixed(4)} по ценам API (запись в кэш по верхней цене)` : "",
+    usage.subscription ? "Ответы через Claude Code идут по подписке, без оплаты за токены." : "",
+  ].filter(Boolean).join("\n");
+}
+
 // ---------- events ----------
 
 api.onEvent((e: CoreEvent) => {
@@ -291,12 +309,19 @@ api.onEvent((e: CoreEvent) => {
     case "answer_start":
       if (e.q_t !== undefined) markAsked(e.q_t);
       break;
+    case "usage":
+      usage = addTurn(usage, e);
+      renderUsage();
+      break;
     case "metrics":
       metrics[e.name] = e.ms;
       if (e.name === "speech_end_to_final" || e.name === "stt_decode") renderMetrics();
       break;
     case "cleared":
       clearRows();
+      // Sent before a call opens: the count starts over with it.
+      usage = emptyUsage();
+      renderUsage();
       break;
     case "call": {
       const chip = $("btn-call");

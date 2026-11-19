@@ -65,6 +65,8 @@ export type CoreEvent =
   | { ev: "answer_delta"; id: number; text: string }
   | { ev: "answer_end"; id: number; error?: string }
   | { ev: "metrics"; name: string; ms: number }
+  /** Tokens of one finished Claude turn. `api`: billed per token (false: a Claude Code subscription). */
+  | { ev: "usage"; tier: string; model: string; api: boolean; input: number; cache_read: number; cache_write: number; output: number }
   | { ev: "error"; message: string }
   /** The screen that goes with answer turn `turn`; `thumb` is a small JPEG data URL. */
   | { ev: "screenshot"; turn: number; width: number; height: number; thumb: string }

@@ -18,6 +18,7 @@
 .through-note { display: none; color: var(--color-accent-2); white-space: nowrap; }
 body.through .through-note { display: inline; }
 #status.error { color: var(--color-error); }
+.usage { white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Sources: who, live level, device, as two ruled lines. */
 /* Something required is missing: a calm apricot strip with the way to the fix. */

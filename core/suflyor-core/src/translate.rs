@@ -111,14 +111,19 @@ async fn run(mut session: Session, model: String, shared: Arc<Shared>, mut rx: m
         let text = lines.into_iter().map(|(_, s)| s).collect::<Vec<_>>().join(" ");
         let started = std::time::Instant::now();
         let mut out = String::new();
+        let api = session.is_api();
         let r = async {
             session.prepare(&model).await?;
-            session.ask(&model, &Turn::text(&text), &mut |c| {
-                if let Chunk::Text(t) = c {
-                    out.push_str(&t);
-                }
-            })
-            .await
+            session
+                .ask(&model, &Turn::text(&text), &mut |c| match c {
+                    Chunk::Text(t) => out.push_str(&t),
+                    c => {
+                        if let Some(e) = crate::llm::usage_event("translate", &model, api, &c) {
+                            let _ = shared.events.send(e);
+                        }
+                    }
+                })
+                .await
         }
         .await;
         asked += 1;

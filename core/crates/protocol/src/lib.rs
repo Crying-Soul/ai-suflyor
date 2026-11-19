@@ -189,6 +189,17 @@ pub enum Event {
         name: String,
         ms: f64,
     },
+    /// Tokens of one finished Claude turn, for the per-call count in the UI.
+    /// `tier`: quick, full, summary, brief, translate. `api`: billed per token (false: Claude Code subscription).
+    Usage {
+        tier: String,
+        model: String,
+        api: bool,
+        input: u64,
+        cache_read: u64,
+        cache_write: u64,
+        output: u64,
+    },
     Error {
         message: String,
     },

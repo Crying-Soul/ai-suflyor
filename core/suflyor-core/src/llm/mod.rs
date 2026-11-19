@@ -23,6 +23,12 @@ pub enum Chunk {
     },
 }
 
+/// The `usage` event of a turn's `Chunk::Usage`; None for other chunks.
+pub fn usage_event(tier: &str, model: &str, api: bool, c: &Chunk) -> Option<protocol::Event> {
+    let Chunk::Usage { input, cache_read, cache_write, output } = *c else { return None };
+    Some(protocol::Event::Usage { tier: tier.into(), model: model.into(), api, input, cache_read, cache_write, output })
+}
+
 /// One user turn: text and, for "Экран + вопрос", a PNG of the screen placed before it.
 pub struct Turn {
     pub text: String,
@@ -100,6 +106,11 @@ impl Session {
             #[cfg(test)]
             Session::Mock(_) => {}
         }
+    }
+
+    /// Billed per token (the API), not by a Claude Code subscription.
+    pub fn is_api(&self) -> bool {
+        matches!(self, Session::Api(_))
     }
 
     pub async fn reset(&mut self) {

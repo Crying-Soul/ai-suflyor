@@ -65,6 +65,8 @@ pub struct Answerer {
     auto: mpsc::UnboundedSender<Auto>,
     /// `brief::key` of the context now in use: a brief made for an older one is not applied.
     context_key: Arc<std::sync::Mutex<String>>,
+    /// For the token usage of one-off sessions (notes, brief, summary).
+    events: crate::EventTx,
 }
 
 /// Rolling summary of a long call: the transcript before `upto` is replaced by `text` in new sessions.
@@ -116,7 +118,7 @@ impl Answerer {
         let quick = cfg.two_tier.then(|| (spawn_tier("quick", make("quick"), cfg.quick_model.clone(), shared.clone()), cfg.quick_model.clone()));
         let (auto, auto_rx) = mpsc::unbounded_channel();
         let context_key = Arc::new(std::sync::Mutex::new(crate::brief::key(context)));
-        let a = Answerer { cfg: cfg.clone(), full, quick, next_id: Arc::new(AtomicU64::new(1)), auto, context_key };
+        let a = Answerer { cfg: cfg.clone(), full, quick, next_id: Arc::new(AtomicU64::new(1)), auto, context_key, events: shared.events.clone() };
         tokio::spawn(auto_detect(a.clone(), shared, auto_rx));
         a
     }
@@ -182,12 +184,7 @@ impl Answerer {
         let mut out = String::new();
         let prev = if prev.is_empty() { String::new() } else { format!("<earlier_notes>\n{prev}\n</earlier_notes>\n") };
         let text = format!("{prev}<transcript>\n{}\n</transcript>\nWrite the notes.", llm::render(segs));
-        s.ask(model, &llm::Turn { text, image: None }, &mut |c| {
-            if let Chunk::Text(t) = c {
-                out.push_str(&t);
-            }
-        })
-        .await?;
+        self.one_off(&mut s, "summary", model, &llm::Turn { text, image: None }, &mut out).await?;
         Ok(out.trim().to_string())
     }
 
@@ -282,13 +279,22 @@ impl Answerer {
         let model = &self.cfg.model;
         s.prepare(model).await?;
         let mut out = String::new();
-        s.ask(model, &llm::Turn { text: format!("{context}\n\nWrite the brief."), image: None }, &mut |c| {
-            if let Chunk::Text(t) = c {
-                out.push_str(&t);
+        self.one_off(&mut s, "brief", model, &llm::Turn { text: format!("{context}\n\nWrite the brief."), image: None }, &mut out).await?;
+        Ok(out.trim().to_string())
+    }
+
+    /// One turn of a one-off session: its text into `out`, its token usage to the UI.
+    async fn one_off(&self, s: &mut Session, tier: &str, model: &str, turn: &llm::Turn, out: &mut String) -> anyhow::Result<()> {
+        let (events, api) = (self.events.clone(), s.is_api());
+        s.ask(model, turn, &mut |c| match c {
+            Chunk::Text(t) => out.push_str(&t),
+            c => {
+                if let Some(e) = llm::usage_event(tier, model, api, &c) {
+                    let _ = events.send(e);
+                }
             }
         })
-        .await?;
-        Ok(out.trim().to_string())
+        .await
     }
 
     /// A fresh answer/turn id (also used to replay saved answers).
@@ -303,12 +309,7 @@ impl Answerer {
         s.prepare(model).await?;
         let mut out = String::new();
         let text = format!("<transcript>\n{}\n</transcript>\n{}Summarize this call.", llm::render(segs), hints_block(hints));
-        s.ask(model, &llm::Turn { text, image: None }, &mut |c| {
-            if let Chunk::Text(t) = c {
-                out.push_str(&t);
-            }
-        })
-        .await?;
+        self.one_off(&mut s, "summary", model, &llm::Turn { text, image: None }, &mut out).await?;
         Ok(out.trim().to_string())
     }
 }
@@ -532,6 +533,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                     // A cancelled turn resends its segments: an early one may hold a text the final changed.
                     sent_before = sent;
                     sent = req.segs.len();
+                    let api = session.is_api();
                     let got_first = AtomicBool::new(false);
                     // End of the other side's last phrase: for auto answers, the wait the user actually feels.
                     let them_end = matches!(req.trigger.as_str(), "auto" | "early")
@@ -552,8 +554,11 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                             answer.push_str(&t);
                             let _ = ev.send(Event::AnswerDelta { id, text: t });
                         }
-                        Chunk::Usage { input, cache_read, cache_write, output } => {
-                            info!("[{tier}] tokens: input {input}, cache read {cache_read}, cache write {cache_write}, output {output}")
+                        c @ Chunk::Usage { input, cache_read, cache_write, output } => {
+                            info!("[{tier}] tokens: input {input}, cache read {cache_read}, cache write {cache_write}, output {output}");
+                            if let Some(e) = llm::usage_event(tier, &req.model, api, &c) {
+                                let _ = ev.send(e);
+                            }
                         }
                     };
                     let ask = session.ask(&req.model, &turn, &mut emit);
@@ -723,7 +728,15 @@ mod tests {
         let (mock, _) = MockSession::new(delay, vec!["ok"], 0);
         let (full, shared, rx) = tier(mock);
         let (auto, _) = mpsc::unbounded_channel();
-        let a = Answerer { cfg: Arc::new(Config::default()), full, quick: None, next_id: Arc::new(AtomicU64::new(1)), auto, context_key: Default::default() };
+        let a = Answerer {
+            cfg: Arc::new(Config::default()),
+            full,
+            quick: None,
+            next_id: Arc::new(AtomicU64::new(1)),
+            auto,
+            context_key: Default::default(),
+            events: shared.events.clone(),
+        };
         (a, shared, rx)
     }
 
