@@ -69,7 +69,8 @@ impl Silero {
         self.context.copy_from_slice(&window[WINDOW - CONTEXT..]);
 
         let input = Tensor::from_array(([1usize, CONTEXT + WINDOW], self.input.clone()))?;
-        let state = Tensor::from_array(([2usize, 1, 128], std::mem::take(&mut self.state)))?;
+        // A copy, not `take`: a failed run must leave the state intact for the next window.
+        let state = Tensor::from_array(([2usize, 1, 128], self.state.clone()))?;
         let sr = Tensor::from_array(([1usize], vec![16000i64]))?;
         let outputs = self.session.run(ort::inputs!["input" => input, "state" => state, "sr" => sr])?;
         let (_, prob) = outputs[0].try_extract_tensor::<f32>()?;

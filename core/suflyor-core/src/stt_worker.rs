@@ -2,13 +2,14 @@
 //! speaker) and turns utterances into final transcript segments.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
 use protocol::{Event, Speaker};
 use stt::{DecodeOptions, ModelOptions, State, Whisper};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use vad::Utterance;
 
 use crate::Shared;
@@ -33,6 +34,8 @@ pub struct Job {
 pub struct SttQueue {
     lanes: Mutex<(VecDeque<Job>, VecDeque<Job>, bool)>,
     cv: Condvar,
+    /// Non-zero aborts the partial being decoded: a final (the question) must not wait up to 1 s for it.
+    abort: AtomicI32,
 }
 
 impl SttQueue {
@@ -47,6 +50,9 @@ impl SttQueue {
             lane.retain(|j| !j.partial);
         } else {
             lane.retain(|j| !j.speculative && !j.partial);
+        }
+        if !job.partial {
+            self.abort.store(1, Ordering::Relaxed);
         }
         lane.push_back(job);
         self.cv.notify_one();
@@ -65,6 +71,8 @@ impl SttQueue {
             for want_partial in [false, true] {
                 for lane in [&mut *them, &mut *me] {
                     if let Some(i) = lane.iter().position(|j| j.partial == want_partial) {
+                        // Under the lock: a final pushed after this pop aborts the partial, one before it was served first.
+                        self.abort.store(0, Ordering::Relaxed);
                         return lane.remove(i);
                     }
                 }
@@ -89,7 +97,7 @@ pub fn spawn(cfg: &Config, shared: Arc<Shared>, queue: Arc<SttQueue>) -> std::io
     })
 }
 
-/// ((start_sample, len), text or None if dropped, decode ms) of a speculative decode.
+/// ((utterance t, len), text or None if dropped, decode ms) of a speculative decode.
 type Speculative = ((u64, usize), Option<String>, f64);
 
 fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
@@ -130,7 +138,10 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
     let mut last_text: [String; 2] = Default::default();
     // Per speaker: (utterance t, text) of the last partial shown, for the stable/tail split.
     let mut last_partial: [(u64, String); 2] = Default::default();
-    // Per speaker: stream sample up to which audio is finalized; older partials are stale.
+    // When the last "them" partial was shown: an older one is not live speech the mic could echo.
+    let mut them_partial_at: Option<Instant> = None;
+    // Per speaker: epoch ms up to which audio is finalized; older partials are stale. Epoch ms, not
+    // stream samples: a restarted capture counts samples from 0 again, epoch ms keep growing.
     let mut finalized_upto: [u64; 2] = [0, 0];
     // Per speaker: the last speculative decode.
     let mut spec: [Option<Speculative>; 2] = Default::default();
@@ -146,11 +157,11 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
         let (speaker, t) = (job.speaker, job.t_ms);
         let wait_ms = job.queued.elapsed().as_secs_f64() * 1000.0;
         let start = job.utt.start_sample;
-        if job.partial && start < finalized_upto[idx] {
+        if job.partial && t < finalized_upto[idx] {
             continue;
         }
         // Speculative decode at the first pause; reused if the confirmed end has the same audio.
-        let key = (start, job.utt.samples.len());
+        let key = (t, job.utt.samples.len());
         let cached = if job.partial { None } else { spec[idx].take().filter(|(k, ..)| !job.speculative && *k == key) };
         let (raw, decode_ms) = match cached {
             Some((_, text, ms)) => {
@@ -165,7 +176,8 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
                 if job.partial && opts.language.is_none() {
                     opts.language = lang.clone();
                 }
-                let out = decode(&mut states[idx], job.utt.samples, opts, job.partial, cfg.stt.no_speech_thold, speaker);
+                let abort = job.partial.then_some(&queue.abort);
+                let out = decode(&mut states[idx], job.utt.samples, opts, abort, cfg.stt.no_speech_thold, speaker);
                 if let (Some((_, l)), false) = (&out, job.partial) {
                     lang = Some(l.clone()).filter(|l| !l.is_empty());
                 }
@@ -186,7 +198,7 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
                 a.on_them_early(crate::FinalSegment { speaker, t_ms: t, end_ms: t + (job.utt.speech_end_sample - start) / 16, text: text.clone() });
             }
             // Echo partials would flash the other side's words on our row until the final drops them.
-            if speaker == Speaker::Me && is_echo(shared, t, &text, &last_partial[1].1) {
+            if speaker == Speaker::Me && is_echo(shared, t, &text, live_partial(&last_partial[1].1, them_partial_at)) {
                 continue;
             }
             // A speculative decode is the final unless speech resumes: show all of it as settled.
@@ -196,17 +208,20 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
             if job.partial {
                 let _ = shared.events.send(Event::Metrics { name: "stt_partial".into(), ms: decode_ms });
             }
+            if speaker == Speaker::Them {
+                them_partial_at = Some(Instant::now());
+            }
             last_partial[idx] = (t, text);
             continue;
         }
 
-        finalized_upto[idx] = start + key.1 as u64;
+        finalized_upto[idx] = t + key.1 as u64 / 16;
         if text.is_none() {
             info!("[{}] dropped: {raw:?}", speaker.as_str());
         }
         // Without headphones the mic hears the speakers: drop "me" text that repeats recent "them" speech.
         if let (Speaker::Me, Some(tx)) = (speaker, &text)
-            && is_echo(shared, t, tx, &last_partial[1].1)
+            && is_echo(shared, t, tx, live_partial(&last_partial[1].1, them_partial_at))
         {
             info!("[me] echo dropped: {tx}");
             text = None;
@@ -251,6 +266,14 @@ fn opts_language(cfg: &Config) -> Option<&str> {
     Some(cfg.language.as_str()).filter(|l| !l.is_empty() && *l != "auto")
 }
 
+/// A "them" partial younger than this can still be echoed by the mic.
+const PARTIAL_ECHO_MS: u128 = 5_000;
+
+/// The last "them" partial while it is recent, else "".
+fn live_partial(text: &str, at: Option<Instant>) -> &str {
+    if at.is_some_and(|at| at.elapsed().as_millis() < PARTIAL_ECHO_MS) { text } else { "" }
+}
+
 /// True when "me" text at `t` repeats "them" speech of the last 20 s (or their live partial).
 fn is_echo(shared: &Shared, t: u64, text: &str, them_partial: &str) -> bool {
     if !them_partial.is_empty() && textproc::is_echo(text, them_partial) {
@@ -273,7 +296,16 @@ fn whisper_prompt(glossary: &str, last: &str) -> Option<String> {
 }
 
 /// One whisper decode: (confident segments joined, possibly empty; detected language). None on failure.
-fn decode(state: &mut State, mut samples: Vec<f32>, opts: DecodeOptions, partial: bool, no_speech_thold: f32, speaker: Speaker) -> Option<(String, String)> {
+/// `abort`: given for partials only; a final arriving in the queue cancels them.
+fn decode(
+    state: &mut State,
+    mut samples: Vec<f32>,
+    opts: DecodeOptions,
+    abort: Option<&AtomicI32>,
+    no_speech_thold: f32,
+    speaker: Speaker,
+) -> Option<(String, String)> {
+    let partial = abort.is_some();
     // whisper ignores < 1 s of audio; pad short utterances with silence.
     if samples.len() < 17_600 {
         samples.resize(17_600, 0.0);
@@ -287,7 +319,7 @@ fn decode(state: &mut State, mut samples: Vec<f32>, opts: DecodeOptions, partial
         // temperature-fallback loop on noise. The shim aborts it so the queue keeps moving.
         DecodeOptions { timeout_ms: 1000 + samples.len() as u32 / 160, ..opts }
     };
-    match state.transcribe(&samples, &opts, None) {
+    match state.transcribe(&samples, &opts, abort) {
         Ok(tr) => Some((
             tr.segments
                 .iter()
@@ -299,6 +331,10 @@ fn decode(state: &mut State, mut samples: Vec<f32>, opts: DecodeOptions, partial
                 .join(" "),
             tr.language,
         )),
+        Err(_) if abort.is_some_and(|a| a.load(Ordering::Relaxed) != 0) => {
+            debug!("[{}] partial aborted for a final", speaker.as_str());
+            None
+        }
         Err(e) => {
             warn!("transcribe {} ({:.1}s audio): {e:#}", speaker.as_str(), samples.len() as f32 / 16000.0);
             None
@@ -311,4 +347,38 @@ fn cuda_dll(cfg: &Config, whisper_dll: &std::path::Path) -> Option<std::path::Pa
     const CUDA_DLL: &str = "ggml-cuda.dll";
     let downloaded = cfg.path(&cfg.stt.cuda_dir).join(CUDA_DLL);
     (cfg.stt.use_gpu && !whisper_dll.parent()?.join(CUDA_DLL).exists() && downloaded.exists()).then_some(downloaded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(speaker: Speaker, partial: bool) -> Job {
+        let now = Instant::now();
+        Job {
+            speaker,
+            utt: Utterance { start_sample: 0, samples: vec![], speech_end_sample: 0, forced: false },
+            t_ms: 0,
+            speech_end: now,
+            queued: now,
+            speculative: false,
+            partial,
+        }
+    }
+
+    #[test]
+    fn final_aborts_the_partial_in_progress() {
+        let q = SttQueue::default();
+        q.push(job(Speaker::Me, true));
+        let p = q.pop().unwrap();
+        assert!(p.partial);
+        assert_eq!(q.abort.load(Ordering::Relaxed), 0, "a popped partial starts unaborted");
+        q.push(job(Speaker::Me, true));
+        assert_eq!(q.abort.load(Ordering::Relaxed), 0, "a newer partial does not abort");
+        q.push(job(Speaker::Them, false));
+        assert_eq!(q.abort.load(Ordering::Relaxed), 1, "a final aborts it");
+        // The final is served before the waiting partial.
+        assert!(!q.pop().unwrap().partial);
+        assert!(q.pop().unwrap().partial);
+    }
 }

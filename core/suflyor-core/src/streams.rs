@@ -122,17 +122,21 @@ fn supervise(speaker: Speaker, source: Source, shared: Arc<Shared>, queue: Arc<S
         let silero = match Silero::new(&vad.model) {
             Ok(s) => Some(s),
             Err(e) => {
+                // Levels still work, but nothing gets transcribed: say so instead of showing "running".
                 error!("VAD disabled for {}: {e:#}", speaker.as_str());
+                let message = format!("VAD не загрузился, распознавание выключено: {e:#}");
+                let _ = shared.events.send(Event::Error { message: message.clone() });
+                set_capture_status(&shared, speaker, CaptureStatus { state: CaptureState::Error, source: capture.description.clone(), error: Some(message) });
                 None
             }
         };
-        drain(speaker, capture, &shared, &queue, silero, &vad.seg, vad.partial_ms, writer.as_mut(), stop);
+        let failure = drain(speaker, capture, &shared, &queue, silero, &vad.seg, vad.partial_ms, writer.as_mut(), stop);
         if !stop.load(Ordering::Relaxed) {
-            set_capture_status(
-                &shared,
-                speaker,
-                CaptureStatus { state: CaptureState::Error, source: format!("{source:?}"), error: Some("capture stopped, restarting".into()) },
-            );
+            if let Some(e) = &failure {
+                let _ = shared.events.send(Event::Error { message: format!("{}: {e}", speaker.as_str()) });
+            }
+            let error = failure.map_or_else(|| "capture stopped, restarting".into(), |e| format!("{e}, restarting"));
+            set_capture_status(&shared, speaker, CaptureStatus { state: CaptureState::Error, source: format!("{source:?}"), error: Some(error) });
             sleep_unless_stopped(RETRY_DELAY, stop);
         }
     }
@@ -141,19 +145,19 @@ fn supervise(speaker: Speaker, source: Source, shared: Arc<Shared>, queue: Arc<S
     }
 }
 
-/// Runs until the capture fails or stop is requested.
+/// Runs until the capture or VAD fails or stop is requested. Returns why it stopped, if it failed.
 #[allow(clippy::too_many_arguments)]
 fn drain(
     speaker: Speaker,
     mut capture: Capture,
     shared: &Shared,
     queue: &SttQueue,
-    mut silero: Option<Silero>,
+    silero: Option<Silero>,
     seg_cfg: &SegmenterConfig,
     partial_ms: usize,
     mut writer: Option<&mut hound::WavWriter<std::io::BufWriter<std::fs::File>>>,
     stop: &AtomicBool,
-) {
+) -> Option<String> {
     // Timeline of this capture: sample index 0 = capture start.
     let epoch_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
     let mut segmenter = Segmenter::new(seg_cfg.clone());
@@ -167,6 +171,8 @@ fn drain(
     // (utterance start, its length at the last partial job).
     let mut partial_at: Option<(u64, usize)> = None;
     let mut silence: Vec<f32> = Vec::new();
+    let mut vad_error: Option<String> = None;
+    let mut silero = silero;
 
     while !stop.load(Ordering::Relaxed) && !capture.failed() {
         let n = capture.consumer.slots();
@@ -194,57 +200,13 @@ fn drain(
             vad_ms += t.elapsed().as_secs_f64() * 1000.0;
             vad_windows += ((segmenter.position() - pos_before) / vad::WINDOW as u64) as u32;
             if let Err(e) = res {
-                error!("VAD failed for {}, disabling: {e}", speaker.as_str());
-                silero = None;
+                // The capture restarts with a fresh model; the utterance so far still goes out.
+                error!("VAD failed for {}: {e:#}", speaker.as_str());
+                vad_error = Some(format!("VAD: {e:#}"));
+                break;
             }
             let pos = segmenter.position();
-            // Utterance key shared by the vad, partial and final events: epoch ms of its start.
-            let t_of = |start_sample: u64| epoch_ms + start_sample / 16;
-            for ev in events.drain(..) {
-                match ev {
-                    VadEvent::SpeechStart { start_sample } => {
-                        set_speaking(shared, speaker, true);
-                        let _ = shared.events.send(Event::Vad { speaker, active: true, t: t_of(start_sample) });
-                    }
-                    VadEvent::Resume { .. } => {
-                        if speaker == Speaker::Them
-                            && let Some(a) = shared.answerer.get()
-                        {
-                            a.on_them_resumed();
-                        }
-                    }
-                    VadEvent::Discarded { start_sample } => {
-                        set_speaking(shared, speaker, false);
-                        let t = t_of(start_sample);
-                        let _ = shared.events.send(Event::Vad { speaker, active: false, t });
-                        // The UI shows a row from speech start on; an empty final removes it.
-                        let _ = shared.events.send(Event::Final { speaker, t, text: String::new(), question: false });
-                    }
-                    VadEvent::SpeechEnd(_) | VadEvent::Pause(_) => {
-                        let (utt, speculative) = match ev {
-                            VadEvent::SpeechEnd(u) => {
-                                // A forced split (max utterance length) happens mid-speech.
-                                set_speaking(shared, speaker, u.forced);
-                                let _ = shared.events.send(Event::Vad { speaker, active: false, t: t_of(u.start_sample) });
-                                (u, false)
-                            }
-                            VadEvent::Pause(u) => (u, true),
-                            _ => unreachable!(),
-                        };
-                        let behind_ms = (pos.saturating_sub(utt.speech_end_sample)) / 16;
-                        let now = Instant::now();
-                        queue.push(Job {
-                            speaker,
-                            t_ms: t_of(utt.start_sample),
-                            speech_end: now.checked_sub(Duration::from_millis(behind_ms)).unwrap_or(now),
-                            queued: now,
-                            utt,
-                            speculative,
-                            partial: false,
-                        });
-                    }
-                }
-            }
+            emit(speaker, shared, queue, epoch_ms, pos, &mut events);
             // Live text: re-decode the utterance in progress every `partial_ms` of new audio.
             if partial_ms > 0
                 && let Some((start, cur)) = segmenter.current()
@@ -258,7 +220,7 @@ fn drain(
                     let now = Instant::now();
                     queue.push(Job {
                         speaker,
-                        t_ms: t_of(start),
+                        t_ms: epoch_ms + start / 16,
                         speech_end: now,
                         queued: now,
                         utt: Utterance { start_sample: start, samples: cur.to_vec(), speech_end_sample: pos, forced: false },
@@ -293,6 +255,64 @@ fn drain(
                 let _ = w.flush(); // keeps the WAV header valid if we get killed
             }
             last_flush = Instant::now();
+        }
+    }
+    // Stop, a failed capture or VAD: the phrase in progress still becomes a final.
+    if silero.is_some() {
+        segmenter.flush(&mut events);
+        emit(speaker, shared, queue, epoch_ms, segmenter.position(), &mut events);
+    }
+    set_speaking(shared, speaker, false);
+    vad_error.or_else(|| capture.error())
+}
+
+/// Sends the segmenter's events to the UI, the STT queue and auto-detect.
+fn emit(speaker: Speaker, shared: &Shared, queue: &SttQueue, epoch_ms: u64, pos: u64, events: &mut Vec<VadEvent>) {
+    // Utterance key shared by the vad, partial and final events: epoch ms of its start.
+    let t_of = |start_sample: u64| epoch_ms + start_sample / 16;
+    for ev in events.drain(..) {
+        match ev {
+            VadEvent::SpeechStart { start_sample } => {
+                set_speaking(shared, speaker, true);
+                let _ = shared.events.send(Event::Vad { speaker, active: true, t: t_of(start_sample) });
+            }
+            VadEvent::Resume { .. } => {
+                if speaker == Speaker::Them
+                    && let Some(a) = shared.answerer.get()
+                {
+                    a.on_them_resumed();
+                }
+            }
+            VadEvent::Discarded { start_sample } => {
+                set_speaking(shared, speaker, false);
+                let t = t_of(start_sample);
+                let _ = shared.events.send(Event::Vad { speaker, active: false, t });
+                // The UI shows a row from speech start on; an empty final removes it.
+                let _ = shared.events.send(Event::Final { speaker, t, text: String::new(), question: false });
+            }
+            VadEvent::SpeechEnd(_) | VadEvent::Pause(_) => {
+                let (utt, speculative) = match ev {
+                    VadEvent::SpeechEnd(u) => {
+                        // A forced split (max utterance length) happens mid-speech.
+                        set_speaking(shared, speaker, u.forced);
+                        let _ = shared.events.send(Event::Vad { speaker, active: false, t: t_of(u.start_sample) });
+                        (u, false)
+                    }
+                    VadEvent::Pause(u) => (u, true),
+                    _ => unreachable!(),
+                };
+                let behind_ms = (pos.saturating_sub(utt.speech_end_sample)) / 16;
+                let now = Instant::now();
+                queue.push(Job {
+                    speaker,
+                    t_ms: t_of(utt.start_sample),
+                    speech_end: now.checked_sub(Duration::from_millis(behind_ms)).unwrap_or(now),
+                    queued: now,
+                    utt,
+                    speculative,
+                    partial: false,
+                });
+            }
         }
     }
 }

@@ -20,6 +20,9 @@ pub const SAMPLE_RATE: u32 = 16_000;
 const RING_CAPACITY: usize = SAMPLE_RATE as usize * 10;
 /// Loopback delivers no packets while nothing plays; pad silence once the gap exceeds this.
 const GAP_FILL_THRESHOLD: usize = SAMPLE_RATE as usize / 10;
+/// A longer gap is not silence but a stalled thread (sleep, hibernation): the capture restarts
+/// on a fresh timeline instead of padding hours of zeros.
+const MAX_GAP: usize = SAMPLE_RATE as usize * 2;
 
 #[derive(Debug, Clone)]
 pub enum Source {
@@ -47,13 +50,20 @@ pub struct Capture {
     pub description: String,
     stop: Arc<AtomicBool>,
     failed: Arc<AtomicBool>,
+    /// Why the capture thread stopped, once it has.
+    error: Arc<std::sync::Mutex<Option<String>>>,
     thread: Option<JoinHandle<()>>,
 }
 
 impl Capture {
-    /// True once the capture thread has died (device removed, etc.).
+    /// True once the capture thread has died (device removed, default device changed, etc.).
     pub fn failed(&self) -> bool {
         self.failed.load(Ordering::Relaxed)
+    }
+
+    /// The reason the capture thread stopped, if it failed.
+    pub fn error(&self) -> Option<String> {
+        self.error.lock().unwrap().clone()
     }
 }
 
@@ -72,15 +82,18 @@ pub fn start(source: Source, name: &str) -> Result<Capture> {
     let (producer, consumer) = rtrb::RingBuffer::new(RING_CAPACITY);
     let stop = Arc::new(AtomicBool::new(false));
     let failed = Arc::new(AtomicBool::new(false));
+    let error = Arc::new(std::sync::Mutex::new(None));
     let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Result<String>>(1);
 
     let thread = {
         let stop = stop.clone();
         let failed = failed.clone();
+        let error = error.clone();
         let name = name.to_string();
         std::thread::Builder::new().name(format!("capture-{name}")).spawn(move || {
             if let Err(e) = capture_thread(source, producer, &stop, &ready_tx) {
                 error!("capture {name} stopped: {e:#}");
+                *error.lock().unwrap() = Some(format!("{e:#}"));
                 failed.store(true, Ordering::Relaxed);
                 // If we failed before signalling readiness, report the error to start().
                 let _ = ready_tx.try_send(Err(e));
@@ -90,7 +103,7 @@ pub fn start(source: Source, name: &str) -> Result<Capture> {
 
     let description = ready_rx.recv_timeout(Duration::from_secs(10)).map_err(|_| anyhow!("capture {name}: timed out starting"))??;
     info!("capture {name}: {description}");
-    Ok(Capture { consumer, description, stop, failed, thread: Some(thread) })
+    Ok(Capture { consumer, description, stop, failed, error, thread: Some(thread) })
 }
 
 fn capture_thread(source: Source, mut producer: rtrb::Producer<f32>, stop: &AtomicBool, ready: &std::sync::mpsc::SyncSender<Result<String>>) -> Result<()> {
@@ -98,6 +111,7 @@ fn capture_thread(source: Source, mut producer: rtrb::Producer<f32>, stop: &Atom
     set_pro_audio_priority();
 
     let (mut client, description, fill_gaps) = open_client(&source)?;
+    let watch = Watch::start(&source)?;
     // Capture at the engine's native rate/channel count. WASAPI autoconvert is only
     // used for the sample type: its resampler produces garbage for large ratios
     // (e.g. a 192 kHz Focusrite loopback down to 16 kHz). Downmix + resample here.
@@ -125,16 +139,21 @@ fn capture_thread(source: Source, mut producer: rtrb::Producer<f32>, stop: &Atom
     let started = Instant::now();
     let mut emitted: usize = 0;
     let mut dropped: usize = 0;
+    let mut last_packet = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
         // Wake at least every 20 ms so gap filling and stop checks stay timely.
         let _ = event.wait_for_event(20);
+        if let Some(why) = watch.changed() {
+            bail!("{why}");
+        }
 
         loop {
             let frames = match capture.get_next_packet_size()? {
                 Some(n) if n > 0 => n as usize,
                 _ => break,
             };
+            last_packet = Instant::now();
             let before = bytes.len();
             let info = capture.read_from_device_to_deque(&mut bytes)?;
             if info.flags.silent {
@@ -174,9 +193,14 @@ fn capture_thread(source: Source, mut producer: rtrb::Producer<f32>, stop: &Atom
         }
         emitted += out.len();
 
-        if fill_gaps {
-            // Keep the loopback timeline aligned with wall clock while nothing is playing.
+        // Keep the loopback timeline aligned with wall clock while nothing is playing. Only while no
+        // packets come: a device clock a little slower than the wall clock would otherwise get
+        // silence inserted into continuous speech.
+        if fill_gaps && last_packet.elapsed().as_millis() > 100 {
             let expected = (started.elapsed().as_secs_f64() * SAMPLE_RATE as f64) as usize;
+            if expected > emitted + MAX_GAP {
+                bail!("capture stalled for {} s (sleep?), restarting", (expected - emitted) / SAMPLE_RATE as usize);
+            }
             if expected > emitted + GAP_FILL_THRESHOLD {
                 let pad = expected - emitted - GAP_FILL_THRESHOLD / 2;
                 for _ in 0..pad {
@@ -242,6 +266,71 @@ impl Downsampler {
             }
         }
         Ok(())
+    }
+}
+
+/// What makes a running capture stale: a new default device, or the captured process exiting.
+enum Watch {
+    None,
+    /// Set by the device notification callback when the default device of the watched direction changes.
+    Default {
+        changed: Arc<AtomicBool>,
+        _reg: wasapi::DeviceEventRegistration,
+    },
+    Process {
+        handle: windows::Win32::Foundation::HANDLE,
+        name: String,
+    },
+}
+
+impl Watch {
+    fn start(source: &Source) -> Result<Watch> {
+        let direction = match source {
+            Source::Mic { device } if device.as_deref().is_none_or(str::is_empty) => Direction::Capture,
+            Source::SystemLoopback => Direction::Render,
+            Source::Process { name } => {
+                use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+                let pid = find_root_process(name)?;
+                // SAFETY: plain Win32 call; the handle is closed in Drop.
+                let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) }.context("OpenProcess")?;
+                return Ok(Watch::Process { handle, name: name.clone() });
+            }
+            Source::Mic { .. } => return Ok(Watch::None),
+        };
+        let changed = Arc::new(AtomicBool::new(false));
+        let mut callbacks = wasapi::DeviceEventCallbacks::new();
+        let flag = changed.clone();
+        // get_default_device uses the Console role: only its changes matter.
+        callbacks.set_default_device_callback(move |dir, role, _| {
+            if dir == direction && role == wasapi::Role::Console {
+                flag.store(true, Ordering::Relaxed);
+            }
+        });
+        let reg = wasapi::DeviceEnumerator::new()?.register_notification_callback(callbacks)?;
+        Ok(Watch::Default { changed, _reg: reg })
+    }
+
+    /// Why the capture must restart, once it must.
+    fn changed(&self) -> Option<String> {
+        match self {
+            Watch::None => None,
+            Watch::Default { changed, .. } => changed.load(Ordering::Relaxed).then(|| "default audio device changed".to_string()),
+            Watch::Process { handle, name } => {
+                use windows::Win32::Foundation::WAIT_OBJECT_0;
+                use windows::Win32::System::Threading::WaitForSingleObject;
+                // SAFETY: the handle is valid until Drop.
+                (unsafe { WaitForSingleObject(*handle, 0) } == WAIT_OBJECT_0).then(|| format!("process {name} exited"))
+            }
+        }
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        if let Watch::Process { handle, .. } = self {
+            // SAFETY: opened by OpenProcess in `start`, closed once.
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(*handle) };
+        }
     }
 }
 
@@ -313,4 +402,35 @@ pub fn list_mics() -> Result<Vec<String>> {
     let enumerator = wasapi::DeviceEnumerator::new()?;
     let coll = enumerator.get_device_collection(&Direction::Capture)?;
     (0..coll.get_nbr_devices()?).map(|i| Ok(coll.get_device_at_index(i)?.get_friendlyname()?)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Feeds `secs` of a 440 Hz tone at `rate` in uneven chunks; returns the 16 kHz output.
+    fn run(rate: usize, secs: usize) -> Vec<f32> {
+        let mut d = Downsampler::new(rate).unwrap();
+        let tone: Vec<f32> = (0..rate * secs).map(|i| (i as f32 * 440.0 * std::f32::consts::TAU / rate as f32).sin() * 0.5).collect();
+        let (mut input, mut out) = (Vec::new(), Vec::new());
+        for chunk in tone.chunks(rate / 97 + 1) {
+            input.extend_from_slice(chunk);
+            d.process(&mut input, &mut out).unwrap();
+            assert!(input.len() < rate / 50 + 1, "only a partial chunk is left over");
+        }
+        out
+    }
+
+    #[test]
+    fn downsampler_keeps_time_and_level() {
+        for rate in [16_000, 44_100, 48_000, 192_000] {
+            let out = run(rate, 2);
+            let want = 2 * SAMPLE_RATE as usize;
+            // The FFT resampler holds back up to a chunk (20 ms = 320 samples) of delay.
+            assert!(out.len() <= want && out.len() + 640 >= want, "{rate} Hz: {} samples", out.len());
+            let tail = &out[out.len() / 2..];
+            let rms = (tail.iter().map(|s| s * s).sum::<f32>() / tail.len() as f32).sqrt();
+            assert!((rms - 0.5 / 2f32.sqrt()).abs() < 0.02, "{rate} Hz: rms {rms}");
+        }
+    }
 }

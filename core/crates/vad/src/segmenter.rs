@@ -201,6 +201,13 @@ impl Segmenter {
         }
     }
 
+    /// Ends the utterance in progress (capture stopped or failed): it is emitted as if silence followed.
+    pub fn flush(&mut self, out: &mut Vec<VadEvent>) {
+        if self.in_speech {
+            self.finish(false, out);
+        }
+    }
+
     fn keep_len(&self) -> usize {
         (self.last_speech_len + self.cfg.post_pad_ms as usize * 16).min(self.cur.len())
     }
@@ -276,6 +283,22 @@ mod tests {
 
     fn ends(ev: &[VadEvent]) -> Vec<&Utterance> {
         ev.iter().filter_map(|e| if let VadEvent::SpeechEnd(u) = e { Some(u) } else { None }).collect()
+    }
+
+    #[test]
+    fn flush_ends_utterance_in_progress() {
+        let mut seg = Segmenter::new(SegmenterConfig::default());
+        let mut out = Vec::new();
+        let mut prob = |_: &[f32]| -> Result<f32, ()> { Ok(0.9) };
+        seg.push(&vec![0.0f32; 40 * WINDOW], &mut prob, &mut out).unwrap();
+        assert!(seg.in_speech());
+        out.clear();
+        seg.flush(&mut out);
+        assert_eq!(ends(&out).len(), 1, "speech in progress comes out as a final: {out:?}");
+        assert!(!seg.in_speech());
+        out.clear();
+        seg.flush(&mut out);
+        assert!(out.is_empty(), "nothing to flush outside speech");
     }
 
     #[test]

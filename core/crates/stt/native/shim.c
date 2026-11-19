@@ -240,5 +240,7 @@ float ws_segment_avg_logprob(void *ctx, void *state, int i) {
 
 const char *ws_lang(void *state) {
     int id = W.lang_id((struct whisper_state *)state);
-    return id >= 0 ? W.lang_str(id) : "";
+    // whisper_lang_str returns NULL for an id it does not know; Rust reads this with CStr::from_ptr.
+    const char *s = id >= 0 ? W.lang_str(id) : NULL;
+    return s ? s : "";
 }

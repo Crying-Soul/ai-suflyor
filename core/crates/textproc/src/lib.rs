@@ -124,21 +124,32 @@ pub fn clean(text: &str, glossary: &[String]) -> Option<String> {
     if normalize(&t).is_empty() { None } else { Some(t) }
 }
 
-/// Share of `me`'s words found in `them` (0..1). Mic echo of the speakers reproduces
-/// the other side's words, so a high value means `me` is an echo, not our own speech.
+/// Short function words that match by chance; they do not count towards the length of an echo.
+const ECHO_STOP_WORDS: &[&str] = &["что", "как", "это", "так", "вот", "или", "для", "при", "the", "and", "you", "are", "for", "was"];
+
+/// Share of `me`'s word pairs (bigrams) found in `them` (0..1). Mic echo of the speakers reproduces
+/// the other side's words in order; an answer that reuses words of the question ("с Kafka работал"
+/// to "Вы работали с Kafka?") reorders them, so pairs tell the two apart where single words cannot.
 pub fn echo_overlap(me: &str, them: &str) -> f32 {
-    let me_words: Vec<String> = normalize(me).split_whitespace().map(String::from).collect();
-    if me_words.is_empty() {
+    let me_n = normalize(me);
+    let me_words: Vec<&str> = me_n.split_whitespace().collect();
+    if me_words.len() < 2 {
         return 0.0;
     }
     let them_n = normalize(them);
-    let them_words: std::collections::HashSet<&str> = them_n.split_whitespace().collect();
-    me_words.iter().filter(|w| them_words.contains(w.as_str())).count() as f32 / me_words.len() as f32
+    let them_words: Vec<&str> = them_n.split_whitespace().collect();
+    let them_pairs: std::collections::HashSet<(&str, &str)> = them_words.windows(2).map(|w| (w[0], w[1])).collect();
+    let pairs = me_words.windows(2);
+    let n = pairs.len();
+    pairs.filter(|w| them_pairs.contains(&(w[0], w[1]))).count() as f32 / n as f32
 }
 
-/// True when `me` looks like an echo of `them`. Needs 3+ words: "да" or "хорошо" overlap by chance.
+/// True when `me` looks like an echo of `them`. Needs 4+ words of 3+ letters outside the stop list:
+/// short replies ("да", "с Kafka работал") overlap with the question by chance.
 pub fn is_echo(me: &str, them: &str) -> bool {
-    normalize(me).split_whitespace().count() >= 3 && echo_overlap(me, them) > 0.6
+    let n = normalize(me);
+    let significant = n.split_whitespace().filter(|w| w.chars().count() >= 3 && !ECHO_STOP_WORDS.contains(w)).count();
+    significant >= 4 && echo_overlap(me, them) >= 0.8
 }
 
 /// LocalAgreement-2 for live text: splits the current hypothesis `cur` into the word prefix the
@@ -187,7 +198,6 @@ const QUESTION_STARTS: &[&str] = &[
     "можете",
     "можешь",
     "могли",
-    "правда",
     "а как",
     "а что",
     "а почему",
@@ -216,6 +226,23 @@ const QUESTION_STARTS: &[&str] = &[
     "give me",
 ];
 
+/// Openers that start like a question but are not one ("Как я уже говорил, …", "Что ж, хорошо.").
+const NOT_QUESTION_STARTS: &[&str] = &[
+    "как я уже",
+    "как я говорил",
+    "как я сказал",
+    "как вы знаете",
+    "как видите",
+    "как известно",
+    "как правило",
+    "как обычно",
+    "как и",
+    "что ж",
+    "что же",
+    "когда я",
+    "how about we",
+];
+
 /// Heuristic: does this "them" speech ask the user something? Whisper writes "?" for most
 /// questions; requests ("Расскажите о себе.") are caught by their first words.
 pub fn is_question(text: &str) -> bool {
@@ -225,6 +252,7 @@ pub fn is_question(text: &str) -> bool {
     text.split(['.', '!', '?', ';'])
         .map(normalize)
         .filter(|s| !s.is_empty())
+        .filter(|s| !NOT_QUESTION_STARTS.iter().any(|q| s == *q || s.starts_with(&format!("{q} "))))
         .any(|s| QUESTION_STARTS.iter().any(|q| s == *q || s.starts_with(&format!("{q} "))) || s.contains(" ли "))
 }
 
@@ -285,6 +313,10 @@ mod tests {
         assert!(!is_question("Хорошо, спасибо."));
         assert!(!is_question("Мы используем Kubernetes в продакшене."));
         assert!(!is_question("Somewhat interesting."));
+        assert!(!is_question("Как я уже говорил, мы пишем на Go."));
+        assert!(!is_question("Что ж, хорошо."));
+        assert!(!is_question("Правда, мы не успели."));
+        assert!(is_question("Что ж, хорошо. А как вы тестировали сервис"));
     }
 
     #[test]
@@ -300,5 +332,9 @@ mod tests {
         assert!(is_echo("расскажите про сборщик мусора", "Расскажите про сборщик мусора в Java?"));
         assert!(!is_echo("да", "да, конечно"));
         assert!(!is_echo("я работал с кафкой три года", "Расскажите про сборщик мусора в Java?"));
+        // An answer that reuses the question's words is the user's own speech.
+        assert!(!is_echo("с Kafka работал", "Вы работали с Kafka?"));
+        assert!(!is_echo("да, с Kafka я работал три года", "Вы работали с Kafka три года?"));
+        assert!(is_echo("вы работали с kafka три года", "Вы работали с Kafka три года?"));
     }
 }
