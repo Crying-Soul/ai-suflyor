@@ -1,5 +1,5 @@
 // Dev-only: README media from mock events (no core needed). Each scene opens fresh windows, streams
-// core events into them, captures frames and writes .github/media/<scene>.gif with a caption strip.
+// core events into them, captures frames and writes .github/media/<scene>.gif, most with a caption strip.
 // Run after `npm run build` in ui/: ui\node_modules\.bin\electron scripts\media.js
 const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
@@ -50,8 +50,9 @@ async function html(body, w, h) {
  * A scene: windows laid out left to right, a caption under them, frames into one GIF.
  * `panes`: [{win, w, h}]. Returns helpers to send events, set the caption and add frames.
  */
-async function scene(name, panes) {
-  const H = PAD * 2 + Math.max(...panes.map((p) => p.h)) + CAP;
+/** `captions: false`: no caption strip (the demo at the top of the README). */
+async function scene(name, panes, { captions = true } = {}) {
+  const H = PAD * 2 + Math.max(...panes.map((p) => p.h)) + (captions ? CAP : 0);
   const W = PAD * 2 + panes.reduce((s, p) => s + p.w, 0) + GAP * (panes.length - 1);
   const cap = await html(`<div id="c" style="height:${CAP}px;display:flex;align-items:center;gap:12px;padding:0 ${PAD}px;background:#111113;color:#ecebe8;font:500 15px/1.3 'Segoe UI',sans-serif"></div>`, W, CAP);
   const gif = GIFEncoder();
@@ -75,7 +76,7 @@ async function scene(name, panes) {
         blit(c, W, await p.win.webContents.capturePage(), x, PAD);
         x += p.w + GAP;
       }
-      blit(c, W, await cap.webContents.capturePage(), 0, H - CAP - PAD / 2);
+      if (captions) blit(c, W, await cap.webContents.capturePage(), 0, H - CAP - PAD / 2);
       if (last && Buffer.compare(Buffer.from(last.c), Buffer.from(c)) === 0) return void (last.ms += ms);
       if (last) flush();
       last = { c, ms };
@@ -121,6 +122,29 @@ async function answer(s, ws, { turn, trigger, question, q_t, quick, full }) {
 }
 
 const TR = { w: 420, h: 600 }, HI = { w: 460, h: 600 };
+
+/** The README's top GIF: a question and its answer, then the same moment in every theme. */
+async function demo() {
+  const tr = await page("transcript.html", TR.w, TR.h), hi = await page("hints.html", HI.w, HI.h);
+  const ws = [tr, hi];
+  send(ws, status(), call);
+  const s = await scene("demo", [{ win: tr, ...TR }, { win: hi, ...HI }], { captions: false });
+  await s.frame(1200);
+  const Q = "Расскажите, как работает сборщик мусора в Go и чем он отличается от Java?";
+  await speak(s, ws, "them", T, Q, true);
+  await s.frame(700);
+  await answer(s, ws, {
+    turn: 1, trigger: "auto", question: Q, q_t: T,
+    quick: "Конкурентный tri-color mark-and-sweep без поколений, паузы обычно до миллисекунды.",
+    full: ["- Go: не перемещает объекты, нет поколений, работает параллельно с программой.\n", "- Java: G1/ZGC с поколениями и уплотнением, больше настроек.\n", "- В Go главный рычаг: `GOGC` и `GOMEMLIMIT`."],
+  });
+  await s.frame(2400);
+  for (const id of ["panel", "paper", "dusk", "prompter"]) {
+    for (const w of ws) w.webContents.send("ui", { kind: "theme", id });
+    await s.frame(id === "prompter" ? 2000 : 1500);
+  }
+  s.finish();
+}
 
 async function workflow() {
   const tr = await page("transcript.html", TR.w, TR.h), hi = await page("hints.html", HI.w, HI.h);
@@ -212,6 +236,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("calls:current", () => null);
   // SCENES=screen,english renders only those.
   const only = process.env.SCENES?.split(",");
-  for (const [name, run] of Object.entries({ workflow, screen, english })) if (!only || only.includes(name)) await run();
+  for (const [name, run] of Object.entries({ demo, workflow, screen, english })) if (!only || only.includes(name)) await run();
   app.quit();
 });
