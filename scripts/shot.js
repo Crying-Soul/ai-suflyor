@@ -3,7 +3,13 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const dist = path.resolve(__dirname, "../ui/dist");
-const out = path.resolve(__dirname, "../recordings/shots");
+// THEME=panel (prompter|panel|paper|dusk) renders that theme into recordings/shots/<theme>.
+const THEME = process.env.THEME;
+const out = path.resolve(__dirname, "../recordings/shots", THEME ?? "");
+if (THEME) {
+  const load = BrowserWindow.prototype.loadFile;
+  BrowserWindow.prototype.loadFile = function (file, opts = {}) { return load.call(this, file, { ...opts, query: { ...opts.query, theme: THEME } }); };
+}
 const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config.json"), "utf8"));
 const wp = { preload: path.join(dist, "preload.js"), contextIsolation: true, sandbox: true, backgroundThrottling: false };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -56,7 +62,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("config:load", () => ({ path: "C:\\dev\\suflyor\\config.json", raw: cfg, effective: cfg }));
   ipcMain.handle("config:mics", () => ["Focusrite USB (2- Focusrite USB Audio)", "Microphone (Realtek High Definition Audio)"]);
   ipcMain.handle("privacy:test", () => ({
-    image: "data:image/png;base64," + fs.readFileSync(path.join(out, "privacy-capture.png")).toString("base64"),
+    image: "data:image/png;base64," + fs.readFileSync(path.resolve(__dirname, "../recordings/shots/privacy-capture.png")).toString("base64"),
     windows: [{ name: "Транскрипт", hidden: true }, { name: "Подсказки", hidden: true }, { name: "Настройки", hidden: true }],
     osOk: true,
   }));
@@ -130,7 +136,7 @@ app.whenReady().then(async () => {
   await shot(s, "settings-context.png");
   await s.webContents.executeJavaScript(`document.querySelector('[data-section="privacy"]').click(); document.querySelector('.privacy button').click()`);
   await shot(s, "settings-privacy.png");
-  for (const id of ["answers", "speech", "stt"]) {
+  for (const id of ["answers", "speech", "stt", "look"]) {
     await s.webContents.executeJavaScript(`document.querySelector('[data-section="${id}"]').click()`);
     await shot(s, `settings-${id}.png`);
   }

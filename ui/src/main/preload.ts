@@ -19,6 +19,7 @@ const api: RendererApi = {
   copy: (text) => ipcRenderer.send("ui:copy", text),
   action: (a) => ipcRenderer.send("ui:action", a),
   hotkeys: () => ipcRenderer.invoke("hotkeys:get"),
+  setTheme: (id) => ipcRenderer.send("theme:set", id),
   calls: {
     tree: () => ipcRenderer.invoke("calls:tree"),
     node: (dir) => ipcRenderer.invoke("calls:node", dir),

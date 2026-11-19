@@ -1,4 +1,5 @@
 import type { HotkeyAction, Hotkeys, RendererApi, Status, UiMessage } from "../shared/protocol";
+import { DEFAULT_THEME, isTheme } from "../shared/protocol";
 
 declare global {
   interface Window {
@@ -7,6 +8,13 @@ declare global {
 }
 
 export const api = window.api;
+
+// Every page imports this module: the theme comes in the page URL (main's `load`), then live by `{kind: "theme"}`.
+const theme = new URLSearchParams(location.search).get("theme");
+document.documentElement.dataset.theme = isTheme(theme) ? theme : DEFAULT_THEME;
+api.onUi((m) => {
+  if (m.kind === "theme") document.documentElement.dataset.theme = m.id;
+});
 export const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {

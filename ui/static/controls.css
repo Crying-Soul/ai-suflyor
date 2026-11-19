@@ -12,10 +12,10 @@
   transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out);
 }
 .btn {
-  background: var(--color-accent); color: var(--color-accent-ink); font-weight: 600;
+  background: var(--color-primary); color: var(--color-primary-ink); font-weight: 600;
   box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-light) 35%, transparent);
 }
-.btn:hover { background: var(--color-accent-hi); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-light) 35%, transparent), 0 0 0 4px color-mix(in oklab, var(--color-accent) 18%, transparent); }
+.btn:hover { background: var(--color-primary-hi); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-light) 35%, transparent), 0 0 0 4px color-mix(in oklab, var(--color-primary) 18%, transparent); }
 .btn-ghost, .switch { background: color-mix(in oklab, var(--color-light) 4%, transparent); color: var(--color-ink-2); box-shadow: inset 0 0 0 1px var(--color-rule); }
 .btn-ghost:hover, .switch:hover { background: color-mix(in oklab, var(--color-light) 8%, transparent); color: var(--color-ink); }
 .icon-btn { min-height: 32px; width: 32px; padding: 0; background: transparent; color: var(--color-muted); }

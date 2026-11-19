@@ -1,4 +1,5 @@
-import type { ConfigSnapshot, ModelInfo, PackId, RendererApi, SaveResult, UpdateState } from "../shared/protocol";
+import type { ConfigSnapshot, ModelInfo, PackId, RendererApi, SaveResult, ThemeId, UpdateState } from "../shared/protocol";
+import { THEMES } from "../shared/protocol";
 import { askConfirm, guardPopups, keyLabel } from "./common";
 import { el, packOps, renderModels, small, WHISPER } from "./model-row";
 
@@ -10,7 +11,7 @@ declare global {
 
 const api = window.api;
 
-type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs";
+type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs" | "theme";
 
 interface Field {
   /** Dotted config.json key. */
@@ -39,6 +40,13 @@ const MODELS: [string, string][] = [
   ["claude-opus-5-5", "Opus 5.5"],
   ["claude-haiku-5-5", "Haiku 5.5"],
 ];
+
+const THEME_TEXT: Record<ThemeId, [name: string, note: string]> = {
+  prompter: ["Телесуфлёр", "Крупный ответ на почти чёрном, янтарь для собеседника."],
+  panel: ["Приборная панель", "Графит, моноширинные метки, сигнальный оранжевый."],
+  paper: ["Тихая бумага", "Светлая бумага, ответ набран с засечками."],
+  dusk: ["Сумерки", "Прежняя тема: сине-фиолетовая, стекло."],
+};
 
 // Adding a setting is one line here; main.ts writes any dotted key into config.json.
 const SECTIONS: Section[] = [
@@ -145,6 +153,11 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    id: "look",
+    title: "Оформление",
+    fields: [{ key: "theme", label: "Тема", kind: "theme", hint: "Меняется сразу во всех окнах, сохранять не нужно." }],
+  },
+  {
     id: "privacy",
     title: "Приватность",
     note: "Все окна ассистента скрыты от демонстрации экрана, записи и скриншотов (Windows 10 2004 и новее). Не скрывает: камеру телефона, направленную на экран, карты видеозахвата и системное окно выбора файлов.",
@@ -246,6 +259,28 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       open.onclick = () => api.openLogs();
       // The file this window edits: for support, not in the title bar.
       return [el("div", { className: "control" }, open, el("p", { className: "hint", textContent: `Файл настроек: ${snapshot.path}` })), () => undefined];
+    }
+    case "theme": {
+      // Not a config.json key: main keeps the theme with the window positions and applies it at once.
+      const group = el("div", { className: "themes", id });
+      group.setAttribute("role", "radiogroup");
+      const mark = (id: string) => {
+        for (const b of group.children) b.setAttribute("aria-checked", String((b as HTMLElement).dataset.theme === id));
+      };
+      for (const t of THEMES) {
+        const [name, note] = THEME_TEXT[t];
+        // data-theme scopes that theme's tokens to the card: it previews itself.
+        const b = el("button", { type: "button", className: "theme" }, el("span", { className: "sw", ariaHidden: "true" }, el("span", { className: "sw-q" }), el("span", { className: "sw-a", textContent: "Аа" })), el("span", { className: "sw-name", textContent: name }), el("span", { className: "sw-note", textContent: note }));
+        b.dataset.theme = t;
+        b.setAttribute("role", "radio");
+        b.onclick = () => {
+          mark(t);
+          api.setTheme(t);
+        };
+        group.append(b);
+      }
+      mark(document.documentElement.dataset.theme ?? "");
+      return [group, () => undefined];
     }
     case "privacy": {
       const out = el("div", { className: "privacy-out" });

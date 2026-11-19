@@ -4,7 +4,8 @@ import { promisify } from "node:util";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, ReadyItem, SaveResult, Status, UiMessage, Hotkeys, HotkeyAction } from "../shared/protocol";
+import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, NodePatch, ReadyItem, SaveResult, Status, UiMessage, Hotkeys, HotkeyAction, ThemeId } from "../shared/protocol";
+import { DEFAULT_THEME, isTheme } from "../shared/protocol";
 import * as calls from "./calls";
 import * as models from "./models";
 import * as readiness from "./readiness";
@@ -34,8 +35,15 @@ const DEFAULT_HOTKEYS: Hotkeys = {
   moreAnswer: "CommandOrControl+Alt+E",
 };
 
-/** Window background before the page paints (Dusk paper, approximated in sRGB). */
-const PAPER = "#13151b";
+/** Per theme: the window background before the page paints and the native caption buttons (each theme's paper and ink in sRGB). */
+const CHROME: Record<ThemeId, { paper: string; symbol: string }> = {
+  prompter: { paper: "#0c0b0a", symbol: "#f6f3ee" },
+  panel: { paper: "#131416", symbol: "#eceef1" },
+  paper: { paper: "#f8f4ea", symbol: "#2a241f" },
+  dusk: { paper: "#13151b", symbol: "#e8e5df" },
+};
+const paper = () => CHROME[win.theme].paper;
+const titleBar = () => ({ color: paper(), symbolColor: CHROME[win.theme].symbol, height: 40 });
 
 /** Project root in dev (parent of ui/), the exe folder when packaged. */
 function rootDir(): string {
@@ -124,6 +132,7 @@ interface WinState {
   normal: Partial<Record<OverlayName, Rectangle>>;
   camera: Partial<Record<OverlayName, Rectangle>>;
   zoom: number;
+  theme: ThemeId;
 }
 
 function loadState(): WinState {
@@ -133,7 +142,7 @@ function loadState(): WinState {
   } catch {}
   // The first version stored {transcript, hints} only: that is the normal preset.
   const normal = (raw.normal ?? { transcript: raw.transcript, hints: raw.hints }) as WinState["normal"];
-  return { preset: raw.preset === "camera" ? "camera" : "normal", normal, camera: (raw.camera ?? {}) as WinState["camera"], zoom: Number(raw.zoom) || 1 };
+  return { preset: raw.preset === "camera" ? "camera" : "normal", normal, camera: (raw.camera ?? {}) as WinState["camera"], zoom: Number(raw.zoom) || 1, theme: isTheme(raw.theme) ? raw.theme : DEFAULT_THEME };
 }
 
 const win = loadState();
@@ -180,6 +189,22 @@ function defaultBounds(name: OverlayName): Rectangle {
     : { x: a.x + a.width - 500, y: a.y + 40, width: 460, height: Math.min(560, a.height - 80) };
 }
 
+/** Loads a page with the theme in its URL, so it paints in that theme from the first frame. */
+function load(w: BrowserWindow, page: string, hash?: string): void {
+  void w.loadFile(path.join(__dirname, `${page}.html`), { query: { theme: win.theme }, hash });
+}
+
+function setTheme(id: ThemeId): void {
+  win.theme = id;
+  saveState();
+  for (const w of BrowserWindow.getAllWindows()) {
+    w.setBackgroundColor(paper());
+    // Only the normal windows have native caption buttons; overlays are frameless.
+    if (w === settingsWin || w === callsWin || w === readyWin) w.setTitleBarOverlay(titleBar());
+    sendUi(w, { kind: "theme", id });
+  }
+}
+
 function createOverlay(name: OverlayName): void {
   const mini = win.preset === "camera" && name === "hints";
   const w = new BrowserWindow({
@@ -192,7 +217,7 @@ function createOverlay(name: OverlayName): void {
     // Not in the taskbar or Alt+Tab, where a share or a recording could show its preview.
     skipTaskbar: true,
     // Opaque: a transparent frameless window loses edge resizing on Windows.
-    backgroundColor: PAPER,
+    backgroundColor: paper(),
     alwaysOnTop: true,
     show: false,
     title: name === "transcript" ? "Транскрипт" : "Подсказки",
@@ -201,7 +226,7 @@ function createOverlay(name: OverlayName): void {
   w.setAlwaysOnTop(true, "screen-saver");
   // Hides the overlay from screen sharing and screenshots (WDA_EXCLUDEFROMCAPTURE).
   w.setContentProtection(true);
-  w.loadFile(path.join(__dirname, `${name}.html`));
+  load(w, name);
   w.once("ready-to-show", () => w.showInactive());
   // Replay the last status after a renderer (re)load.
   w.webContents.on("did-finish-load", () => {
@@ -265,15 +290,15 @@ function openSettings(section?: string): void {
     minWidth: 640,
     minHeight: 480,
     title: "Настройки",
-    backgroundColor: PAPER,
+    backgroundColor: paper(),
     titleBarStyle: "hidden",
-    titleBarOverlay: { color: PAPER, symbolColor: "#e8e5df", height: 40 },
+    titleBarOverlay: titleBar(),
     alwaysOnTop: true,
     webPreferences: webPreferences(),
   });
   // Settings show the API key and the user context: keep them out of screen sharing too.
   settingsWin.setContentProtection(true);
-  settingsWin.loadFile(path.join(__dirname, "settings.html"), section ? { hash: section } : undefined);
+  load(settingsWin, "settings", section);
   settingsWin.on("closed", () => (settingsWin = null));
 }
 
@@ -288,14 +313,14 @@ function openCalls(): void {
     minWidth: 720,
     minHeight: 480,
     title: "Звонки",
-    backgroundColor: PAPER,
+    backgroundColor: paper(),
     titleBarStyle: "hidden",
-    titleBarOverlay: { color: PAPER, symbolColor: "#e8e5df", height: 40 },
+    titleBarOverlay: titleBar(),
     webPreferences: webPreferences(),
   });
   // CVs, notes and transcripts: never in a screen share.
   callsWin.setContentProtection(true);
-  callsWin.loadFile(path.join(__dirname, "calls.html"));
+  load(callsWin, "calls");
   callsWin.on("closed", () => (callsWin = null));
 }
 
@@ -616,13 +641,13 @@ function openReady(): void {
     minWidth: 480,
     minHeight: 420,
     title: "Подготовка к работе",
-    backgroundColor: PAPER,
+    backgroundColor: paper(),
     titleBarStyle: "hidden",
-    titleBarOverlay: { color: PAPER, symbolColor: "#e8e5df", height: 40 },
+    titleBarOverlay: titleBar(),
     webPreferences: webPreferences(),
   });
   readyWin.setContentProtection(true);
-  readyWin.loadFile(path.join(__dirname, "ready.html"));
+  load(readyWin, "ready");
   readyWin.on("closed", () => (readyWin = null));
 }
 
@@ -740,6 +765,7 @@ app.whenReady().then(() => {
   ipcMain.on("ui:copy", (_e, text: string) => clipboard.writeText(text));
   ipcMain.on("ui:action", (_e, a: HotkeyAction) => Object.hasOwn(actions, a) && actions[a]());
   ipcMain.handle("hotkeys:get", loadHotkeys);
+  ipcMain.on("theme:set", (_e, id: unknown) => isTheme(id) && setTheme(id));
   ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
   ipcMain.handle("config:load", loadConfig);
   ipcMain.handle("config:save", (_e, patch: Record<string, unknown>) => saveConfig(patch));

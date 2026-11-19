@@ -248,6 +248,12 @@ export type HotkeyAction =
   | "moreAnswer";
 export type Hotkeys = Record<HotkeyAction, string>;
 
+/** UI themes: `data-theme` on <html> (static/themes.css). Stored by main in windows.json. */
+export const THEMES = ["prompter", "panel", "paper", "dusk"] as const;
+export type ThemeId = (typeof THEMES)[number];
+export const DEFAULT_THEME: ThemeId = "prompter";
+export const isTheme = (v: unknown): v is ThemeId => THEMES.includes(v as ThemeId);
+
 /** Main -> overlay messages that are not core events: window mode and hotkey actions. */
 export type UiMessage =
   | { kind: "mode"; mini: boolean; clickThrough: boolean }
@@ -260,7 +266,9 @@ export type UiMessage =
   /** Settings: show this section (the guide is "guide"). */
   | { kind: "section"; id: string }
   /** The hotkeys changed: re-read them for the button tooltips. */
-  | { kind: "hotkeys" };
+  | { kind: "hotkeys" }
+  /** The theme changed (every window). */
+  | { kind: "theme"; id: ThemeId };
 
 export interface PrivacyReport {
   /** PNG data URL of the display with the overlays, as other apps capture it. */
@@ -288,6 +296,8 @@ export interface RendererApi {
   action(a: HotkeyAction): void;
   /** The hotkeys in effect, for tooltips. */
   hotkeys(): Promise<Hotkeys>;
+  /** Switches every window to this theme at once and remembers it. */
+  setTheme(id: ThemeId): void;
   copy(text: string): void;
   calls: CallsApi;
   models: ModelsApi;
