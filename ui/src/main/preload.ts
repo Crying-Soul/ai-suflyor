@@ -19,6 +19,8 @@ const api: RendererApi = {
   copy: (text) => ipcRenderer.send("ui:copy", text),
   action: (a) => ipcRenderer.send("ui:action", a),
   hotkeys: () => ipcRenderer.invoke("hotkeys:get"),
+  hotkeyFailures: () => ipcRenderer.invoke("hotkeys:failed"),
+  listAudioApps: () => ipcRenderer.invoke("config:audio-apps"),
   setTheme: (id) => ipcRenderer.send("theme:set", id),
   calls: {
     tree: () => ipcRenderer.invoke("calls:tree"),

@@ -147,6 +147,12 @@ fn main() -> Result<()> {
                 println!("{}", context::pdf_text(&pdf)?);
                 return Ok(());
             }
+            "--list-audio-apps" => {
+                for m in audio::list_audio_apps()? {
+                    println!("{m}");
+                }
+                return Ok(());
+            }
             "--list-mics" => {
                 for m in audio::list_mics()? {
                     println!("{m}");

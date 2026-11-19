@@ -315,6 +315,10 @@ export interface RendererApi {
   action(a: HotkeyAction): void;
   /** The hotkeys in effect, for tooltips. */
   hotkeys(): Promise<Hotkeys>;
+  /** Actions whose keys failed to register: taken by another app, or not a valid accelerator. */
+  hotkeyFailures(): Promise<HotkeyAction[]>;
+  /** Programs playing sound now (exe names), for capturing one app. */
+  listAudioApps(): Promise<string[]>;
   /** Switches every window to this theme at once and remembers it. */
   setTheme(id: ThemeId): void;
   copy(text: string): void;

@@ -1,17 +1,11 @@
-import type { ConfigSnapshot, ModelInfo, PackId, RendererApi, SaveResult, ThemeId, UpdateState } from "../shared/protocol";
+import type { ConfigSnapshot, ModelInfo, PackId, SaveResult, ThemeId, UpdateState } from "../shared/protocol";
 import { THEMES } from "../shared/protocol";
-import { askConfirm, guardPopups, keyLabel } from "./common";
+import type { HotkeyAction } from "../shared/protocol";
+import { accelerator, DEFAULT_HOTKEYS, duplicates } from "../shared/hotkeys";
+import { $, api, askConfirm, guardPopups, keyLabel } from "./common";
 import { el, packOps, renderModels, small, WHISPER } from "./model-row";
 
-declare global {
-  interface Window {
-    api: RendererApi;
-  }
-}
-
-const api = window.api;
-
-type Kind = "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs" | "theme";
+type Kind = "hotkey" | "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs" | "theme";
 
 interface Field {
   /** Dotted config.json key. */
@@ -134,22 +128,23 @@ const SECTIONS: Section[] = [
   {
     id: "hotkeys",
     title: "Горячие клавиши",
+    note: "Щёлкните поле и нажмите сочетание. Ctrl+Shift+S и Ctrl+Shift+A заняты в Teams: лучше Ctrl+Alt.",
     fields: [
-      { key: "hotkeys.ask", label: "Спросить", kind: "text" },
-      { key: "hotkeys.screenshotAsk", label: "Снимок экрана и вопрос", kind: "text" },
-      { key: "hotkeys.myQuestions", label: "Мои вопросы собеседнику", kind: "text" },
-      { key: "hotkeys.continueTalk", label: "Что сказать: как продолжить ваш ответ", kind: "text" },
-      { key: "hotkeys.moreAnswer", label: "Продолжить ответ: ещё 2–3 предложения", kind: "text" },
-      { key: "hotkeys.translate", label: "Перевод вкл./выкл.", kind: "text" },
-      { key: "hotkeys.toggleWindow", label: "Показать или скрыть окна", kind: "text" },
-      { key: "hotkeys.toggleAuto", label: "Автоответы вкл./выкл.", kind: "text" },
-      { key: "hotkeys.cameraMode", label: "«У камеры»: полоска подсказок у камеры", kind: "text" },
-      { key: "hotkeys.clickThrough", label: "Клики сквозь окна", kind: "text" },
-      { key: "hotkeys.prevAnswer", label: "Предыдущий ответ", kind: "text" },
-      { key: "hotkeys.nextAnswer", label: "Следующий ответ", kind: "text" },
-      { key: "hotkeys.copyAnswer", label: "Копировать ответ", kind: "text" },
-      { key: "hotkeys.zoomIn", label: "Крупнее текст", kind: "text" },
-      { key: "hotkeys.zoomOut", label: "Мельче текст", kind: "text", hint: "Формат Electron, например CommandOrControl+Alt+M. Ctrl+Shift+S и Ctrl+Shift+A заняты в Teams: лучше заменить их на Ctrl+Alt." },
+      { key: "hotkeys.ask", label: "Спросить", kind: "hotkey" },
+      { key: "hotkeys.screenshotAsk", label: "Снимок экрана и вопрос", kind: "hotkey" },
+      { key: "hotkeys.myQuestions", label: "Мои вопросы собеседнику", kind: "hotkey" },
+      { key: "hotkeys.continueTalk", label: "Что сказать: как продолжить ваш ответ", kind: "hotkey" },
+      { key: "hotkeys.moreAnswer", label: "Продолжить ответ: ещё 2–3 предложения", kind: "hotkey" },
+      { key: "hotkeys.translate", label: "Перевод вкл./выкл.", kind: "hotkey" },
+      { key: "hotkeys.toggleWindow", label: "Показать или скрыть окна", kind: "hotkey" },
+      { key: "hotkeys.toggleAuto", label: "Автоответы вкл./выкл.", kind: "hotkey" },
+      { key: "hotkeys.cameraMode", label: "«У камеры»: полоска подсказок у камеры", kind: "hotkey" },
+      { key: "hotkeys.clickThrough", label: "Клики сквозь окна", kind: "hotkey" },
+      { key: "hotkeys.prevAnswer", label: "Предыдущий ответ", kind: "hotkey" },
+      { key: "hotkeys.nextAnswer", label: "Следующий ответ", kind: "hotkey" },
+      { key: "hotkeys.copyAnswer", label: "Копировать ответ", kind: "hotkey" },
+      { key: "hotkeys.zoomIn", label: "Крупнее текст", kind: "hotkey" },
+      { key: "hotkeys.zoomOut", label: "Мельче текст", kind: "hotkey" },
     ],
   },
   {
@@ -182,7 +177,6 @@ const SECTIONS: Section[] = [
   },
 ];
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const nav = $("sections");
 const form = $<HTMLFormElement>("form");
 const saveState = $("save-state");
@@ -246,13 +240,48 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       const exe = el("input", { type: "text", className: "input", name: `${f.key}.exe`, placeholder: "chrome.exe", value: isProc ? v.slice(8) : "" });
       exe.setAttribute("aria-label", "Исполняемый файл приложения");
       exe.pattern = ".*\\.exe";
+      // The programs playing sound now drop down under the field; any other name can still be typed.
+      const apps = el("datalist", { id: `${id}-apps` });
+      exe.setAttribute("list", apps.id);
+      let listed = false;
+      const listApps = () => {
+        if (listed) return;
+        listed = true;
+        void api.listAudioApps().then((names) => apps.replaceChildren(...names.map((n) => el("option", { value: n })))).catch(() => (listed = false));
+      };
+      exe.addEventListener("focus", listApps);
       const sync = () => {
         exe.hidden = s.value !== "process";
         exe.required = s.value === "process";
+        if (s.value === "process") listApps();
       };
       s.addEventListener("change", sync);
       sync();
-      return [el("div", { className: "pair" }, s, exe), () => (s.value === "process" ? `process:${exe.value.trim()}` : "system")];
+      return [el("div", { className: "pair" }, s, exe, apps), () => (s.value === "process" ? `process:${exe.value.trim()}` : "system")];
+    }
+    case "hotkey": {
+      const action = f.key.slice("hotkeys.".length) as HotkeyAction;
+      let accel = String(value ?? DEFAULT_HOTKEYS[action] ?? "");
+      const i = el("input", { type: "text", className: "input hotkey", id, name: f.key, readOnly: true, value: keyLabel(accel), placeholder: "нажмите сочетание" });
+      i.dataset.action = action;
+      i.addEventListener("keydown", (e) => {
+        if (e.key === "Tab" && !e.ctrlKey && !e.altKey) return;
+        e.preventDefault();
+        if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey) return i.blur();
+        const a = accelerator(e);
+        if (!a) return;
+        accel = a;
+        i.value = keyLabel(a);
+        hotkeysChanged();
+      });
+      const reset = el("button", { type: "button", className: "btn-ghost small", textContent: "По умолчанию" });
+      reset.onclick = () => {
+        accel = DEFAULT_HOTKEYS[action];
+        i.value = keyLabel(accel);
+        hotkeysChanged();
+      };
+      hotkeyReaders.set(action, () => accel);
+      return [el("div", { className: "hotkey-row" }, i, reset, el("p", { className: "hint error", id: `${id}-problem` })), () => accel];
     }
     case "logs": {
       const open = el("button", { type: "button", className: "btn-ghost", textContent: "Открыть папку логов" });
@@ -321,6 +350,34 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
 
 /** The in-app guide: first in the list, a page to read rather than a form section. */
 const GUIDE = "guide";
+
+const hotkeyReaders = new Map<HotkeyAction, () => string>();
+/** Actions whose saved keys failed to register in main. */
+let failedHotkeys: HotkeyAction[] = [];
+
+/** Marks keys used twice in the form and keys another program holds. */
+function hotkeysChanged(): void {
+  const keys = Object.fromEntries([...hotkeyReaders].map(([a, read]) => [a, read()]));
+  const dups = duplicates(keys);
+  const label = (a: string) => SECTIONS.find((s) => s.id === "hotkeys")!.fields.find((f) => f.key === `hotkeys.${a}`)?.label ?? a;
+  for (const [action, read] of hotkeyReaders) {
+    const id = `f-hotkeys-${action}`;
+    const input = document.getElementById(id) as HTMLInputElement | null;
+    const problem = document.getElementById(`${id}-problem`);
+    if (!input || !problem) continue;
+    const same = dups.get(action);
+    const saved = initial.get(`hotkeys.${action}`) === JSON.stringify(read());
+    const text = same
+      ? `То же сочетание у «${label(same[0])}»`
+      : failedHotkeys.includes(action) && saved
+        ? "Не работает: сочетание занято другой программой"
+        : "";
+    input.setCustomValidity(same ? text : "");
+    problem.textContent = text;
+    problem.hidden = !text;
+  }
+  markDirty();
+}
 
 function reportUse(res: SaveResult, m: ModelInfo): void {
   saveState.className = res.ok ? "done" : "error";
@@ -450,6 +507,10 @@ form.addEventListener("submit", async (e) => {
     return;
   }
   for (const [k, v] of Object.entries(patch)) initial.set(k, JSON.stringify(v));
+  if (Object.keys(patch).some((k) => k.startsWith("hotkeys."))) {
+    failedHotkeys = await api.hotkeyFailures();
+    hotkeysChanged();
+  }
   saveState.className = "done";
   saveState.textContent = "Сохранено. Ядро перезапускается.";
 });
@@ -471,5 +532,7 @@ document.addEventListener("keydown", (e) => {
 (async () => {
   snapshot = await api.loadConfig();
   const mics = await api.listMics().catch(() => []);
+  failedHotkeys = await api.hotkeyFailures().catch(() => []);
   render(mics);
+  hotkeysChanged();
 })();

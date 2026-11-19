@@ -396,6 +396,25 @@ fn set_pro_audio_priority() {
     }
 }
 
+/// Executable names of the apps with an audio session on the default render device (for the
+/// «Одно приложение» picker), sorted, without duplicates and without the system sounds session.
+pub fn list_audio_apps() -> Result<Vec<String>> {
+    use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+    wasapi::initialize_mta().ok()?;
+    let dev = wasapi::DeviceEnumerator::new()?.get_default_device(&Direction::Render)?;
+    let sessions = dev.get_iaudiosessionmanager()?.get_audiosessionenumerator()?;
+    let sys = System::new_with_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing())).context("sysinfo")?;
+    let mut names: Vec<String> = (0..sessions.get_count()?)
+        .filter_map(|i| sessions.get_session(i).ok()?.get_process_id().ok())
+        .filter(|&pid| pid != 0 && pid != std::process::id()) // 0 = system sounds
+        .filter_map(|pid| sys.process(Pid::from_u32(pid)).map(|p| p.name().to_string_lossy().into_owned()))
+        .filter(|n| !n.eq_ignore_ascii_case("suflyor-core.exe"))
+        .collect();
+    names.sort_by_key(|n| n.to_lowercase());
+    names.dedup();
+    Ok(names)
+}
+
 /// Lists capture device names (for config help).
 pub fn list_mics() -> Result<Vec<String>> {
     wasapi::initialize_mta().ok()?;
