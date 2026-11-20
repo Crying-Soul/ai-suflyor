@@ -6,6 +6,7 @@ config.json
 recordings/
 data/
 core/target/
+core/testdata/eval/runs/
 ui/node_modules/
 ui/dist/
 ui/release/

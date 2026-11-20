@@ -15,8 +15,29 @@ pub const SYSTEM: &str = "You prepare a brief for an assistant that helps the us
 The materials follow: <about_user> and documents about the user, the company, earlier calls and this call. \
 Condense them into at most 4000 tokens of markdown, in the user's language ({user_language}), technical terms in English. Sections: \
 the user's stack and level; each project as a short STAR story with the real numbers; strengths and weak spots; \
-the role, the company and the people; likely questions with the best answer the materials support. \
+the role, the company and the people; \
+gaps between the vacancy and the user: each requirement the user lacks or is weak in, and how to present it honestly \
+(the closest real experience, or how they would learn it); \
+likely questions with the best answer the materials support, each answer two or three sentences the user can say aloud. \
+Make the likely questions the last section and put the line <!-- prepared --> right before its heading. \
 Keep exact numbers, names and versions. Never add facts that are not in the materials. No preamble.";
+
+/// Marks the likely-questions section, the last one of a brief.
+const PREPARED: &str = "<!-- prepared -->";
+
+/// The likely questions with their answers: the full tier reads them so both tiers say the same.
+pub fn prepared(brief: &str) -> Option<&str> {
+    let (_, rest) = brief.split_once(PREPARED)?;
+    Some(rest.trim()).filter(|r| !r.is_empty())
+}
+
+/// The context with the prepared answers of `brief` after it.
+pub fn with_prepared(context: &str, brief: Option<&str>) -> String {
+    match brief.and_then(prepared) {
+        Some(p) => format!("{context}<prepared_answers>\n{p}\n</prepared_answers>\n\n"),
+        None => context.to_string(),
+    }
+}
 
 /// FNV-1a of the context: stable across builds (std's hasher is not), enough to spot a change.
 pub fn key(context: &str) -> String {
@@ -58,5 +79,16 @@ mod tests {
         // New materials: rebuilt.
         assert!(cached(dir.path(), &key("context v2")).is_none());
         assert_ne!(key("a"), key("b"));
+    }
+
+    #[test]
+    fn prepared_answers_go_after_the_context() {
+        let b = "## Стек\nGo\n\n<!-- prepared -->\n## Вероятные вопросы\n- Почему Go? — Простота.";
+        assert_eq!(prepared(b), Some("## Вероятные вопросы\n- Почему Go? — Простота."));
+        assert_eq!(prepared("## Стек\nGo"), None);
+        assert_eq!(prepared("x <!-- prepared -->  "), None);
+        let c = with_prepared("<about_user>\nGo\n</about_user>\n\n", Some(b));
+        assert!(c.starts_with("<about_user>") && c.ends_with("Простота.\n</prepared_answers>\n\n"), "{c}");
+        assert_eq!(with_prepared("ctx", None), "ctx");
     }
 }

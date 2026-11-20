@@ -6,6 +6,7 @@ mod brief;
 mod call;
 mod config;
 mod context;
+mod eval;
 mod llm;
 mod screen;
 mod streams;
@@ -53,6 +54,8 @@ pub struct Shared {
     pub call: Mutex<Option<PathBuf>>,
     /// Notes standing in for the early transcript of a long call.
     pub notes: Mutex<answer::Notes>,
+    /// Where each answer turn of the open call sits in its `answers.jsonl`, for ratings.
+    pub answer_rows: Mutex<call::AnswerRows>,
 }
 
 impl Shared {
@@ -90,6 +93,7 @@ impl Shared {
             glossary: Default::default(),
             call: Default::default(),
             notes: Default::default(),
+            answer_rows: Default::default(),
         };
         (Arc::new(shared), rx)
     }
@@ -105,6 +109,9 @@ fn main() -> Result<()> {
     let mut config_path: Option<PathBuf> = None;
     let mut print_config = false;
     let mut print_context: Option<PathBuf> = None;
+    let mut make_brief: Option<PathBuf> = None;
+    let mut eval_dir: Option<PathBuf> = None;
+    let (mut eval_out, mut eval_baseline, mut eval_judge) = (None, None, false);
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -113,6 +120,13 @@ fn main() -> Result<()> {
             "--print-config" => print_config = true,
             // The exact system prompt a call would get: `--print-context <call dir>` (or "" for the profile alone).
             "--print-context" => print_context = Some(args.next().map(PathBuf::from).unwrap_or_default()),
+            // «Подготовить»: build the call's brief.md now, whatever the context size, and print it.
+            "--brief" => make_brief = Some(args.next().map(PathBuf::from).ok_or_else(|| anyhow::anyhow!("--brief <call dir>"))?),
+            // Answer quality offline: `--eval <dir> [--out <file>] [--judge] [--baseline <old run>]` (eval.rs).
+            "--eval" => eval_dir = Some(args.next().map(PathBuf::from).ok_or_else(|| anyhow::anyhow!("--eval <dir>"))?),
+            "--out" => eval_out = args.next().map(PathBuf::from),
+            "--baseline" => eval_baseline = args.next().map(PathBuf::from),
+            "--judge" => eval_judge = true,
             // Screenshot as the answer would get it: `--snap <out.png> [--monitor | --rect x,y,w,h]`.
             "--snap" => {
                 let out = args.next().map(PathBuf::from).ok_or_else(|| anyhow::anyhow!("--snap <out.png> [--monitor]"))?;
@@ -174,12 +188,34 @@ fn main() -> Result<()> {
             anyhow::bail!("no call directory {}", d.display());
         }
         let a = context::assemble(&cfg.profile_dir(), dir, &cfg.user_context, &cfg.glossary);
-        println!("{}", llm::system_prompt(false, &a.text, &cfg.user_language));
+        // As the full tier gets it: with the prepared answers of a current brief.
+        let place = dir.map(PathBuf::from).unwrap_or_else(|| cfg.profile_dir());
+        let full = brief::with_prepared(&a.text, brief::cached(&place, &brief::key(&a.text)).as_deref());
+        println!("{}", llm::system_prompt(false, &full, &cfg.user_language));
         // Read by the «Звонки» window: Russian, one line each.
         eprintln!("≈{} токенов. Глоссарий: {}", a.tokens(), if a.glossary.is_empty() { "пусто".into() } else { a.glossary.join(", ") });
         for w in &a.warnings {
             eprintln!("{w}");
         }
+        return Ok(());
+    }
+    if let Some(dir) = make_brief {
+        if !dir.is_dir() {
+            anyhow::bail!("no call directory {}", dir.display());
+        }
+        let a = context::assemble(&cfg.profile_dir(), Some(&dir), &cfg.user_context, &cfg.glossary);
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+        let b = rt.block_on(answer::make_brief(&cfg, &a.text, &mut |_, _| {}))?;
+        if b.is_empty() {
+            anyhow::bail!("пустой ответ модели");
+        }
+        brief::store(&dir, &brief::key(&a.text), &b)?;
+        println!("{b}");
+        return Ok(());
+    }
+    if let Some(dir) = eval_dir {
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+        rt.block_on(eval::run(&cfg, &dir, eval_out, eval_judge, eval_baseline))?;
         return Ok(());
     }
     match &loaded_from {
@@ -239,6 +275,7 @@ async fn run(cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
         glossary: Default::default(),
         call: Default::default(),
         notes: Default::default(),
+        answer_rows: Default::default(),
     });
     // Until a call is opened: the profile alone.
     let profile = context::assemble(&cfg.profile_dir(), None, &cfg.user_context, &cfg.glossary);
@@ -366,6 +403,7 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
         }
         Command::ReloadContext => call::reload(cfg, shared, answerer),
         Command::CloseCall => call::close(cfg, shared, answerer),
+        Command::Feedback { turn, value } => call::set_feedback(shared, turn, value),
         Command::Shutdown => unreachable!(),
     }
 }

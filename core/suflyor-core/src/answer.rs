@@ -90,6 +90,8 @@ const NOTES_SYSTEM: &str = "You compress the earlier part of a live call (often 
 that keeps helping the user in the same call. Lines starting with \"Q:\" are the other side, \"A:\" the user; \
 the transcript comes from speech recognition. Keep: topics covered, each question asked and the gist of the user's answer, \
 facts about the user, the company and the role, numbers and names, promises and open threads. \
+Keep a separate list of the user's own claims: stories and projects told, numbers, salary or conditions named, \
+so later answers do not contradict them. \
 Merge the previous notes in. Terse bullet points in the language of the call, at most 500 words, no preamble.";
 
 /// Where to cut `segs` (the verbatim part) for a summary: None while it is short enough.
@@ -246,12 +248,13 @@ impl Answerer {
         }
     }
 
-    /// Both tiers restart on a system prompt with this context; the next ask resends the transcript.
-    /// `quick_context`: what the quick tier gets instead (the brief of a large context, or the same).
-    pub fn reconfigure(&self, context: &str, quick_context: &str) {
+    /// Both tiers restart on a system prompt with their context; the next ask resends the transcript.
+    /// `context`: the assembled context, the key a later brief must match. `full_context`: it, maybe with
+    /// prepared answers. `quick_context`: what the quick tier gets (the brief of a large context, or the full one).
+    pub fn reconfigure(&self, context: &str, full_context: &str, quick_context: &str) {
         *self.context_key.lock().unwrap() = crate::brief::key(context);
         let lang = &self.cfg.user_language;
-        let _ = self.full.send(Msg::Reconfigure(llm::system_prompt(false, context, lang)));
+        let _ = self.full.send(Msg::Reconfigure(llm::system_prompt(false, full_context, lang)));
         if let Some((tx, _)) = &self.quick {
             let _ = tx.send(Msg::Reconfigure(llm::system_prompt(true, quick_context, lang)));
         }
@@ -275,12 +278,13 @@ impl Answerer {
 
     /// The brief of `context`, written by the full model.
     pub async fn brief(&self, context: &str) -> anyhow::Result<String> {
-        let mut s = session(&self.cfg, "brief", crate::brief::SYSTEM.replace("{user_language}", &self.cfg.user_language));
-        let model = &self.cfg.model;
-        s.prepare(model).await?;
-        let mut out = String::new();
-        self.one_off(&mut s, "brief", model, &llm::Turn { text: format!("{context}\n\nWrite the brief."), image: None }, &mut out).await?;
-        Ok(out.trim().to_string())
+        let (events, model) = (self.events.clone(), self.cfg.model.clone());
+        make_brief(&self.cfg, context, &mut |api, c| {
+            if let Some(e) = llm::usage_event("brief", &model, api, &c) {
+                let _ = events.send(e);
+            }
+        })
+        .await
     }
 
     /// One turn of a one-off session: its text into `out`, its token usage to the UI.
@@ -302,16 +306,33 @@ impl Answerer {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// One-off summary of `segs` with the quick model, through the configured backend.
+    /// One-off summary of `segs` with the full model, through the configured backend.
     pub async fn summarize(&self, context: &str, segs: &[FinalSegment], hints: &[crate::call::AnswerRecord]) -> anyhow::Result<String> {
         let mut s = session(&self.cfg, "summary", llm::summary_system(context));
-        let model = &self.cfg.quick_model;
+        // The full model: nobody waits for a summary, and the review is worth its quality.
+        let model = &self.cfg.model;
         s.prepare(model).await?;
         let mut out = String::new();
         let text = format!("<transcript>\n{}\n</transcript>\n{}Summarize this call.", llm::render(segs), hints_block(hints));
         self.one_off(&mut s, "summary", model, &llm::Turn { text, image: None }, &mut out).await?;
         Ok(out.trim().to_string())
     }
+}
+
+/// The brief of `context` with the full model; `usage` gets the turn's token count (and whether it is billed per token).
+/// Also run outside a call by `--brief` («Подготовить» in «Звонки»).
+pub async fn make_brief(cfg: &Config, context: &str, usage: &mut (dyn FnMut(bool, Chunk) + Send)) -> anyhow::Result<String> {
+    let mut s = session(cfg, "brief", crate::brief::SYSTEM.replace("{user_language}", &cfg.user_language));
+    s.prepare(&cfg.model).await?;
+    let api = s.is_api();
+    let mut out = String::new();
+    let turn = llm::Turn { text: format!("{context}\n\nWrite the brief."), image: None };
+    s.ask(&cfg.model, &turn, &mut |c| match c {
+        Chunk::Text(t) => out.push_str(&t),
+        c => usage(api, c),
+    })
+    .await?;
+    Ok(out.trim().to_string())
 }
 
 /// The full-tier answers of a call for its summary: question and hint, each cut to keep the prompt small.
@@ -332,7 +353,7 @@ pub(crate) fn session(cfg: &Config, tier: &'static str, system: String) -> Sessi
         let key = Some(cfg.anthropic_api_key.clone()).filter(|k| !k.is_empty()).or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()).unwrap_or_default();
         let max_tokens = match tier {
             "quick" => 200,
-            "summary" => 1500,
+            "summary" => 4000,
             "brief" => 6000,
             "translate" => 400,
             _ => 2048,
@@ -596,6 +617,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                             model: req.model.clone(),
                             text: std::mem::take(&mut answer),
                             shot: req.shot_file.clone(),
+                            feedback: None,
                         },
                     );
                     None
@@ -618,7 +640,7 @@ fn spawn_tier(tier: &'static str, mut session: Session, warm_model: String, shar
                 }
             };
             let _ = ev.send(Event::Metrics { name: format!("answer_total_{tier}"), ms: started.elapsed().as_secs_f64() * 1000.0 });
-            let _ = ev.send(Event::AnswerEnd { id, error });
+            let _ = ev.send(Event::AnswerEnd { id, error, feedback: None });
             if compact {
                 if pending.is_none() {
                     pending = Some(Msg::Compact); // reset and warm while idle
@@ -661,7 +683,7 @@ mod tests {
     /// The error of the answer `id` (None = it finished).
     async fn end(rx: &mut mpsc::UnboundedReceiver<Event>, want: u64) -> Option<String> {
         loop {
-            if let Event::AnswerEnd { id, error } = rx.recv().await.expect("tier stopped")
+            if let Event::AnswerEnd { id, error, .. } = rx.recv().await.expect("tier stopped")
                 && id == want
             {
                 return error;

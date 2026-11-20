@@ -32,6 +32,18 @@ pub struct AnswerRecord {
     /// Screenshot of this turn in `shots/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shot: Option<String>,
+    /// The user's rating: 1 good, -1 bad (`Command::Feedback`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feedback: Option<i8>,
+}
+
+/// Rows of the open call's `answers.jsonl` (non-empty lines, from 0) by live answer turn.
+/// Turn ids restart with the core, so a saved `turn` is not unique in the file; the row is.
+#[derive(Default)]
+pub struct AnswerRows {
+    /// Row the next appended answer gets.
+    next: usize,
+    by_turn: std::collections::HashMap<u64, Vec<usize>>,
 }
 
 const TRANSCRIPT: &str = "transcript.jsonl";
@@ -53,11 +65,16 @@ fn append(file: &Path, v: &impl Serialize) {
 /// Lines that fail to parse (a torn last line after a crash) are skipped. A missing final newline
 /// is added, so the next append starts a line of its own.
 fn read_jsonl<T: DeserializeOwned>(file: &Path) -> Vec<T> {
+    lines(file).iter().filter_map(|l| serde_json::from_str(l).map_err(|e| warn!("{}: {e}", file.display())).ok()).collect()
+}
+
+/// Non-empty lines of a jsonl file (see `read_jsonl` for the missing newline).
+fn lines(file: &Path) -> Vec<String> {
     let Ok(s) = std::fs::read_to_string(file) else { return Vec::new() };
     if !s.is_empty() && !s.ends_with('\n') {
         let _ = std::fs::OpenOptions::new().append(true).open(file).and_then(|mut f| f.write_all(b"\n"));
     }
-    s.lines().filter(|l| !l.trim().is_empty()).filter_map(|l| serde_json::from_str(l).map_err(|e| warn!("{}: {e}", file.display())).ok()).collect()
+    s.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect()
 }
 
 pub fn save_final(shared: &Shared, seg: &FinalSegment) {
@@ -76,8 +93,55 @@ pub fn save_shot(shared: &Shared, turn: u64, png: &[u8]) -> Option<String> {
 }
 
 pub fn save_answer(shared: &Shared, rec: AnswerRecord) {
+    // The call lock serializes appends and ratings, so row numbers stay true.
     if let Some(dir) = shared.call.lock().unwrap().as_ref() {
+        let mut rows = shared.answer_rows.lock().unwrap();
+        let row = rows.next;
+        rows.next += 1;
+        rows.by_turn.entry(rec.turn).or_default().push(row);
         append(&dir.join(ANSWERS), &rec);
+    }
+}
+
+/// Non-empty lines of `answers.jsonl` with their row; a line that does not parse keeps its row.
+fn read_answers(file: &Path) -> (usize, Vec<(usize, AnswerRecord)>) {
+    let rows = lines(file);
+    let recs = rows.iter().enumerate().filter_map(|(i, l)| serde_json::from_str(l).ok().map(|r| (i, r))).collect();
+    (rows.len(), recs)
+}
+
+/// Saves the rating of live turn `turn` on its rows of the open call (write then rename).
+pub fn set_feedback(shared: &Shared, turn: u64, value: Option<i8>) {
+    let call = shared.call.lock().unwrap();
+    let Some(dir) = call.as_ref() else { return };
+    let Some(rows) = shared.answer_rows.lock().unwrap().by_turn.get(&turn).cloned() else {
+        warn!("feedback: no saved answer of turn {turn}");
+        return;
+    };
+    let file = dir.join(ANSWERS);
+    let r = (|| {
+        let mut out = String::new();
+        for (i, mut line) in lines(&file).into_iter().enumerate() {
+            if rows.contains(&i)
+                && let Ok(serde_json::Value::Object(mut o)) = serde_json::from_str(&line)
+            {
+                match value {
+                    Some(v) => o.insert("feedback".into(), v.into()),
+                    None => o.remove("feedback"),
+                };
+                line = serde_json::Value::Object(o).to_string();
+            }
+            out.push_str(&line);
+            out.push('\n');
+        }
+        let tmp = file.with_extension("jsonl.tmp");
+        std::fs::write(&tmp, out)?;
+        std::fs::rename(&tmp, &file)?;
+        anyhow::Ok(())
+    })();
+    match r {
+        Ok(()) => info!("feedback {value:?} on turn {turn}"),
+        Err(e) => warn!("feedback on {}: {e:#}", file.display()),
     }
 }
 
@@ -104,20 +168,27 @@ pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Optio
         parts: a.parts.clone(),
         warnings: a.warnings.clone(),
     };
+    let place = dir.map(Path::to_path_buf).unwrap_or_else(|| cfg.profile_dir());
+    let key = brief::key(&a.text);
+    let cached = brief::cached(&place, &key);
+    // A current brief (made here or by «Подготовить») lends its prepared answers to the full tier.
+    // One built later, mid-call, does not: restarting the full tier would cut off an answer.
+    let full = brief::with_prepared(&a.text, cached.as_deref());
+    if let Some(p) = cached.as_deref().and_then(brief::prepared) {
+        add_part(&mut ev, PREPARED_PART, p);
+    }
     if !answerer.has_quick() || a.tokens() < brief::MIN_TOKENS {
-        answerer.reconfigure(&a.text, &a.text);
+        answerer.reconfigure(&a.text, &full, &full);
         let _ = shared.events.send(ev);
         return;
     }
-    let place = dir.map(Path::to_path_buf).unwrap_or_else(|| cfg.profile_dir());
-    let key = brief::key(&a.text);
-    if let Some(b) = brief::cached(&place, &key) {
-        answerer.reconfigure(&a.text, &b);
+    if let Some(b) = cached {
+        answerer.reconfigure(&a.text, &full, &b);
         add_brief_part(&mut ev, &b, false);
         let _ = shared.events.send(ev);
         return;
     }
-    answerer.reconfigure(&a.text, &a.text);
+    answerer.reconfigure(&a.text, &full, &a.text);
     add_brief_part(&mut ev, "", true);
     let _ = shared.events.send(ev.clone());
     info!("brief: building for {}", place.display());
@@ -151,17 +222,25 @@ static BRIEF_TASK: std::sync::Mutex<Option<tokio::task::AbortHandle>> = std::syn
 
 /// The «Досье» row of the UI's context breakdown; `building` adds the note that it is on its way.
 fn add_brief_part(ev: &mut Event, brief: &str, building: bool) {
-    if let Event::Call { parts, warnings, .. } = ev {
-        parts.retain(|p| p.name != BRIEF_PART);
+    add_part(ev, BRIEF_PART, brief);
+    if let Event::Call { warnings, .. } = ev {
         warnings.retain(|w| w != BRIEF_BUILDING);
-        parts.push(protocol::ContextPart { name: BRIEF_PART.into(), tokens: context::tokens(brief), truncated: false });
         if building {
             warnings.push(BRIEF_BUILDING.into());
         }
     }
 }
 
+/// Adds (or replaces) the row `name` of the context breakdown.
+fn add_part(ev: &mut Event, name: &str, text: &str) {
+    if let Event::Call { parts, .. } = ev {
+        parts.retain(|p| p.name != name);
+        parts.push(protocol::ContextPart { name: name.into(), tokens: context::tokens(text), truncated: false });
+    }
+}
+
 const BRIEF_PART: &str = "Досье для быстрой подсказки (brief.md)";
+const PREPARED_PART: &str = "Заготовки ответов из досье (полная подсказка)";
 const BRIEF_BUILDING: &str = "Досье собирается, пока быстрая подсказка читает весь контекст";
 
 pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBuf) -> Result<()> {
@@ -169,8 +248,9 @@ pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBu
         bail!("no call directory {}", dir.display());
     }
     let segs: Vec<FinalSegment> = read_jsonl(&dir.join(TRANSCRIPT));
-    let answers: Vec<AnswerRecord> = read_jsonl(&dir.join(ANSWERS));
+    let (rows, answers) = read_answers(&dir.join(ANSWERS));
     *shared.call.lock().unwrap() = Some(dir.clone());
+    *shared.answer_rows.lock().unwrap() = AnswerRows { next: rows, by_turn: Default::default() };
     *shared.transcript.lock().unwrap() = segs.clone();
     Answerer::forget_notes(shared);
     // The `call` event goes first: the UI clears its windows when the call changes.
@@ -183,16 +263,23 @@ pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBu
     Ok(())
 }
 
-/// Saved answers as answer events, under fresh ids, turns kept together.
-fn replay(shared: &Shared, answerer: &Answerer, answers: Vec<AnswerRecord>) {
-    let mut turns: BTreeMap<u64, u64> = BTreeMap::new();
-    for r in answers {
-        let turn = *turns.entry(r.turn).or_insert_with(|| answerer.next_id());
+/// Saved answers as answer events, under fresh ids, turns kept together. A saved turn id comes back
+/// in a later session of the same call, so a turn also ends where its quick and full pair is complete.
+fn replay(shared: &Shared, answerer: &Answerer, answers: Vec<(usize, AnswerRecord)>) {
+    let mut turns: BTreeMap<u64, (u64, Vec<String>)> = BTreeMap::new();
+    for (row, r) in answers {
+        let entry = turns.entry(r.turn).or_insert_with(|| (answerer.next_id(), Vec::new()));
+        if entry.1.contains(&r.tier) {
+            *entry = (answerer.next_id(), Vec::new());
+        }
+        entry.1.push(r.tier.clone());
+        let turn = entry.0;
+        shared.answer_rows.lock().unwrap().by_turn.entry(turn).or_default().push(row);
         let id = answerer.next_id();
         let ev = &shared.events;
         let _ = ev.send(Event::AnswerStart { id, turn, trigger: r.trigger, question: r.question, q_t: r.q_t, tier: r.tier });
         let _ = ev.send(Event::AnswerDelta { id, text: r.text });
-        let _ = ev.send(Event::AnswerEnd { id, error: None });
+        let _ = ev.send(Event::AnswerEnd { id, error: None, feedback: r.feedback });
     }
 }
 
@@ -204,6 +291,7 @@ pub fn reload(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
 /// Stops saving, goes back to the profile context and writes the summary in the background.
 pub fn close(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
     let Some(dir) = shared.call.lock().unwrap().take() else { return };
+    *shared.answer_rows.lock().unwrap() = AnswerRows::default();
     // The summary sees the call's own context (who they are, the vacancy), not just the profile.
     let context = context::assemble(&cfg.profile_dir(), Some(&dir), &cfg.user_context, &cfg.glossary).text;
     apply(cfg, shared, answerer, None);
@@ -252,9 +340,42 @@ mod tests {
             model: "m".into(),
             text: "**a**".into(),
             shot: None,
+            feedback: None,
         };
         append(&dir.path().join(ANSWERS), &r);
         assert_eq!(read_jsonl::<AnswerRecord>(&dir.path().join(ANSWERS)), vec![r]);
         assert!(read_jsonl::<AnswerRecord>(&dir.path().join("missing.jsonl")).is_empty());
+    }
+
+    #[test]
+    fn feedback_lands_on_the_rows_of_its_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let (shared, _rx) = Shared::for_test();
+        *shared.call.lock().unwrap() = Some(dir.path().to_path_buf());
+        let rec = |turn: u64, tier: &str| AnswerRecord {
+            turn,
+            tier: tier.into(),
+            trigger: "auto".into(),
+            question: "q".into(),
+            q_t: None,
+            model: "m".into(),
+            text: "a".into(),
+            shot: None,
+            feedback: None,
+        };
+        // An earlier session of the same call used turn 1 too.
+        append(&dir.path().join(ANSWERS), &rec(1, "full"));
+        std::fs::OpenOptions::new().append(true).open(dir.path().join(ANSWERS)).unwrap().write_all(b"{torn\n").unwrap();
+        let (rows, old) = read_answers(&dir.path().join(ANSWERS));
+        assert_eq!((rows, old.len()), (2, 1));
+        *shared.answer_rows.lock().unwrap() = AnswerRows { next: rows, by_turn: Default::default() };
+        save_answer(&shared, rec(1, "quick"));
+        save_answer(&shared, rec(1, "full"));
+        set_feedback(&shared, 1, Some(-1));
+        let got: Vec<Option<i8>> = read_answers(&dir.path().join(ANSWERS)).1.into_iter().map(|(_, r)| r.feedback).collect();
+        assert_eq!(got, vec![None, Some(-1), Some(-1)], "only this session's turn 1");
+        assert!(std::fs::read_to_string(dir.path().join(ANSWERS)).unwrap().contains("{torn"), "a broken line is kept");
+        set_feedback(&shared, 1, None);
+        assert!(read_answers(&dir.path().join(ANSWERS)).1.iter().all(|(_, r)| r.feedback.is_none()));
     }
 }

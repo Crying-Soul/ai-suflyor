@@ -1,0 +1,36 @@
+{"id":"beh-hard-task","kind":"behavioral","question":"Расскажите о самой сложной технической задаче, которую вы решали."}
+{"id":"beh-conflict","kind":"behavioral","question":"Был ли у вас конфликт с руководителем? Как вы его решили?"}
+{"id":"beh-failure","kind":"behavioral","question":"Расскажите о своей ошибке, которая дошла до продакшена."}
+{"id":"beh-mentor","kind":"behavioral","question":"Был ли у вас опыт наставничества?"}
+{"id":"beh-migration","kind":"behavioral","question":"Как вы переносили что-то из монолита в сервисы?"}
+{"id":"beh-en-perf","kind":"behavioral","question":"Tell me about a time you improved the performance of a system."}
+{"id":"beh-kafka","kind":"behavioral","question":"Вы работали с Kafka в продакшене?"}
+{"id":"beh-k8s-admin","kind":"behavioral","question":"Приходилось администрировать Kubernetes-кластер?"}
+{"id":"th-mutex-chan","kind":"theory","question":"Чем мьютекс отличается от канала в Go?"}
+{"id":"th-goroutine","kind":"theory","question":"Как устроен планировщик горутин?"}
+{"id":"th-idempotency","kind":"theory","question":"Что такое идемпотентность и зачем она в платежах?"}
+{"id":"th-isolation","kind":"theory","question":"Какие уровни изоляции транзакций есть в PostgreSQL?"}
+{"id":"th-index","kind":"theory","question":"Когда индекс в базе не поможет?"}
+{"id":"th-outbox","kind":"theory","question":"Что такое transactional outbox?"}
+{"id":"th-kafka-order","kind":"theory","question":"Как Kafka гарантирует порядок сообщений?"}
+{"id":"th-en-cap","kind":"theory","question":"Can you explain the CAP theorem?"}
+{"id":"th-context","kind":"theory","question":"Зачем в Go нужен context?"}
+{"id":"th-gc","kind":"theory","question":"Как работает сборщик мусора в Go?"}
+{"id":"code-reverse","kind":"coding","question":"Напишите функцию, которая разворачивает односвязный список."}
+{"id":"code-dedupe","kind":"coding","question":"Как убрать дубликаты из слайса строк, сохранив порядок?"}
+{"id":"code-ratelimit","kind":"coding","question":"Напишите простой rate limiter на Go."}
+{"id":"code-en-twosum","kind":"coding","question":"Given an array and a target, return indices of two numbers that add up to the target."}
+{"id":"sd-payments","kind":"system_design","question":"Спроектируйте сервис приёма платежей."}
+{"id":"sd-shortener","kind":"system_design","question":"Как бы вы спроектировали сокращатель ссылок?"}
+{"id":"sd-notifications","kind":"system_design","question":"Нужен сервис уведомлений на миллион пользователей. С чего начнёте?"}
+{"id":"ab-tell","kind":"about","question":"Расскажите о себе."}
+{"id":"ab-why-us","kind":"about","question":"Почему вы хотите работать у нас?"}
+{"id":"ab-why-leave","kind":"about","question":"Почему уходите с текущего места?"}
+{"id":"ab-en-strengths","kind":"about","question":"What are your strengths?"}
+{"id":"sal-expect","kind":"salary","question":"Какие у вас зарплатные ожидания?"}
+{"id":"sal-current","kind":"salary","question":"А сколько вы получаете сейчас?"}
+{"id":"sal-start","kind":"salary","question":"Когда сможете выйти?"}
+{"id":"sal-relocate","kind":"salary","question":"Рассматриваете переезд в Казань?"}
+{"id":"st-hello","kind":"small_talk","question":"Добрый день! Меня слышно?"}
+{"id":"st-ok","kind":"small_talk","question":"Отлично, тогда начнём, если вы не против."}
+{"id":"ctx-followup","kind":"theory","question":"А как вы это ключ идемпотентности хранили?","transcript":["Q: Расскажите об инциденте.","A: У нас были двойные списания из-за ретраев, я ввёл ключи идемпотентности."]}

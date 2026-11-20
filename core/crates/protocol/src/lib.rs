@@ -83,6 +83,13 @@ pub enum Command {
     ReloadContext,
     /// Stops saving to the open call and writes its `summary.md`.
     CloseCall,
+    /// The user's rating of answer turn `turn` in the open call: 1 good, -1 bad, null cleared.
+    /// Saved as `feedback` on that turn's records in `answers.jsonl`.
+    Feedback {
+        turn: u64,
+        #[serde(default)]
+        value: Option<i8>,
+    },
     Shutdown,
 }
 
@@ -184,6 +191,9 @@ pub enum Event {
         id: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// The saved rating of a replayed answer (see `Command::Feedback`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        feedback: Option<i8>,
     },
     Metrics {
         name: String,
@@ -247,6 +257,10 @@ mod tests {
         assert!(matches!(c, Command::Ask { kind: AskKind::Questions, .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"continue"}"#).unwrap();
         assert!(matches!(c, Command::Ask { kind: AskKind::Continue, .. }));
+        let c: Command = serde_json::from_str(r#"{"cmd":"feedback","turn":3,"value":-1}"#).unwrap();
+        assert!(matches!(c, Command::Feedback { turn: 3, value: Some(-1) }));
+        let c: Command = serde_json::from_str(r#"{"cmd":"feedback","turn":3,"value":null}"#).unwrap();
+        assert!(matches!(c, Command::Feedback { turn: 3, value: None }));
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"more"}"#).unwrap();
         assert!(matches!(c, Command::Ask { kind: AskKind::More, .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"set","translate":true}"#).unwrap();

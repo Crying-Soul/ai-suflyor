@@ -29,6 +29,19 @@ const GLOSSARY_CHARS: usize = 600;
 pub struct Meta {
     pub title: String,
     pub glossary: Vec<String>,
+    /// Interview stage of a call: hr, tech, system_design, final (empty: not set).
+    pub stage: String,
+}
+
+/// What the answers should stress at each interview stage (`Meta::stage`).
+fn stage_focus(stage: &str) -> Option<&'static str> {
+    Some(match stage {
+        "hr" => "HR screen: motivation, expectations, conditions and culture fit. Short, positive answers without deep technical detail.",
+        "tech" => "Technical interview: precise and correct answers with trade-offs, backed by the user's real experience.",
+        "system_design" => "System design interview: clarify requirements and load first, then components, data, scaling and trade-offs.",
+        "final" => "Final interview, often with a manager: impact, ownership, motivation, how the user works in a team.",
+        _ => return None,
+    })
 }
 
 #[derive(Debug, Default)]
@@ -168,8 +181,13 @@ impl Assembled {
 
     /// `label`: how the UI names the node; `source`: the same in the prompt. Without notes the tag
     /// still carries the node's title, so the model knows the company even from documents alone.
-    fn push_node(&mut self, node: &Node, label: &str, source: &str, tag: &str, attrs: &str) {
+    /// `lead`: a line put before the notes (the stage of a call).
+    fn push_node(&mut self, node: &Node, label: &str, source: &str, tag: &str, attrs: &str, lead: Option<&str>) {
         let notes = if node.notes.trim().is_empty() { node.title() } else { node.notes.clone() };
+        let notes = match lead {
+            Some(l) => format!("{l}\n\n{notes}"),
+            None => notes,
+        };
         self.push(format!("{label}: context.md"), tag, attrs, &notes);
         for (name, text) in &node.files {
             self.push(format!("{label}: {name}"), "document", &format!("source=\"{source}\" name=\"{}\"", attr(name)), text);
@@ -237,7 +255,7 @@ pub fn assemble(profile_dir: &Path, call: Option<&Path>, fallback_about: &str, b
         if let Some(folder) = folder_of(call) {
             let f = Node::load(folder);
             a.folder = f.title();
-            a.push_node(&f, "Папка", "company", "company", &format!("name=\"{}\"", attr(&a.folder)));
+            a.push_node(&f, "Папка", "company", "company", &format!("name=\"{}\"", attr(&a.folder)), None);
             let prev = previous_summaries(call);
             if !prev.is_empty() {
                 let body = prev.iter().map(|(t, s)| format!("## {t}\n{}", s.trim())).collect::<Vec<_>>().join("\n\n");
@@ -245,8 +263,12 @@ pub fn assemble(profile_dir: &Path, call: Option<&Path>, fallback_about: &str, b
             }
             glossaries.insert(0, f.meta.glossary.clone());
         }
-        let title = format!("title=\"{}\"", attr(&a.title));
-        a.push_node(&node, "Звонок", "call", "this_call", &title);
+        let focus = stage_focus(node.meta.stage.trim());
+        let mut attrs = format!("title=\"{}\"", attr(&a.title));
+        if focus.is_some() {
+            attrs.push_str(&format!(" stage=\"{}\"", node.meta.stage.trim()));
+        }
+        a.push_node(&node, "Звонок", "call", "this_call", &attrs, focus);
         glossaries.insert(0, node.meta.glossary.clone());
     }
     glossaries.push(base_glossary.to_vec());
@@ -294,7 +316,7 @@ mod tests {
         write(&folder.join("calls/2026-11-03-1000-tech/summary.md"), "Тех: шардирование.");
         write(&folder.join("calls/2026-11-09-1000-final/summary.md"), "из будущего");
         let call = folder.join("calls/2026-11-05-1200-sys");
-        write(&call.join("meta.json"), r#"{"title":"Системный дизайн"}"#);
+        write(&call.join("meta.json"), r#"{"title":"Системный дизайн","stage":"system_design"}"#);
         write(&call.join("context.md"), "Интервьюер: Анна.");
 
         let a = assemble(&r.join("profile"), Some(&call), "старый userContext", &["Redis".into()]);
@@ -303,7 +325,8 @@ mod tests {
         assert!(pos("Senior Go") < pos("<previous_calls>"));
         assert!(pos("Тех: шардирование") < pos("HR: спросили"), "newest earlier call first");
         assert!(!a.text.contains("из будущего"), "later calls stay out");
-        assert!(pos("<previous_calls>") < pos("<this_call title=\"Системный дизайн\">"));
+        assert!(pos("<previous_calls>") < pos("<this_call title=\"Системный дизайн\" stage=\"system_design\">"));
+        assert!(pos("System design interview: clarify") < pos("Интервьюер: Анна."));
         assert!(!a.text.contains("старый userContext"));
         assert!(!a.text.contains("logo.png"));
         assert_eq!(a.glossary, vec!["YDB", "kafka", "Go", "Redis"]);
