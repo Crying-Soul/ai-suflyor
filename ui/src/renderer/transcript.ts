@@ -1,6 +1,6 @@
 import type { CaptureStatus, CoreEvent, ReadyItem, Speaker, Status } from "../shared/protocol";
 import { addTurn, emptyUsage, type Usage } from "../shared/usage";
-import { $, api, bindActions, el, follow, icon, keyLabel, overlayUi, sttLabel } from "./common";
+import { $, api, bindActions, coreDownText, el, follow, humanError, icon, keyLabel, overlayUi, replayGuard, sttLabel } from "./common";
 
 const list = $("transcript");
 const statusEl = $("status");
@@ -52,7 +52,7 @@ function newBlock(speaker: Speaker, t: number): HTMLElement {
   if (speaker === "them") {
     const ask = el("button", "ask btn-ghost small", "Спросить");
     ask.type = "button";
-    ask.title = "Ответить на эту реплику";
+    ask.title = "Спросить: подсказка на эту реплику";
     ask.onclick = () => askBlock(b);
     head.append(ask);
   }
@@ -296,7 +296,10 @@ function renderUsage(): void {
 
 // ---------- events ----------
 
+const replaying = replayGuard();
+
 api.onEvent((e: CoreEvent) => {
+  if (e.ev === "final" && document.body.classList.contains("replay")) replaying();
   switch (e.ev) {
     case "ready":
       statusEl.textContent = "ядро запущено";
@@ -339,6 +342,7 @@ api.onEvent((e: CoreEvent) => {
       if (e.name === "speech_end_to_final" || e.name === "stt_decode") renderMetrics();
       break;
     case "cleared":
+      replaying();
       clearRows();
       // Sent before a call opens: the count starts over with it.
       usage = emptyUsage();
@@ -346,20 +350,25 @@ api.onEvent((e: CoreEvent) => {
       break;
     case "call": {
       const chip = $("btn-call");
-      chip.textContent = e.dir ? e.title : "Без звонка";
+      // Without a call nothing is saved: the chip says so in words, not only by its colour.
+      chip.textContent = e.dir ? e.title : "Без звонка · не сохраняю";
       chip.classList.toggle("live", Boolean(e.dir));
+      chip.classList.toggle("unsaved", !e.dir);
       chip.classList.toggle("warn", e.warnings.length > 0);
-      const where = e.dir ? `${e.folder ? `${e.folder}: ` : ""}${e.title}\n` : "";
+      const where = e.dir
+        ? `${e.folder ? `${e.folder}: ` : ""}${e.title}\n`
+        : "Звонок не открыт: транскрипт, подсказки и итог не сохраняются.\n";
       chip.title = [`${where}Контекст ≈${e.tokens.toLocaleString("ru-RU")} токенов. Открыть «Звонки»`, ...e.warnings].join("\n");
       break;
     }
     case "error":
-      statusEl.textContent = "ошибка, подробности в подсказке";
+      // Our own Russian messages (capture protection) read as they are; a raw cause becomes words.
+      statusEl.textContent = /[а-яё]/i.test(e.message) && !/^Claude/.test(e.message) ? e.message : humanError(e.message);
       statusEl.title = e.message;
       statusEl.classList.add("error");
       break;
     case "core_down":
-      statusEl.textContent = "ядро остановлено";
+      statusEl.textContent = coreDownText(e.message);
       statusEl.title = e.message;
       statusEl.classList.add("error");
       break;
@@ -387,8 +396,26 @@ void api.ready.list().then(renderSetup);
 mutes.me.onclick = () => api.send({ cmd: "set", mute_me: !(status?.mute_me ?? false) });
 mutes.them.onclick = () => api.send({ cmd: "set", mute_them: !(status?.mute_them ?? false) });
 $("btn-help").onclick = () => api.openSettings("guide");
-$("btn-clear").onclick = () => api.send({ cmd: "clear" });
-$("btn-hide").onclick = () => api.hide();
+// «Очистить» empties both windows: the first press arms it, a second one within CLEAR_ARMED_MS clears.
+const clearBtn = $<HTMLButtonElement>("btn-clear");
+const CLEAR_ARMED_MS = 3000;
+let clearTimer = 0;
+clearBtn.onclick = () => {
+  if (clearBtn.classList.contains("armed")) {
+    clearTimeout(clearTimer);
+    clearBtn.classList.remove("armed");
+    statusEl.textContent = "окна очищены";
+    api.send({ cmd: "clear" });
+    return;
+  }
+  clearBtn.classList.add("armed");
+  const before = statusEl.textContent;
+  statusEl.textContent = "Нажмите ещё раз, чтобы очистить окна";
+  clearTimer = window.setTimeout(() => {
+    clearBtn.classList.remove("armed");
+    if (statusEl.textContent === "Нажмите ещё раз, чтобы очистить окна") statusEl.textContent = before;
+  }, CLEAR_ARMED_MS);
+};
 $("btn-settings").onclick = () => api.openSettings();
 $("btn-call").onclick = () => api.openCalls();
 // Footer buttons run through main, like their hotkeys; tooltips show the keys in effect.

@@ -128,13 +128,13 @@ const SECTIONS: Section[] = [
   {
     id: "hotkeys",
     title: "Горячие клавиши",
-    note: "Щёлкните поле и нажмите сочетание. Ctrl+Shift+S и Ctrl+Shift+A заняты в Teams: лучше Ctrl+Alt.",
+    note: "Щёлкните поле и нажмите сочетание. Сочетания Ctrl+Shift заняты во многих программах звонков (Teams: Ctrl+Shift+S и Ctrl+Shift+A), поэтому по умолчанию Ctrl+Alt. Смена клавиш не перезапускает ядро.",
     fields: [
-      { key: "hotkeys.ask", label: "Спросить", kind: "hotkey" },
+      { key: "hotkeys.ask", label: "Спросить: подсказка на последний вопрос", kind: "hotkey" },
       { key: "hotkeys.screenshotAsk", label: "Снимок экрана и вопрос", kind: "hotkey" },
-      { key: "hotkeys.myQuestions", label: "Мои вопросы собеседнику", kind: "hotkey" },
+      { key: "hotkeys.myQuestions", label: "Вопросы: что спросить у собеседника", kind: "hotkey" },
       { key: "hotkeys.continueTalk", label: "Что сказать: как продолжить ваш ответ", kind: "hotkey" },
-      { key: "hotkeys.moreAnswer", label: "Продолжить ответ: ещё 2–3 предложения", kind: "hotkey" },
+      { key: "hotkeys.moreAnswer", label: "Продолжить ответ: ещё 2–3 предложения к подсказке", kind: "hotkey" },
       { key: "hotkeys.translate", label: "Перевод вкл./выкл.", kind: "hotkey" },
       { key: "hotkeys.toggleWindow", label: "Показать или скрыть окна", kind: "hotkey" },
       { key: "hotkeys.toggleAuto", label: "Автоответы вкл./выкл.", kind: "hotkey" },
@@ -164,7 +164,7 @@ const SECTIONS: Section[] = [
     id: "data",
     title: "Данные",
     fields: [
-      { key: "dataDir", label: "Папка звонков", kind: "text", hint: "Профиль, папки, транскрипты и итоги. Пусто: Документы\\Suflyor." },
+      { key: "dataDir", label: "Папка звонков", kind: "text", hint: "«Обо мне», папки, транскрипты и итоги. Пусто: Документы\\Suflyor." },
     ],
   },
   {
@@ -498,6 +498,10 @@ form.addEventListener("submit", async (e) => {
     saveState.textContent = "Нечего сохранять.";
     return;
   }
+  // Anything but hotkeys restarts the core: in a call, the answer being written is cut off.
+  const restarts = Object.keys(patch).some((k) => !k.startsWith("hotkeys."));
+  const call = restarts ? await api.calls.current().catch(() => null) : null;
+  if (call?.dir && !(await askConfirm(`Идёт звонок «${call.title}». Сохранение перезапустит ядро на несколько секунд: подсказка, которая пишется сейчас, оборвётся. Сохранить?`, "Сохранить"))) return;
   saveBtn.disabled = true;
   saveState.className = "";
   saveState.textContent = "Сохраняю…";
@@ -514,11 +518,11 @@ form.addEventListener("submit", async (e) => {
     hotkeysChanged();
   }
   saveState.className = "done";
-  saveState.textContent = "Сохранено. Ядро перезапускается.";
+  saveState.textContent = restarts ? "Сохранено. Ядро перезапускается." : "Сохранено.";
 });
 
 $("btn-cancel").onclick = async () => {
-  if (Object.keys(changes()).length && !(await askConfirm("Закрыть без сохранения изменений?", "Закрыть"))) return;
+  if (Object.keys(changes()).length && !(await askConfirm("Закрыть без сохранения изменений?", "Закрыть", "Отмена", true))) return;
   api.closeWindow();
 };
 

@@ -15,6 +15,7 @@ import { startLogs } from "./log";
 import { CoreProcess, resolveCoreExe } from "./core";
 import { configPath, coreArgs, loadHotkeys, newConfigPath, readRaw, rootDir, writeConfig } from "./config";
 import { migrateContext, registerCallsIpc } from "./calls-ipc";
+import { markStarted } from "./calls";
 import { activeModel, cudaDir, getModel, registerModelsIpc } from "./models-ipc";
 import { createOverlay, openCalls, openReady, openSettings, sendUi, setTheme, toggleClickThrough, togglePreset, toggleWindows, wins, zoom } from "./windows";
 
@@ -36,6 +37,7 @@ function emit(e: CoreEvent): void {
     lastCall = e;
     tray?.setCall(e.dir ? e.title : null);
   }
+  if (e.ev === "summary") summaryDone?.(e.dir);
   // A restarted core knows nothing of the open call: open it again (its transcript is replayed).
   if (e.ev === "ready" && lastCall?.dir) openCall(lastCall.dir);
   // A muted source stays muted across a core restart (a settings change must not start listening).
@@ -48,6 +50,11 @@ function emit(e: CoreEvent): void {
 
 /** Opening a call replays its transcript and answers: the windows drop what they show first. */
 function openCall(dir: string): void {
+  try {
+    markStarted(dir);
+  } catch (e) {
+    console.warn(`[calls] start time of ${dir}: ${e}`);
+  }
   emit({ ev: "cleared" });
   core.send({ cmd: "open_call", dir });
 }
@@ -56,8 +63,14 @@ const coreExe = resolveCoreExe(app.getAppPath(), app.isPackaged);
 const core = new CoreProcess(coreExe, coreArgs, rootDir(), emit);
 
 /** What each hotkey does; the overlay buttons run the same through `ui:action`. */
+/** Asks the core for an answer; the hints window says «Спрашиваю…» at once. */
+function ask(cmd: Extract<Command, { cmd: "ask" }>): void {
+  sendUi(overlays.hints, { kind: "asking" });
+  core.send(cmd);
+}
+
 const actions: Record<HotkeyAction, () => void> = {
-  ask: () => core.send({ cmd: "ask", screenshot: false }),
+  ask: () => ask({ cmd: "ask", screenshot: false }),
   screenshotAsk: () => (sendUi(overlays.hints, { kind: "looking" }), core.send({ cmd: "ask", screenshot: true })),
   toggleWindow: () => toggleWindows(),
   toggleAuto: () => core.send({ cmd: "set", auto: !(lastStatus?.auto ?? true) }),
@@ -70,9 +83,9 @@ const actions: Record<HotkeyAction, () => void> = {
   rateDown: () => sendUi(overlays.hints, { kind: "rate", value: -1 }),
   zoomIn: () => zoom(0.1),
   zoomOut: () => zoom(-0.1),
-  myQuestions: () => core.send({ cmd: "ask", screenshot: false, kind: "questions" }),
-  continueTalk: () => core.send({ cmd: "ask", screenshot: false, kind: "continue" }),
-  moreAnswer: () => core.send({ cmd: "ask", screenshot: false, kind: "more" }),
+  myQuestions: () => ask({ cmd: "ask", screenshot: false, kind: "questions" }),
+  continueTalk: () => ask({ cmd: "ask", screenshot: false, kind: "continue" }),
+  moreAnswer: () => ask({ cmd: "ask", screenshot: false, kind: "more" }),
   translate: () => core.send({ cmd: "set", translate: !(lastStatus?.translate ?? false) }),
 };
 
@@ -119,13 +132,14 @@ async function loadConfig(): Promise<ConfigSnapshot> {
 
 function saveConfig(patch: Record<string, unknown>): SaveResult {
   const res = writeConfig(patch);
-  if (res.ok) {
-    claudeCodeOk = null;
-    refreshReady();
-    registerHotkeys();
-    core.restart();
-    resolveDataDir();
-  }
+  if (!res.ok) return res;
+  registerHotkeys();
+  // Hotkeys live in main only: changing them must not restart the core and cut off an answer.
+  if (Object.keys(patch).every((k) => k.startsWith("hotkeys."))) return res;
+  claudeCodeOk = null;
+  refreshReady();
+  core.restart();
+  resolveDataDir();
   return res;
 }
 
@@ -220,14 +234,30 @@ function refreshReady(): void {
   }, 300);
 }
 
+/** Lists models with the key: free, and a wrong key answers 401 at once instead of at the first question. */
+async function checkApiKey(key: string): Promise<"ok" | "rejected" | "offline"> {
+  try {
+    const r = await fetch("https://api.anthropic.com/v1/models?limit=1", {
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    return r.status === 401 || r.status === 403 ? "rejected" : "ok";
+  } catch {
+    return "offline";
+  }
+}
+
 function registerReadyIpc(): void {
   ipcMain.on("core:restart", () => core.restart());
   ipcMain.handle("ready:list", readyItems);
   ipcMain.on("ready:open", openReady);
-  ipcMain.handle("ready:apiKey", (_e, key: string) => {
+  ipcMain.handle("ready:apiKey", async (_e, key: string) => {
     const k = String(key).trim();
     if (!k.startsWith("sk-ant-")) return { ok: false, error: "Ключ API Anthropic начинается с sk-ant-." };
-    return saveConfig({ anthropicApiKey: k, "llm.backend": "api" });
+    const check = await checkApiKey(k);
+    if (check === "rejected") return { ok: false, error: "Anthropic не принял ключ. Проверьте, что он скопирован целиком и не отозван." };
+    const res = saveConfig({ anthropicApiKey: k, "llm.backend": "api" });
+    return res.ok && check === "offline" ? { ...res, note: "Ключ сохранён, но проверить его не удалось: нет связи с api.anthropic.com." } : res;
   });
   ipcMain.handle("ready:claudeCode", async () => {
     const res = saveConfig({ "llm.backend": "claude-code" });
@@ -317,7 +347,6 @@ app.whenReady().then(() => {
     core.send(cmd);
     if (cmd.cmd === "clear") emit({ ev: "cleared" });
   });
-  ipcMain.on("hide", (e) => BrowserWindow.fromWebContents(e.sender)?.hide());
   ipcMain.on("settings:open", (_e, section?: string) => openSettings(typeof section === "string" ? section : undefined));
   ipcMain.on("ui:copy", (_e, text: string) => clipboard.writeText(text));
   ipcMain.on("ui:action", (_e, a: HotkeyAction) => Object.hasOwn(actions, a) && actions[a]());
@@ -339,8 +368,11 @@ app.whenReady().then(() => {
     if (lastStatus) w.webContents.send("core-event", { ev: "status", ...lastStatus });
     if (lastCall) w.webContents.send("core-event", { ev: "call", ...lastCall });
   };
-  createOverlay("transcript", replay);
-  createOverlay("hints", replay);
+  const overlaysOn = () => {
+    if (overlays.transcript) return;
+    createOverlay("transcript", replay);
+    createOverlay("hints", replay);
+  };
   tray = createTray({
     toggleWindows,
     openCalls,
@@ -362,12 +394,37 @@ app.whenReady().then(() => {
   resolveDataDir()
     .then(migrateContext)
     .finally(() => core.start());
-  // A fresh install has no model and no Claude: say so at once, with the way to fix it.
+  // A fresh install has no model and no Claude: «Проверка готовности» alone first, the overlays after it.
   void readyItems().then((items) => {
     const missing = items.filter((i) => !i.ok).map((i) => i.id);
     if (missing.length) console.log(`[ready] missing: ${missing.join(", ")}`);
-    if (readiness.blocking(items)) openReady();
-  });
+    if (!readiness.blocking(items)) return overlaysOn();
+    openReady();
+    wins.ready?.once("closed", overlaysOn);
+  }, overlaysOn);
+});
+
+/** Resolves the wait of a quit for the open call's summary. */
+let summaryDone: ((dir: string) => void) | null = null;
+/** The longest a quit waits for the summary: it is written by the full model. */
+const QUIT_SUMMARY_MS = 180_000;
+let quitting = false;
+
+// Quitting with a call open ends it like «Завершить звонок»: the summary is written before the core stops.
+app.on("before-quit", (e) => {
+  const dir = lastCall?.dir;
+  if (quitting || !dir || !core.running()) return;
+  e.preventDefault();
+  quitting = true;
+  for (const w of BrowserWindow.getAllWindows()) w.hide();
+  tray?.setCall("пишу итог звонка, потом закроюсь");
+  const finish = () => {
+    summaryDone = null;
+    app.quit();
+  };
+  summaryDone = (d) => d === dir && finish();
+  setTimeout(finish, QUIT_SUMMARY_MS);
+  core.send({ cmd: "close_call" });
 });
 
 app.on("will-quit", () => {

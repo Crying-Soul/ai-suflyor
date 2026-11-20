@@ -3,7 +3,6 @@ import type { CoreEvent, RendererApi, UiMessage } from "../shared/protocol";
 
 const api: RendererApi = {
   send: (cmd) => ipcRenderer.send("core-cmd", cmd),
-  hide: () => ipcRenderer.send("hide"),
   onEvent: (cb) => {
     ipcRenderer.on("core-event", (_e, ev: CoreEvent) => cb(ev));
   },

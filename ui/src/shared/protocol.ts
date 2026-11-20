@@ -12,6 +12,8 @@ export type Command =
   | { cmd: "open_call"; dir: string }
   | { cmd: "reload_context" }
   | { cmd: "close_call" }
+  /** Writes `summary.md` of a call that is not open, from its saved files («Повторить итог»). */
+  | { cmd: "summarize"; dir: string }
   /** Rates answer turn `turn` of the open call (saved as `feedback` in answers.jsonl); null clears it. */
   | { cmd: "feedback"; turn: number; value: 1 | -1 | null }
   | { cmd: "shutdown" };
@@ -93,6 +95,8 @@ export interface SaveResult {
   ok: boolean;
   path?: string;
   error?: string;
+  /** Saved, with something the user should know. */
+  note?: string;
 }
 
 export type NodeKind = "profile" | "folder" | "call";
@@ -100,7 +104,7 @@ export type NodeKind = "profile" | "folder" | "call";
 export interface CallsTree {
   dataDir: string;
   profile: string;
-  folders: { dir: string; title: string; calls: { dir: string; title: string; hasSummary: boolean }[] }[];
+  folders: { dir: string; title: string; calls: { dir: string; title: string; hasSummary: boolean; started?: string }[] }[];
 }
 
 /** A call or folder whose text matches a search, with the matching line. */
@@ -303,6 +307,8 @@ export type UiMessage =
   | { kind: "rate"; value: 1 | -1 }
   /** The screen hotkey was pressed: a capture and an answer are coming. */
   | { kind: "looking" }
+  /** Ask, «Что сказать», «Вопросы» or «Продолжить ответ» was pressed: an answer is coming. */
+  | { kind: "asking" }
   /** Settings: show this section (the guide is "guide"). */
   | { kind: "section"; id: string }
   /** The hotkeys changed: re-read them for the button tooltips. */
@@ -321,7 +327,6 @@ export interface PrivacyReport {
 
 export interface RendererApi {
   send(cmd: Command): void;
-  hide(): void;
   onEvent(cb: (e: CoreEvent) => void): void;
   /** Opens Settings, on `section` if given ("guide": the in-app guide). */
   openSettings(section?: string): void;

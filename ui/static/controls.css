@@ -62,5 +62,14 @@
 dialog.confirm { width: min(26rem, calc(100vw - 2 * var(--space-lg))); padding: var(--space-lg); border: 0; border-radius: var(--radius-card); background: var(--color-paper-2); color: var(--color-ink); box-shadow: var(--shadow-card), var(--glass-hi); }
 dialog.confirm[open] { display: grid; gap: var(--space-md); }
 dialog.confirm::backdrop { background: oklch(10% 0.022 268 / 0.6); }
+/* Opens over --motion-enter, leaves over --motion-exit (askConfirm waits that long before removing it). */
+dialog.confirm[open] { animation: dialog-in var(--motion-enter) var(--ease-out); }
+dialog.confirm[open]::backdrop { animation: fade-in var(--motion-enter) var(--ease-out); }
+dialog.confirm.closing { animation: dialog-out var(--motion-exit) var(--ease-in) forwards; }
+dialog.confirm.closing::backdrop { animation: fade-out var(--motion-exit) var(--ease-in) forwards; }
+@keyframes dialog-in { from { opacity: 0; transform: scale(0.98); } }
+@keyframes dialog-out { to { opacity: 0; transform: scale(0.98); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
 dialog.confirm p { font-size: var(--text-sm); }
 .confirm-actions { display: flex; justify-content: flex-end; gap: var(--space-xs); }

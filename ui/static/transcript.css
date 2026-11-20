@@ -47,7 +47,7 @@ body.through .through-note { display: inline; }
 #transcript:not(:has(.block)) .empty { display: block; }
 
 /* A block: one speaker's consecutive utterances as a paragraph under a quiet name and time. */
-.block { display: grid; gap: var(--space-3xs); padding: var(--space-sm) 0 var(--space-sm) var(--space-sm); animation: enter var(--dur-short) var(--ease-out); }
+.block { display: grid; gap: var(--space-3xs); padding: var(--space-sm) 0 var(--space-sm) var(--space-sm); animation: enter var(--motion-enter) var(--ease-out); }
 .block + .block { margin-top: var(--space-2xs); }
 .bh { display: flex; align-items: baseline; gap: var(--space-xs); min-height: 20px; color: var(--color-muted); font-size: var(--text-xs); }
 .bh .who { font-weight: 500; }
@@ -62,18 +62,19 @@ body.through .through-note { display: inline; }
 
 .seg + .seg::before { content: " "; }
 /* The translation: under the words it renders, quieter, set off by a hairline. */
-.tr { margin: var(--space-2xs) 0 0; padding-top: var(--space-2xs); border-top: var(--rule-hair) solid var(--color-rule); color: var(--color-muted); font-size: var(--text-sm); line-height: 1.5; animation: enter var(--dur-short) var(--ease-out); }
+.tr { margin: var(--space-2xs) 0 0; padding-top: var(--space-2xs); border-top: var(--rule-hair) solid var(--color-rule); color: var(--color-muted); font-size: var(--text-sm); line-height: 1.5; animation: enter var(--motion-enter) var(--ease-out); }
 .tr > span + span::before { content: " "; }
 /* Words that may still change stay muted until the final text replaces them in place. */
 .seg.partial .tail { color: var(--color-muted); transition: color var(--dur-short) var(--ease-out); }
 /* A caught question: an apricot wash on its words; once asked, periwinkle with a check. */
-.seg.q { padding: 1px 3px; margin: 0 -3px; border-radius: 4px; background: color-mix(in oklab, var(--color-accent-2) 16%, transparent); box-decoration-break: clone; -webkit-box-decoration-break: clone; transition: background-color var(--dur-long) var(--ease-out); }
+.seg.q { padding: 1px 3px; margin: 0 -3px; border-radius: 4px; background: color-mix(in oklab, var(--color-accent-2) 16%, transparent); box-decoration-break: clone; -webkit-box-decoration-break: clone; transition: background-color var(--motion-state) var(--ease-out); }
 .seg.q[data-asked] { background: color-mix(in oklab, var(--color-accent) 14%, transparent); }
 .seg .icon { display: inline-block; margin-left: var(--space-2xs); vertical-align: -0.1em; color: var(--color-accent); }
 
 /* Ask about this block: in its header, shown on hover or keyboard focus. */
-.bh .ask { margin-left: auto; min-height: 22px; opacity: 0; pointer-events: none; transition: opacity var(--dur-short) var(--ease-out); }
-.block.them:hover .ask, .bh .ask:focus-visible { opacity: 1; pointer-events: auto; }
+.bh .ask { margin-left: auto; min-height: 28px; opacity: 0; pointer-events: none; transition: opacity var(--motion-state) var(--ease-out); }
+/* The newest block of theirs keeps its «Спросить» in sight; earlier ones show it on hover. */
+.block.them:hover .ask, .bh .ask:focus-visible, .block.them:not(:has(~ .block.them)) .ask { opacity: 1; pointer-events: auto; }
 
 /* Who is talking now: a fixed slot under the list, so the list itself never jumps. */
 #live { display: flex; align-items: center; gap: var(--space-xs); min-height: 20px; margin: calc(-1 * var(--space-2xs)) 0; color: var(--color-muted); font-size: var(--text-xs); opacity: 0; transition: opacity var(--dur-short) var(--ease-out); }
@@ -112,3 +113,7 @@ body.through .through-note { display: inline; }
 .call-chip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .call-chip.live { color: var(--color-accent-2); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-accent-2) 45%, transparent); }
 .call-chip.warn::after { content: " !"; color: var(--color-error); }
+/* No call open: nothing is saved, and the chip is the one place that says so. */
+.call-chip.unsaved { max-width: 62%; color: var(--color-accent-2); }
+/* «Очистить» armed by its first press: the second one clears. */
+#btn-clear.armed { color: var(--color-error); background: color-mix(in oklab, var(--color-error) 14%, transparent); }

@@ -1,4 +1,4 @@
-// «Подготовка к работе»: one card per thing the app needs, kept in place while the list updates,
+// «Проверка готовности»: one card per thing the app needs, kept in place while the list updates,
 // so a download in progress or a key being typed is never redrawn away.
 import type { ReadyItem } from "../shared/protocol";
 import { $, api, guardPopups } from "./common";
@@ -40,8 +40,19 @@ function claude(item: ReadyItem): HTMLElement {
   const panes = { api: el("div", { className: "pane", role: "tabpanel" }), code: el("div", { className: "pane", role: "tabpanel" }) };
   const select = (k: keyof typeof panes) => {
     for (const [name, pane] of Object.entries(panes)) pane.hidden = name !== k;
-    tabs.querySelectorAll("button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.k === k)));
+    // Roving tabindex: Tab enters the selected tab only, arrows move between tabs.
+    tabs.querySelectorAll("button").forEach((b) => {
+      b.setAttribute("aria-selected", String(b.dataset.k === k));
+      b.tabIndex = b.dataset.k === k ? 0 : -1;
+    });
   };
+  tabs.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const all = [...tabs.querySelectorAll<HTMLButtonElement>("button")];
+    const next = all[(all.indexOf(e.target as HTMLButtonElement) + (e.key === "ArrowRight" ? 1 : all.length - 1)) % all.length];
+    next.focus();
+    next.click();
+  });
   for (const [k, label] of [["api", "Ключ API"], ["code", "Claude Code"]] as const) {
     const b = el("button", { type: "button", role: "tab", textContent: label });
     b.dataset.k = k;
@@ -53,7 +64,7 @@ function claude(item: ReadyItem): HTMLElement {
   const [apiRes, apiSay] = result();
   const connect = small("Подключить", async () => {
     const r = await api.ready.useApiKey(key.value);
-    apiSay(r.ok, r.ok ? "Ключ сохранён, ядро перезапускается." : (r.error ?? "Не удалось сохранить."));
+    apiSay(r.ok, r.ok ? (r.note ?? "Ключ принят и сохранён, ядро перезапускается.") : (r.error ?? "Не удалось сохранить."));
   }, "btn small");
   key.onkeydown = (e) => e.key === "Enter" && connect.click();
   panes.api.append(
@@ -132,14 +143,21 @@ function render(items: ReadyItem[]): void {
   const missing = items.filter((i) => i.level === "required" && !i.ok);
   $("summary").textContent = missing.length
     ? `Готово ${ok} из ${items.length}. Без отмеченных «обязательно» Суфлёр не сможет помогать в звонке.`
-    : `Готово ${ok} из ${items.length}. Можно начинать.`;
+    : `Готово ${ok} из ${items.length}. Дальше: в «Звонках» заполните «Обо мне» и создайте звонок, иначе транскрипт и ответы не сохранятся.`;
+  ready = !missing.length;
   const done = $<HTMLButtonElement>("btn-done");
-  done.textContent = missing.length ? "Пропустить пока" : "Готово";
-  done.className = missing.length ? "btn-ghost" : "btn";
+  done.textContent = ready ? "Открыть «Звонки»" : "Пропустить пока";
+  done.className = ready ? "btn" : "btn-ghost";
 }
 
+/** Everything required is in place: «Готово» leads on to «Звонки». */
+let ready = false;
+
 guardPopups();
-$("btn-done").onclick = () => api.closeWindow();
+$("btn-done").onclick = () => {
+  if (ready) api.openCalls();
+  api.closeWindow();
+};
 $("btn-settings").onclick = () => api.openSettings();
 document.addEventListener("keydown", (e) => e.key === "Escape" && !document.querySelector("dialog[open]") && api.closeWindow());
 api.ready.onChange(render);

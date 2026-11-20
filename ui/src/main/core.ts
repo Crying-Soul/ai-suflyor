@@ -72,6 +72,10 @@ export class CoreProcess {
     });
   }
 
+  running(): boolean {
+    return this.proc !== null;
+  }
+
   send(cmd: Command): void {
     if (this.proc?.stdin?.writable) this.proc.stdin.write(JSON.stringify(cmd) + "\n");
     else console.warn(`[core] not running, dropped ${cmd.cmd}`);

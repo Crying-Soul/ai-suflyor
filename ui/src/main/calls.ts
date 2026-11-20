@@ -118,7 +118,10 @@ export function tree(dataDir: string): CallsTree {
       // Newest call first: names start with the date.
       calls: subdirs(path.join(f, "calls"))
         .reverse()
-        .map((c) => ({ dir: c, title: title(c), hasSummary: fs.existsSync(path.join(c, "summary.md")) })),
+        .map((c) => {
+          const started = readJson(path.join(c, "meta.json")).started;
+          return { dir: c, title: title(c), hasSummary: fs.existsSync(path.join(c, "summary.md")), started: typeof started === "string" ? started : undefined };
+        }),
     })),
   };
 }
@@ -223,6 +226,15 @@ function create(dir: string, meta: Record<string, unknown>, notes: string): stri
   writeAtomic(path.join(dir, "meta.json"), JSON.stringify(meta, null, 2) + "\n");
   writeAtomic(path.join(dir, "context.md"), notes);
   return dir;
+}
+
+/** A call opened for the first time (nothing recorded yet) starts now, not when it was created. */
+export function markStarted(dir: string): void {
+  const metaPath = path.join(dir, "meta.json");
+  if (!fs.existsSync(metaPath) || readText(path.join(dir, "transcript.jsonl")).trim()) return;
+  const meta = readJson(metaPath);
+  meta.started = new Date().toISOString();
+  writeAtomic(metaPath, JSON.stringify(meta, null, 2) + "\n");
 }
 
 export function createFolder(dataDir: string, name: string): string {

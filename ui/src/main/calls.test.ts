@@ -112,3 +112,24 @@ test("templates, stage, brief and profile suggestions", () => {
   // «Из звонков» in the middle: the fact goes to the end of that section, not of the file.
   assert.equal(calls.withFact("## Из звонков\n- a\n\n## Как я говорю\nx\n", "b"), "## Из звонков\n- a\n- b\n\n## Как я говорю\nx\n");
 });
+
+test("a call starts when first opened, not when created", () => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), "suflyor-started-"));
+  try {
+    const folder = calls.createFolder(data, "Acme");
+    const call = calls.createCall(data, folder, "Tech");
+    const meta = path.join(call, "meta.json");
+    fs.writeFileSync(meta, JSON.stringify({ ...JSON.parse(fs.readFileSync(meta, "utf8")), started: "2000-01-01T00:00:00.000Z" }));
+    calls.markStarted(call);
+    const opened = JSON.parse(fs.readFileSync(meta, "utf8")).started;
+    assert.notEqual(opened, "2000-01-01T00:00:00.000Z");
+    assert.equal(calls.tree(data).folders[0].calls[0].started, opened);
+    // Once something is recorded, opening it again keeps the start.
+    fs.writeFileSync(path.join(call, "transcript.jsonl"), '{"speaker":"them","t_ms":1,"text":"hi"}\n');
+    fs.writeFileSync(meta, JSON.stringify({ ...JSON.parse(fs.readFileSync(meta, "utf8")), started: "2001-01-01T00:00:00.000Z" }));
+    calls.markStarted(call);
+    assert.equal(JSON.parse(fs.readFileSync(meta, "utf8")).started, "2001-01-01T00:00:00.000Z");
+  } finally {
+    fs.rmSync(data, { recursive: true, force: true });
+  }
+});

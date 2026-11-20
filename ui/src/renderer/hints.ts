@@ -1,5 +1,5 @@
 import type { CoreEvent, ReadyItem, Status } from "../shared/protocol";
-import { $, api, bindActions, el, icon, keyLabel, modelLabel, overlayUi } from "./common";
+import { $, api, bindActions, coreDownText, el, humanError, icon, keyLabel, modelLabel, overlayUi, replayGuard, sttLabel } from "./common";
 import { render } from "./md";
 
 const turnsEl = $("turns");
@@ -13,21 +13,56 @@ let metrics: Record<string, number> = {};
 
 // ---------- turn state chip: what the assistant is doing right now ----------
 
-type Phase = "idle" | "listening" | "recognizing" | "caught" | "looking" | "answering" | "done" | "error";
+type Phase = "idle" | "listening" | "recognizing" | "caught" | "asking" | "looking" | "answering" | "done" | "error";
 const PHASE_TEXT: Record<Phase, string> = {
   idle: "Слушаю",
   listening: "Собеседник говорит…",
   recognizing: "Распознаю…",
   caught: "Вопрос пойман",
+  asking: "Спрашиваю…",
   looking: "Смотрю на экран…",
   answering: "Отвечаю…",
   done: "Готово",
   error: "Ошибка",
 };
 
-function setPhase(p: Phase, detail = ""): void {
-  chip.dataset.phase = p;
-  chip.textContent = detail ? `${PHASE_TEXT[p]}. ${detail}` : PHASE_TEXT[p];
+/** What «Слушаю» would claim, checked against the core: no core, no recognition or a muted side say so. */
+function idleText(): { text: string; warn: boolean } {
+  if (!status) return { text: "Жду ядро…", warn: false };
+  if (status.stt === "loading") return { text: "Загружаю распознавание…", warn: false };
+  if (!status.stt.startsWith("ready")) return { text: `Не слушаю: ${sttLabel(status.stt)}`, warn: true };
+  if (status.mute_them && status.mute_me) return { text: "Не слушаю: оба звука выключены", warn: true };
+  if (status.mute_them) return { text: "Не слышу собеседника: его звук выключен", warn: true };
+  if (status.them.state === "error") return { text: "Не слышу собеседника: звук недоступен", warn: true };
+  return { text: "Слушаю", warn: false };
+}
+
+/** The phase the turn is in; the chip may show it up to HOLD_MS later. */
+let phase: Phase = "idle";
+/** A phase stays on screen this long, so «Слушаю → Распознаю» does not flicker. */
+const HOLD_MS = 400;
+/** Phases the user acts on: shown at once. */
+const URGENT = new Set<Phase>(["caught", "asking", "looking", "answering", "error"]);
+let shownAt = 0;
+let holdTimer = 0;
+
+function setPhase(p: Phase, detail = "", tip = ""): void {
+  phase = p;
+  clearTimeout(holdTimer);
+  const wait = shownAt + HOLD_MS - Date.now();
+  if (wait > 0 && !URGENT.has(p)) {
+    holdTimer = window.setTimeout(() => paintPhase(p, detail, tip), wait);
+    return;
+  }
+  paintPhase(p, detail, tip);
+}
+
+function paintPhase(p: Phase, detail: string, tip: string): void {
+  const idle = p === "idle" ? idleText() : null;
+  chip.dataset.phase = idle?.warn ? "warn" : p;
+  chip.textContent = idle ? idle.text : detail ? `${PHASE_TEXT[p]}. ${detail}` : PHASE_TEXT[p];
+  chip.title = tip;
+  shownAt = Date.now();
 }
 
 // ---------- answers: one card per ask, newest on top ----------
@@ -53,11 +88,11 @@ let current = -1;
 let shown = -1;
 const HISTORY_LIMIT = 50;
 /** Tooltip of the «Продолжить ответ» buttons, with the key in effect. */
-let moreTip = "Ещё 2–3 предложения к этому ответу";
+let moreTip = "Ещё 2–3 предложения к этой подсказке";
 
 /** How the card names its ask: a fixed title for the suggestion kinds, else the question itself. */
 const KIND_TITLE: Record<string, string> = { questions: "Что спросить у собеседника", continue: "Как продолжить ваш ответ", more: "Продолжение ответа" };
-const TRIGGER_LABEL: Record<string, string> = { auto: "авто", early: "авто", picked: "выбрано", screen: "экран", questions: "мои вопросы", continue: "что сказать", more: "продолжение" };
+const TRIGGER_LABEL: Record<string, string> = { auto: "авто", early: "авто", picked: "выбрано", screen: "экран", questions: "вопросы", continue: "что сказать", more: "продолжение" };
 
 function newTurn(id: number, question: string, trigger: string): Turn {
   const prev = turns.get(current);
@@ -143,13 +178,8 @@ function schedule(t: Turn): void {
 
 /** A failed answer: what happened in words, the raw cause folded away. */
 function failure(raw: string): HTMLElement {
-  const title = /timed? ?out|timeout/i.test(raw)
-    ? "Claude не ответил вовремя"
-    : /401|api[_ ]?key|auth|login/i.test(raw)
-      ? "Claude не подключён: проверьте ключ или вход"
-      : "Claude не ответил";
   const box = el("details", "error");
-  box.append(el("summary", "", title), el("p", "", raw));
+  box.append(el("summary", "", humanError(raw)), el("p", "", raw));
   return box;
 }
 
@@ -231,9 +261,9 @@ function rate(value: 1 | -1): void {
 /** A short note in the state chip, then back to what it said. */
 function flash(text: string): void {
   const before = chip.textContent;
-  const phase = chip.dataset.phase;
+  const was = chip.dataset.phase;
   chip.textContent = text;
-  setTimeout(() => chip.dataset.phase === phase && chip.textContent === text && (chip.textContent = before), 1500);
+  setTimeout(() => chip.dataset.phase === was && chip.textContent === text && (chip.textContent = before), 1500);
 }
 
 /** -1: an older answer, 1: a newer one. Turns are kept in the order they were asked. */
@@ -311,28 +341,37 @@ function renderLatency(): void {
       : "";
 }
 
+const replaying = replayGuard();
+/** The quick line, read out once it is complete (the cards themselves are not a live region: they stream). */
+const say = $("say");
+
 api.onEvent((e: CoreEvent) => {
   switch (e.ev) {
-    case "status":
+    case "status": {
+      const model = status && status.model !== e.model;
       status = e;
       modelBtn.textContent = modelLabel(e);
       modelBtn.hidden = false;
+      if (model) flash(`Модель: ${modelLabel(e)}`);
+      else if (phase === "idle") setPhase("idle");
       break;
+    }
     case "vad":
       onSpeech(e.speaker, e.active);
       if (e.speaker !== "them") break;
       if (e.active) setPhase("listening");
-      else if (chip.dataset.phase === "listening") setPhase("recognizing");
+      else if (phase === "listening") setPhase("recognizing");
       break;
     case "final":
-      if (e.speaker !== "them" || chip.dataset.phase === "answering") break;
-      if (e.question) setPhase("caught", status?.auto ? "" : "Автоответ выключен, нажмите «Спросить»");
-      else if (chip.dataset.phase === "recognizing") setPhase("idle");
+      if (e.speaker !== "them" || phase === "answering") break;
+      if (e.question) setPhase("caught", status?.auto ? "" : `Автоответ выключен. Спросить: ${askKey}`);
+      else if (phase === "recognizing") setPhase("idle");
       break;
     case "screenshot":
       shots.set(e.turn, { thumb: e.thumb, width: e.width, height: e.height });
       break;
     case "answer_start": {
+      if (document.body.classList.contains("replay")) replaying();
       const t = turns.get(e.turn) ?? newTurn(e.turn, e.question, e.trigger);
       answers.set(e.id, { turn: e.turn, tier: e.tier });
       t.text[e.tier] = "";
@@ -371,6 +410,7 @@ api.onEvent((e: CoreEvent) => {
         t.rating = e.feedback;
         renderNav();
       }
+      if (a.tier === "quick" && !e.error && a.turn === current && !document.body.classList.contains("replay")) say.textContent = t.text.quick;
       // The full answer decides the chip; a cancelled one was replaced by a newer ask.
       if (a.tier === "full" && e.error !== "cancelled") {
         setTurnState(t, e.error ? "error" : "done");
@@ -385,28 +425,39 @@ api.onEvent((e: CoreEvent) => {
       }
       break;
     case "cleared":
+      replaying();
       clearTurns();
       break;
     case "call":
       callOpen = Boolean(e.dir);
       break;
+    case "error":
+      // Claude failing outside an answer (its warm-up): said here, before the first question finds it.
+      if (/^Claude/.test(e.message)) setPhase("error", humanError(e.message), e.message);
+      break;
+    case "ready":
+      if (phase === "error") setPhase("idle");
+      break;
     case "core_down":
-      setPhase("error", e.message);
+      status = null;
+      setPhase("error", coreDownText(e.message), e.message);
       break;
   }
 });
 
 $("btn-help").onclick = () => api.openSettings("guide");
 modelBtn.onclick = () => api.send({ cmd: "set", model: "toggle" });
-$("btn-hide").onclick = () => api.hide();
 setPhase("idle");
 renderNav();
 // Ask, screen, continue, questions and the answer arrows run through main, like their hotkeys.
 const bound = bindActions();
+/** The ask key as the user reads it, for the chip's «Спросить: …». */
+let askKey = "";
 const refreshKeys = () => {
   bound();
   void api.hotkeys().then((k) => {
-    moreTip = `Ещё 2–3 предложения к этому ответу · ${keyLabel(k.moreAnswer)}`;
+    askKey = keyLabel(k.ask);
+    moreTip = `Ещё 2–3 предложения к этой подсказке · ${keyLabel(k.moreAnswer)}`;
     document.querySelectorAll<HTMLElement>(".turn .more").forEach((b) => (b.title = moreTip));
   });
 };
@@ -414,6 +465,11 @@ refreshKeys();
 overlayUi((m) => {
   if (m.kind === "nav") nav(m.dir);
   else if (m.kind === "looking") setPhase("looking");
+  else if (m.kind === "asking") {
+    setPhase("asking");
+    // Nothing to answer (an empty transcript): the chip must not wait forever.
+    setTimeout(() => phase === "asking" && setPhase("idle"), 10_000);
+  }
   else if (m.kind === "copy") copyShown();
   else if (m.kind === "rate") rate(m.value);
   else if (m.kind === "hotkeys") refreshKeys();

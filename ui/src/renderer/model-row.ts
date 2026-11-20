@@ -64,7 +64,7 @@ export function modelRow(m: ModelInfo, box: HTMLElement, ops: ModelOps): HTMLEle
     await refresh();
   };
   const del = async () => {
-    if (!(await askConfirm(`Удалить модель ${m.label} с диска?`, "Удалить"))) return;
+    if (!(await askConfirm(`Удалить модель ${m.label} с диска?`, "Удалить", "Отмена", true))) return;
     await ops.remove!(m.id).catch((e) => askConfirm(String(e), "Понятно", null));
     await refresh();
   };

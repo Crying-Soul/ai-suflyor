@@ -11,6 +11,10 @@ let current: NodeData | null = null;
 /** The call the core has open now (its context is in use and its transcript is being saved). */
 let live: CallInfo | null = null;
 let dirty = false;
+/** Calls whose summary is being written: no «Продолжить звонок» until it is in. */
+const summarizing = new Set<string>();
+/** Saves the form on show (set by renderPane). */
+let saveForm: () => Promise<void> = async () => {};
 /** The form's values as typed, for a re-render that must keep unsaved edits. */
 let typed: (() => Pick<NodeData, "title" | "context" | "glossary" | "stage">) | null = null;
 
@@ -67,16 +71,23 @@ async function loadTree(): Promise<void> {
     const ul = el("ul", "calls");
     ul.replaceChildren(...f.calls.map((c) => {
       const li = el("li");
-      li.append(treeButton(c.dir, c.title, callDate(c.dir)));
+      li.append(treeButton(c.dir, c.title, callDate(c.dir, c.started)));
       return li;
     }));
+    if (!f.calls.length) ul.append(el("li", "empty", "Звонков нет: «Новый звонок» в папке"));
     items[i + 1].append(treeButton(f.dir, f.title), ul);
   });
+  if (!tree.folders.length) items.push(el("li", "empty", "Создайте папку компании, в ней звонок: так транскрипт и итог сохранятся"));
   treeEl.replaceChildren(...items);
 }
 
-/** "2026-11-05-1200-..." -> "05.11, 12:00". */
-function callDate(dir: string): string {
+/** When the call started (meta.json `started`, set when it is first opened), else its name's date: "05.11, 12:00". */
+function callDate(dir: string, started?: string): string {
+  if (started) {
+    const d = new Date(started);
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${p(d.getDate())}.${p(d.getMonth() + 1)}, ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
   const m = /(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})-[^\\/]*$/.exec(dir);
   return m ? `${m[3]}.${m[2]}, ${m[4]}:${m[5]}` : "";
 }
@@ -84,7 +95,7 @@ function callDate(dir: string): string {
 // ---------- the node pane ----------
 
 async function select(dir: string): Promise<void> {
-  if (dirty && current?.dir !== dir && !(await askConfirm("Перейти без сохранения изменений?", "Перейти"))) return;
+  if (dirty && current?.dir !== dir && !(await askConfirm("Перейти без сохранения изменений?", "Перейти", "Отмена", true))) return;
   try {
     current = await api.calls.node(dir);
   } catch (e) {
@@ -124,7 +135,7 @@ function button(text: string, cls: string, onclick: () => unknown): HTMLButtonEl
 function renderPane(n: NodeData): void {
   const head = el("header", "pane-head");
   const h = el("h2", "", n.title);
-  const kind = n.kind === "profile" ? "Профиль" : n.kind === "folder" ? "Папка" : n.started ? `Звонок от ${new Date(n.started).toLocaleString("ru-RU", { dateStyle: "long", timeStyle: "short" })}` : "Звонок";
+  const kind = n.kind === "profile" ? "Для всех звонков" : n.kind === "folder" ? "Папка" : n.started ? `Звонок от ${new Date(n.started).toLocaleString("ru-RU", { dateStyle: "long", timeStyle: "short" })}` : "Звонок";
   head.append(el("p", "kind", kind), h, el("p", "hint", KIND_NOTE[n.kind]));
 
   const actions = el("div", "pane-actions");
@@ -133,13 +144,26 @@ function renderPane(n: NodeData): void {
     if (isLive) {
       actions.append(
         button("Завершить звонок", "btn", () => {
+          summarizing.add(n.dir);
           api.send({ cmd: "close_call" });
           setState("pending", "Звонок завершён. Пишу итог…");
         }),
         el("span", "live-note", "Идёт: транскрипт и ответы сохраняются сюда"),
       );
+    } else if (summarizing.has(n.dir)) {
+      actions.append(el("span", "live-note", "Пишу итог… Продолжить звонок можно, когда он будет готов."));
     } else {
-      actions.append(button(n.transcript?.length ? "Продолжить звонок" : "Начать звонок", "btn", () => api.send({ cmd: "open_call", dir: n.dir })));
+      actions.append(button(n.transcript?.length ? "Продолжить звонок" : "Начать звонок", "btn", () => start(n)));
+      if (n.transcript?.length) {
+        actions.append(
+          button(n.summary?.trim() ? "Повторить итог" : "Написать итог", "btn-ghost", () => {
+            summarizing.add(n.dir);
+            api.send({ cmd: "summarize", dir: n.dir });
+            renderPane(dirty && typed ? { ...n, ...typed() } : n);
+            setState("pending", "Пишу итог…");
+          }),
+        );
+      }
     }
     actions.append(
       button("Предпросмотр контекста", "btn-ghost", () => preview(n.dir)),
@@ -147,7 +171,7 @@ function renderPane(n: NodeData): void {
         api.calls.exportMd(n.dir).then((p) => p && setState("done", `Сохранено: ${p}`)).catch(fail),
       ),
     );
-    if (!isLive) actions.append(moveControl(n));
+    actions.append(moveControl(n, isLive));
   } else if (n.kind === "folder") {
     actions.append(
       button("Новый звонок", "btn", async () => select(await api.calls.createCall(n.dir, "Новый звонок")).then(loadTree)),
@@ -177,18 +201,18 @@ function renderPane(n: NodeData): void {
     dirty = true;
     setState("pending", "Есть несохранённые изменения");
   });
-  form.addEventListener("submit", async (e) => {
+  saveForm = async () => {
+    await api.calls.save(n.dir, { title: title.value, context: notes.value, glossary: glossary.value.split("\n"), stage: stageValue() });
+    dirty = false;
+    n.title = n.kind === "profile" ? n.title : title.value.trim() || n.title;
+    n.context = notes.value;
+    h.textContent = n.title;
+    setState("done", live?.dir || n.kind === "profile" ? "Сохранено. Контекст обновлён." : "Сохранено.");
+    await loadTree();
+  };
+  form.addEventListener("submit", (e) => {
     e.preventDefault();
-    try {
-      await api.calls.save(n.dir, { title: title.value, context: notes.value, glossary: glossary.value.split("\n"), stage: stageValue() });
-      dirty = false;
-      n.title = n.kind === "profile" ? n.title : title.value.trim() || n.title;
-      h.textContent = n.title;
-      setState("done", live?.dir || n.kind === "profile" ? "Сохранено. Контекст обновлён." : "Сохранено.");
-      await loadTree();
-    } catch (err) {
-      fail(err);
-    }
+    saveForm().catch(fail);
   });
 
   const footer = el("footer", "actions");
@@ -215,18 +239,20 @@ function renderPane(n: NodeData): void {
 }
 
 /** A folder picker and a button that moves the call there (not the open one: the core writes into it). */
-function moveControl(n: NodeData): HTMLElement {
+function moveControl(n: NodeData, isLive: boolean): HTMLElement {
   const here = tree.folders.find((f) => f.calls.some((c) => c.dir === n.dir));
   const others = tree.folders.filter((f) => f !== here);
   const box = el("div", "move");
-  if (!others.length) return box;
+  // Said, not just missing: the user looking for «Перенести» learns why it is not there.
+  if (isLive) return (box.append(el("span", "hint", "Перенести можно после «Завершить звонок».")), box);
+  if (!others.length) return (box.append(el("span", "hint", "Перенести некуда: другой папки нет.")), box);
   const pick = el("select", "select");
   pick.setAttribute("aria-label", "Папка, куда перенести звонок");
   pick.append(...others.map((f) => Object.assign(el("option", "", f.title), { value: f.dir })));
   box.append(
     pick,
     button("Перенести", "btn-ghost", async () => {
-      if (dirty && !(await askConfirm("Перенести без сохранения изменений?", "Перенести"))) return;
+      if (dirty && !(await askConfirm("Перенести без сохранения изменений?", "Перенести", "Отмена", true))) return;
       try {
         const to = await api.calls.move(n.dir, pick.value);
         dirty = false;
@@ -252,7 +278,7 @@ function filesField(n: NodeData): HTMLElement {
       el("span", "meta num", `${fmtSize(f.size)}, ${f.tokens === null ? "текст не извлечён" : fmtTokens(f.tokens)}`),
       button("Текст", "btn-ghost small", () => showFile(n, f.name)),
       button("Удалить", "btn-ghost small", async () => {
-        if (!(await askConfirm(`Удалить ${f.name} из контекста?`, "Удалить"))) return;
+        if (!(await askConfirm(`Удалить ${f.name} из контекста?`, "Удалить", "Отмена", true))) return;
         await api.calls.removeFile(n.dir, f.name);
         await refreshFiles(n);
       }),
@@ -299,6 +325,17 @@ async function addFiles(n: NodeData, paths?: string[]): Promise<void> {
   else setState("done", "Файлы добавлены.");
 }
 
+/** Starts (or continues) a call: unsaved notes are saved first, another open call ends with its summary. */
+async function start(n: NodeData): Promise<void> {
+  if (live?.dir && live.dir !== n.dir) {
+    const ok = await askConfirm(`Идёт звонок «${live.title}». Завершить его (итог запишется) и начать этот?`, "Завершить и начать");
+    if (!ok) return;
+    summarizing.add(live.dir);
+  }
+  if (dirty) await saveForm();
+  api.send({ cmd: "open_call", dir: n.dir });
+}
+
 /** Summary, transcript and answers of a call, read only. */
 function callRecord(n: NodeData): HTMLElement[] {
   const summary = el("section", "record");
@@ -309,7 +346,7 @@ function callRecord(n: NodeData): HTMLElement[] {
     summary.append(body);
     if (n.suggestions?.length) summary.append(profileSuggestions(n));
   } else {
-    summary.append(el("p", "hint", "Появится после «Завершить звонок». Следующие звонки этой папки получат его в контексте."));
+    summary.append(el("p", "hint", n.transcript?.length && live?.dir !== n.dir ? "Итога нет: «Написать итог» выше. Следующие звонки этой папки получат его в контексте." : "Появится после «Завершить звонок». Следующие звонки этой папки получат его в контексте."));
   }
 
   const log = el("section", "record");
@@ -333,7 +370,7 @@ function callRecord(n: NodeData): HTMLElement[] {
 /** «Добавить в профиль» of the summary: each fact goes into «Обо мне» with one click. */
 function profileSuggestions(n: NodeData): HTMLElement {
   const box = el("div", "suggestions");
-  box.append(el("h4", "", "В профиль"), el("p", "hint", "Факты о вас из этого звонка, которых нет в «Обо мне». Добавленный факт попадёт в раздел «Из звонков»."));
+  box.append(el("h4", "", "Добавить в «Обо мне»"), el("p", "hint", "Факты о вас из этого звонка, которых нет в «Обо мне». Добавленный факт попадёт в раздел «Из звонков»."));
   const ul = el("ul", "suggestion-list");
   for (const fact of n.suggestions ?? []) {
     const li = el("li");
@@ -388,7 +425,7 @@ function rehearsal(n: NodeData): HTMLElement {
 
 async function remove(n: NodeData): Promise<void> {
   const what = n.kind === "folder" ? `папку «${n.title}» со всеми звонками` : `звонок «${n.title}»`;
-  if (!(await askConfirm(`Переместить ${what} в корзину?`, "В корзину"))) return;
+  if (!(await askConfirm(`Переместить ${what} в корзину?`, "В корзину", "Отмена", true))) return;
   await api.calls.remove(n.dir);
   current = null;
   dirty = false;
@@ -431,6 +468,7 @@ api.onEvent((e) => {
     if (current) renderPane(dirty && typed ? { ...current, ...typed() } : current);
     if (e.warnings.length) setState("error", e.warnings.join(". "));
   } else if (e.ev === "summary") {
+    summarizing.delete(e.dir);
     loadTree().catch(fail);
     if (current?.dir === e.dir) {
       select(e.dir).then(() => setState(e.ok ? "done" : "error", e.ok ? "Итог записан." : `Итог не записан: ${e.error}`));

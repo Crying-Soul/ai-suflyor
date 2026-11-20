@@ -208,9 +208,10 @@ export function openSettings(section?: string): void {
     titleBarStyle: "hidden",
     titleBarOverlay: titleBar(),
     icon: windowIcon(),
-    alwaysOnTop: true,
+    show: false,
     webPreferences: webPreferences(),
   });
+  wins.settings.once("ready-to-show", () => wins.settings?.show());
   // Settings show the API key and the user context: keep them out of screen sharing too.
   wins.settings.setContentProtection(true);
   load(wins.settings, "settings", section);
@@ -232,8 +233,10 @@ export function openCalls(): void {
     titleBarStyle: "hidden",
     titleBarOverlay: titleBar(),
     icon: windowIcon(),
+    show: false,
     webPreferences: webPreferences(),
   });
+  wins.calls.once("ready-to-show", () => wins.calls?.show());
   // CVs, notes and transcripts: never in a screen share.
   wins.calls.setContentProtection(true);
   load(wins.calls, "calls");
@@ -260,13 +263,15 @@ export function openReady(): void {
     height: 680,
     minWidth: 480,
     minHeight: 420,
-    title: "Подготовка к работе",
+    title: "Проверка готовности",
     backgroundColor: paper(),
     titleBarStyle: "hidden",
     titleBarOverlay: titleBar(),
     icon: windowIcon(),
+    show: false,
     webPreferences: webPreferences(),
   });
+  wins.ready.once("ready-to-show", () => wins.ready?.show());
   wins.ready.setContentProtection(true);
   load(wins.ready, "ready");
   wins.ready.on("closed", () => (wins.ready = null));

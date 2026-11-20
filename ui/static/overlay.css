@@ -43,13 +43,20 @@ body.mini .mode[data-action="cameraMode"], body.through .mode[data-action="click
 [data-state="asked"] .state-word, .state-word[data-state="done"] { color: var(--color-accent); }
 [data-state="live"] .mark, [data-state="waiting"] .mark, .state-word[data-state="answering"] .mark { background: var(--color-accent); }
 .state-word[data-state="error"] { color: var(--color-error); }
-/* Something is being worked on: the open mark breathes, the loader of this system. Still under reduced motion (base.css). */
-[data-state="live"] .mark, [data-state="waiting"] .mark, .state-word[data-state="answering"] .mark { animation: breathe 1.6s var(--ease-in-out) infinite; }
+/* One breathing mark per window says «working» (the hints chip, the transcript's live line); the rest stay still. */
 /* The floor stays at 0.55: lower, a working periwinkle mark reads as the grey idle one. */
 @keyframes breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.55; transform: scale(0.7); } }
+/* Reduced motion keeps the difference between «working» and «done» (.keep-motion is spared by base.css):
+ * opacity only, slower, no scaling. */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+  .keep-motion, .keep-motion::before { animation-duration: 2.4s !important; }
+}
 
 /* New content rises in, short and soft: reading is not interrupted. Instant under reduced motion (base.css). */
-@keyframes enter { from { opacity: 0; transform: translateY(6px); } }
+@keyframes enter { from { opacity: 0; transform: translateY(var(--shift-enter)); } }
+/* A replayed call or a restarted core fills the window at once: only what arrives live rises in. */
+body.replay .block, body.replay .tr, body.replay .turn { animation: none !important; }
 
 /* Scroll areas: a thin thumb in the rule colour, no native arrows. */
 #transcript, #turns { scrollbar-width: thin; scrollbar-color: var(--color-rule) transparent; }

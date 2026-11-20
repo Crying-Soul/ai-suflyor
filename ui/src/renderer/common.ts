@@ -38,6 +38,7 @@ export function keyLabel(accel: string): string {
 /**
  * Buttons with `data-action` run that hotkey's action in main; the tooltip is `data-label` plus
  * the keys in effect, re-read when the hotkeys change (`{kind: "hotkeys"}` through `overlayUi`).
+ * `<span data-key="action">` in the text shows that action's keys.
  */
 export function bindActions(): () => void {
   const buttons = [...document.querySelectorAll<HTMLButtonElement>("button[data-action]")];
@@ -50,6 +51,7 @@ export function bindActions(): () => void {
         b.title = key ? `${label} · ${keyLabel(key)}` : label;
         if (!b.textContent?.trim()) b.setAttribute("aria-label", label);
       }
+      for (const s of document.querySelectorAll<HTMLElement>("[data-key]")) s.textContent = keyLabel(keys[s.dataset.key as HotkeyAction] ?? "");
     });
   refresh();
   return refresh;
@@ -60,9 +62,37 @@ export function sttLabel(stt: string): string {
   if (stt === "off") return "распознавание выключено";
   if (stt === "loading") return "загружаю модель речи…";
   if (stt.startsWith("ready")) return stt.includes("gpu") ? "готово, GPU" : "готово, CPU";
-  // The raw cause goes to the tooltip; «Подготовка к работе» names the fix.
+  // The raw cause goes to the tooltip; «Проверка готовности» names the fix.
   if (stt.startsWith("error")) return "распознавание не запущено";
   return stt;
+}
+
+/** A failure in words, by its raw cause (which goes to a tooltip or a fold, never in front). */
+export function humanError(raw: string): string {
+  if (/timed? ?out|timeout/i.test(raw)) return "Claude не ответил вовремя";
+  if (/401|403|api[_ ]?key|auth|login|credential/i.test(raw)) return "Claude не подключён: проверьте ключ или вход";
+  if (/429|rate|overloaded|529/i.test(raw)) return "Claude перегружен, повторите через минуту";
+  if (/connect|network|dns|offline|resolve/i.test(raw)) return "Нет связи с Claude";
+  if (/^Claude/.test(raw)) return "Claude недоступен";
+  return "Что-то пошло не так";
+}
+
+/** core_down in words: restarting by itself, or stopped for good (then the tray restarts it). */
+export function coreDownText(raw: string): string {
+  return /gave up/.test(raw) ? "Ядро остановилось. Перезапуск: значок в трее → «Перезапустить ядро»" : "Ядро перезапускается…";
+}
+
+/**
+ * New content rises in only when it arrives live: a replayed call (after `cleared`) or a restarted
+ * core fills the windows at once. Call the result on `cleared` and on every replayed event.
+ */
+export function replayGuard(): () => void {
+  let timer = 0;
+  return () => {
+    document.body.classList.add("replay");
+    clearTimeout(timer);
+    timer = window.setTimeout(() => document.body.classList.remove("replay"), 300);
+  };
 }
 
 export function modelLabel(s: Status): string {
@@ -164,7 +194,7 @@ export function guardPopups(): void {
     clearTimeout(timer);
     tip.hidden = true;
   };
-  document.addEventListener("mouseover", (e) => {
+  const over = (e: Event, delay: number) => {
     const t = (e.target as Element).closest<HTMLElement>("[data-tip]");
     hide();
     if (!t) return;
@@ -177,20 +207,28 @@ export function guardPopups(): void {
       const y = below + tip.offsetHeight > innerHeight - 4 ? r.top - tip.offsetHeight - 6 : below;
       tip.style.left = `${x}px`;
       tip.style.top = `${Math.max(4, y)}px`;
-    }, 500);
-  });
+    }, delay);
+  };
+  document.addEventListener("mouseover", (e) => over(e, 500));
+  // Keyboard users get the same text (the keys included) when a control takes focus.
+  document.addEventListener("focusin", (e) => (e.target as Element).matches?.(":focus-visible") && over(e, 0));
+  document.addEventListener("focusout", hide);
   document.addEventListener("mousedown", hide);
   document.addEventListener("mouseleave", hide);
 }
 
-/** An in-page confirm: resolves true on «ok». `cancel: null` makes it a notice with one button. */
-export function askConfirm(text: string, ok = "Да", cancel: string | null = "Отмена"): Promise<boolean> {
+/**
+ * An in-page confirm: resolves true on «ok». `cancel: null` makes it a notice with one button.
+ * `danger`: «ok» loses or deletes something, so Enter lands on the cancel button.
+ */
+export function askConfirm(text: string, ok = "Да", cancel: string | null = "Отмена", danger = false): Promise<boolean> {
   const d = el("dialog", "confirm");
   const row = el("div", "confirm-actions");
   const yes = el("button", "btn", ok);
   yes.type = "button";
+  let no: HTMLButtonElement | null = null;
   if (cancel !== null) {
-    const no = el("button", "btn-ghost", cancel);
+    no = el("button", "btn-ghost", cancel);
     no.type = "button";
     no.onclick = () => done(false);
     row.append(no);
@@ -199,13 +237,14 @@ export function askConfirm(text: string, ok = "Да", cancel: string | null = "�
   d.append(el("p", "", text), row);
   document.body.append(d);
   d.showModal();
-  yes.focus();
+  (danger && no ? no : yes).focus();
   let done: (v: boolean) => void = () => {};
   return new Promise((resolve) => {
     done = (v) => {
-      d.close();
-      d.remove();
       resolve(v);
+      // Leaves faster than it came (tokens.css): the answer is already in, the dialog only fades.
+      d.classList.add("closing");
+      setTimeout(() => (d.close(), d.remove()), 120);
     };
     yes.onclick = () => done(true);
     d.addEventListener("cancel", (e) => {
