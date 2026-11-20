@@ -111,5 +111,16 @@ export function registerCallsIpc(deps: CallsDeps): void {
     if (open && path.resolve(open) === path.resolve(dir)) throw new Error("звонок открыт, сначала закройте его");
     return calls.move(d.dataDir(), dir, folder);
   });
+  // «Подготовить»: the core writes brief.md into the call; a live call picks up its prepared answers.
+  ipcMain.handle("calls:prepare", async (_e, dir: string) => {
+    if (calls.kindOf(d.dataDir(), dir) !== "call") throw new Error("готовится только звонок");
+    const { stdout } = await d.runCore(["--brief", dir, ...coreArgs()], 600_000);
+    contextChanged(dir);
+    return stdout.trim();
+  });
+  ipcMain.handle("calls:add-to-profile", (_e, dir: string, fact: string) => {
+    calls.addToProfile(d.dataDir(), dir, fact);
+    contextChanged(path.join(d.dataDir(), "profile"));
+  });
 }
 

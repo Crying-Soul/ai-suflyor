@@ -24,12 +24,15 @@
     <div class="state">
       <span id="chip" class="chip" role="status" data-phase="idle">Слушаю</span>
       <span class="spacer"></span>
+      <span id="talk" class="talk num" role="status" hidden></span>
       <span id="latency" class="num"></span>
       <span id="nav" class="nav" hidden>
         <button id="btn-prev" class="icon-btn" type="button" data-action="prevAnswer" data-label="Предыдущий ответ"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M12 5l-5 5 5 5" /></svg></button>
         <span id="nav-pos" class="num"></span>
         <button id="btn-next" class="icon-btn" type="button" data-action="nextAnswer" data-label="Следующий ответ"><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M8 5l5 5-5 5" /></svg></button>
       </span>
+      <button id="btn-up" class="icon-btn rate" type="button" data-action="rateUp" data-label="Ответ полезен" aria-pressed="false" disabled><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M6.5 9.5v7h-2.5v-7zM6.5 9.5l3-6c1.2 0 2 .9 1.8 2.1l-.5 2.4h4.2a1.5 1.5 0 0 1 1.5 1.8l-1 5a1.5 1.5 0 0 1-1.5 1.2h-7.5" /></svg></button>
+      <button id="btn-down" class="icon-btn rate" type="button" data-action="rateDown" data-label="Ответ мимо" aria-pressed="false" disabled><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M13.5 10.5v-7h2.5v7zM13.5 10.5l-3 6c-1.2 0-2-.9-1.8-2.1l.5-2.4h-4.2a1.5 1.5 0 0 1-1.5-1.8l1-5a1.5 1.5 0 0 1 1.5-1.2h7.5" /></svg></button>
       <button id="btn-copy" class="icon-btn" type="button" data-action="copyAnswer" data-label="Копировать ответ" disabled><svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><rect x="7" y="7" width="9" height="10" rx="1.5" /><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v8a1.5 1.5 0 0 0 1.5 1.5H7" /></svg></button>
     </div>
 

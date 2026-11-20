@@ -18,6 +18,9 @@
 .chip[data-phase="error"] { color: var(--color-error); }
 .chip[data-phase="error"]::before { background: var(--color-error); }
 #latency { flex: none; color: var(--color-muted); }
+/* A long reply of the user's: a quiet nudge, not an alarm. */
+.talk { flex: none; color: var(--color-accent-2); }
+.icon-btn.rate[aria-pressed="true"] { color: var(--color-accent); }
 .state .icon-btn { min-height: 28px; width: 28px; }
 .nav { display: inline-flex; align-items: center; gap: var(--space-3xs); color: var(--color-muted); }
 .nav[hidden] { display: none; }

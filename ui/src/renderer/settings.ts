@@ -143,6 +143,8 @@ const SECTIONS: Section[] = [
       { key: "hotkeys.prevAnswer", label: "Предыдущий ответ", kind: "hotkey" },
       { key: "hotkeys.nextAnswer", label: "Следующий ответ", kind: "hotkey" },
       { key: "hotkeys.copyAnswer", label: "Копировать ответ", kind: "hotkey" },
+      { key: "hotkeys.rateUp", label: "Ответ полезен", kind: "hotkey" },
+      { key: "hotkeys.rateDown", label: "Ответ мимо", kind: "hotkey" },
       { key: "hotkeys.zoomIn", label: "Крупнее текст", kind: "hotkey" },
       { key: "hotkeys.zoomOut", label: "Мельче текст", kind: "hotkey" },
     ],

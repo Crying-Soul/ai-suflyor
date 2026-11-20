@@ -12,7 +12,16 @@ let current: NodeData | null = null;
 let live: CallInfo | null = null;
 let dirty = false;
 /** The form's values as typed, for a re-render that must keep unsaved edits. */
-let typed: (() => Pick<NodeData, "title" | "context" | "glossary">) | null = null;
+let typed: (() => Pick<NodeData, "title" | "context" | "glossary" | "stage">) | null = null;
+
+/** The interview stages of a call (meta.json `stage`), as the select offers them. */
+const STAGE_LABEL: [string, string][] = [
+  ["", "Не указан"],
+  ["hr", "HR-скрининг"],
+  ["tech", "Техническое"],
+  ["system_design", "System design"],
+  ["final", "Финальное"],
+];
 
 const KIND_NOTE: Record<NodeKind, string> = {
   profile: "Общий для всех звонков: кто вы, опыт, стек, чем гордитесь. Сюда же резюме.",
@@ -153,8 +162,12 @@ function renderPane(n: NodeData): void {
   const title = Object.assign(el("input", "input"), { type: "text", value: n.title, required: true });
   const notes = Object.assign(el("textarea", "textarea notes"), { value: n.context, rows: 9 });
   const glossary = Object.assign(el("textarea", "textarea"), { value: n.glossary.join("\n"), rows: 4 });
-  typed = () => ({ title: title.value, context: notes.value, glossary: glossary.value.split("\n") });
+  const stage = el("select", "select");
+  stage.append(...STAGE_LABEL.map(([v, label]) => Object.assign(el("option", "", label), { value: v, selected: v === (n.stage ?? "") })));
+  const stageValue = () => (n.kind === "call" ? stage.value : undefined);
+  typed = () => ({ title: title.value, context: notes.value, glossary: glossary.value.split("\n"), stage: stageValue() });
   if (n.kind !== "profile") form.append(field("Название", title));
+  if (n.kind === "call") form.append(field("Этап", stage, "Подсказки делают акцент этапа: HR — мотивация и условия, техническое — точность и компромиссы."));
   form.append(
     field("Заметки", notes, "Markdown. Claude читает это перед каждым ответом."),
     field("Глоссарий", glossary, "Один термин на строку: имена, продукты, технологии. Подсказывает Whisper, как их писать."),
@@ -167,7 +180,7 @@ function renderPane(n: NodeData): void {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
-      await api.calls.save(n.dir, { title: title.value, context: notes.value, glossary: glossary.value.split("\n") });
+      await api.calls.save(n.dir, { title: title.value, context: notes.value, glossary: glossary.value.split("\n"), stage: stageValue() });
       dirty = false;
       n.title = n.kind === "profile" ? n.title : title.value.trim() || n.title;
       h.textContent = n.title;
@@ -196,7 +209,7 @@ function renderPane(n: NodeData): void {
     // A finished call is mostly read for its summary: that goes first.
     const [summary, log] = callRecord(n);
     if (n.summary?.trim()) body.append(summary, form, log);
-    else body.append(form, summary, log);
+    else body.append(rehearsal(n), form, summary, log);
   } else body.append(form);
   pane.replaceChildren(body, footer);
 }
@@ -294,6 +307,7 @@ function callRecord(n: NodeData): HTMLElement[] {
     const body = el("div", "md");
     body.append(md(n.summary));
     summary.append(body);
+    if (n.suggestions?.length) summary.append(profileSuggestions(n));
   } else {
     summary.append(el("p", "hint", "Появится после «Завершить звонок». Следующие звонки этой папки получат его в контексте."));
   }
@@ -314,6 +328,62 @@ function callRecord(n: NodeData): HTMLElement[] {
     log.append(details);
   }
   return [summary, log];
+}
+
+/** «Добавить в профиль» of the summary: each fact goes into «Обо мне» with one click. */
+function profileSuggestions(n: NodeData): HTMLElement {
+  const box = el("div", "suggestions");
+  box.append(el("h4", "", "В профиль"), el("p", "hint", "Факты о вас из этого звонка, которых нет в «Обо мне». Добавленный факт попадёт в раздел «Из звонков»."));
+  const ul = el("ul", "suggestion-list");
+  for (const fact of n.suggestions ?? []) {
+    const li = el("li");
+    li.append(
+      el("span", "", fact),
+      button("Добавить", "btn-ghost small", async () => {
+        await api.calls.addToProfile(n.dir, fact);
+        n.suggestions = (n.suggestions ?? []).filter((f) => f !== fact);
+        li.remove();
+        if (!n.suggestions.length) box.remove();
+        setState("done", "Добавлено в «Обо мне».");
+      }),
+    );
+    ul.append(li);
+  }
+  box.append(ul);
+  return box;
+}
+
+/** «Репетиция»: the brief of a call before it starts (likely questions, gaps against the vacancy). */
+function rehearsal(n: NodeData): HTMLElement {
+  const box = el("section", "record rehearsal");
+  box.append(el("h3", "", "Репетиция"));
+  const body = el("div", "md");
+  const note = el("p", "hint");
+  const show = () => {
+    if (n.brief) {
+      body.replaceChildren(md(n.brief));
+      note.textContent = "Досье по материалам: вероятные вопросы с ответами и пробелы против вакансии. Подсказки в звонке опираются на эти ответы. Файл brief.md можно править.";
+    } else {
+      body.replaceChildren();
+      note.textContent = "Claude прочитает материалы и выпишет вероятные вопросы с ответами и пробелы против вакансии. Занимает до пары минут.";
+    }
+  };
+  const go = button(n.brief ? "Обновить" : "Подготовить", "btn-ghost", async () => {
+    if (dirty && !(await askConfirm("Готовить без сохранения изменений? Досье соберётся по сохранённым материалам.", "Готовить"))) return;
+    go.disabled = true;
+    setState("pending", "Готовлю досье…");
+    try {
+      n.brief = await api.calls.prepare(n.dir);
+      show();
+      go.textContent = "Обновить";
+      setState("done", "Досье готово.");
+    } finally {
+      go.disabled = false;
+    }
+  });
+  show();
+  box.append(note, go, body);
+  return box;
 }
 
 async function remove(n: NodeData): Promise<void> {

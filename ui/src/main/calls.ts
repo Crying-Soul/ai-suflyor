@@ -6,6 +6,63 @@ import type { CallsTree, NodeData, NodeFile, NodeKind, NodePatch, SearchHit, Tra
 
 const CONTEXT_EXT = new Set([".md", ".txt", ".pdf"]);
 
+/** Notes of a new node: the sections the core's prompts refer to by name. */
+export const TEMPLATES: Record<NodeKind, string> = {
+  profile: "## Стек и грейд\n\n## Истории (STAR, цифры)\n\n## Факты и красные линии\nЗарплатные ожидания, срок выхода, формат работы, о чём не говорить.\n\n## Как я говорю\n2–3 ваших типичных фразы.\n",
+  folder: "## Вакансия\n\n## Компания\n\n## Люди\n",
+  call: "## Цели звонка\n\n## Интервьюер\n",
+};
+
+/** Interview stages a call can be (meta.json `stage`); the core adds a line of focus for each. */
+export const STAGES = ["hr", "tech", "system_design", "final"];
+
+/** The section of the summary that lists facts to add to the profile. */
+const SUGGEST_HEADING = "## Добавить в профиль";
+/** Where accepted facts go in the profile notes. */
+const FROM_CALLS = "## Из звонков";
+
+/** The «Добавить в профиль» lines of a summary, without the leading "- ". */
+export function suggestions(summary: string): string[] {
+  const lines = summary.split("\n");
+  const at = lines.findIndex((l) => l.trim() === SUGGEST_HEADING);
+  if (at < 0) return [];
+  const out: string[] = [];
+  for (const l of lines.slice(at + 1)) {
+    if (l.startsWith("#")) break;
+    const m = /^\s*[-*]\s+(.+)$/.exec(l);
+    if (m) out.push(m[1].trim());
+  }
+  return out;
+}
+
+/** `summary` without the line of `fact`; the section heading goes too once it is empty. */
+export function dropSuggestion(summary: string, fact: string): string {
+  const lines = summary.split("\n");
+  const at = lines.findIndex((l) => l.trim() === SUGGEST_HEADING);
+  if (at < 0) return summary;
+  const i = lines.findIndex((l, j) => j > at && /^\s*[-*]\s+/.test(l) && l.replace(/^\s*[-*]\s+/, "").trim() === fact);
+  if (i < 0) return summary;
+  lines.splice(i, 1);
+  if (!suggestions(lines.join("\n")).length) {
+    let end = at + 1;
+    while (end < lines.length && !lines[end].startsWith("#")) end++;
+    lines.splice(at, end - at);
+  }
+  return lines.join("\n").trimEnd() + "\n";
+}
+
+/** `notes` with `fact` appended under «Из звонков» (the section is created at the end if missing). */
+export function withFact(notes: string, fact: string): string {
+  const lines = notes.trimEnd().split("\n");
+  const at = lines.findIndex((l) => l.trim() === FROM_CALLS);
+  if (at < 0) return `${notes.trimEnd()}${notes.trim() ? "\n\n" : ""}${FROM_CALLS}\n- ${fact}\n`;
+  let end = at + 1;
+  while (end < lines.length && !lines[end].startsWith("## ")) end++;
+  while (end > at + 1 && !lines[end - 1].trim()) end--;
+  lines.splice(end, 0, `- ${fact}`);
+  return lines.join("\n") + "\n";
+}
+
 export function readJson(p: string): Record<string, unknown> {
   try {
     return JSON.parse(fs.readFileSync(p, "utf8"));
@@ -110,11 +167,13 @@ function transcript(dir: string): TranscriptLine[] {
 export function node(dataDir: string, dir: string): NodeData {
   const kind = kindOf(dataDir, dir);
   const meta = readJson(path.join(dir, "meta.json"));
+  const ctxFile = path.join(dir, "context.md");
   const data: NodeData = {
     dir,
     kind,
     title: kind === "profile" ? "Обо мне" : title(dir),
-    context: readText(path.join(dir, "context.md")),
+    // A profile never saved starts from the template (folders and calls get it when created).
+    context: kind === "profile" && !fs.existsSync(ctxFile) ? TEMPLATES.profile : readText(ctxFile),
     glossary: Array.isArray(meta.glossary) ? meta.glossary.map(String) : [],
     files: files(dir),
   };
@@ -123,6 +182,10 @@ export function node(dataDir: string, dir: string): NodeData {
     data.summary = readText(path.join(dir, "summary.md"));
     data.transcript = transcript(dir);
     data.answers = readText(path.join(dir, "answers.jsonl")).split("\n").filter((l) => l.trim()).length;
+    data.stage = typeof meta.stage === "string" ? meta.stage : "";
+    // The first line is the core's cache key (`<!-- source: … -->`).
+    data.brief = readText(path.join(dir, "brief.md")).replace(/^<!--[^\n]*-->\n/, "").trim() || undefined;
+    data.suggestions = suggestions(data.summary);
   }
   return data;
 }
@@ -133,6 +196,10 @@ export function save(dataDir: string, dir: string, patch: NodePatch): void {
   const meta = readJson(metaPath);
   if (kind !== "profile" && patch.title.trim()) meta.title = patch.title.trim();
   meta.glossary = patch.glossary.map((g) => g.trim()).filter(Boolean);
+  if (kind === "call" && patch.stage !== undefined) {
+    if (STAGES.includes(patch.stage)) meta.stage = patch.stage;
+    else delete meta.stage;
+  }
   writeAtomic(metaPath, JSON.stringify(meta, null, 2) + "\n");
   writeAtomic(path.join(dir, "context.md"), patch.context);
 }
@@ -151,14 +218,15 @@ function slug(parent: string, base: string, prefix = ""): string {
   return path.join(parent, name);
 }
 
-function create(dir: string, meta: Record<string, unknown>): string {
+function create(dir: string, meta: Record<string, unknown>, notes: string): string {
   fs.mkdirSync(path.join(dir, "files"), { recursive: true });
   writeAtomic(path.join(dir, "meta.json"), JSON.stringify(meta, null, 2) + "\n");
+  writeAtomic(path.join(dir, "context.md"), notes);
   return dir;
 }
 
 export function createFolder(dataDir: string, name: string): string {
-  return create(slug(path.join(dataDir, "folders"), name), { title: name.trim(), glossary: [] });
+  return create(slug(path.join(dataDir, "folders"), name), { title: name.trim(), glossary: [] }, TEMPLATES.folder);
 }
 
 export function createCall(dataDir: string, folder: string, name: string): string {
@@ -167,7 +235,18 @@ export function createCall(dataDir: string, folder: string, name: string): strin
   const p = (n: number) => String(n).padStart(2, "0");
   // Names sort by time: the core takes earlier calls' summaries by this order.
   const stamp = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}-`;
-  return create(slug(path.join(folder, "calls"), name, stamp), { title: name.trim(), glossary: [], started: now.toISOString() });
+  return create(slug(path.join(folder, "calls"), name, stamp), { title: name.trim(), glossary: [], started: now.toISOString() }, TEMPLATES.call);
+}
+
+/** Moves `fact` from the call's «Добавить в профиль» into the profile notes. */
+export function addToProfile(dataDir: string, call: string, fact: string): void {
+  if (kindOf(dataDir, call) !== "call") throw new Error("факты берутся из итога звонка");
+  const summaryPath = path.join(call, "summary.md");
+  const summary = readText(summaryPath);
+  if (!suggestions(summary).includes(fact)) throw new Error("этого факта нет в итоге звонка");
+  const ctx = path.join(dataDir, "profile", "context.md");
+  writeAtomic(ctx, withFact(fs.existsSync(ctx) ? readText(ctx) : TEMPLATES.profile, fact));
+  writeAtomic(summaryPath, dropSuggestion(summary, fact));
 }
 
 /** Copies files into the node; returns the PDFs that need text extraction. */

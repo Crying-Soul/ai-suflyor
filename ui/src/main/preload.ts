@@ -38,6 +38,8 @@ const api: RendererApi = {
     search: (q) => ipcRenderer.invoke("calls:search", q),
     exportMd: (dir) => ipcRenderer.invoke("calls:export", dir),
     move: (dir, folder) => ipcRenderer.invoke("calls:move", dir, folder),
+    prepare: (dir) => ipcRenderer.invoke("calls:prepare", dir),
+    addToProfile: (dir, fact) => ipcRenderer.invoke("calls:add-to-profile", dir, fact),
   },
   ready: {
     list: () => ipcRenderer.invoke("ready:list"),

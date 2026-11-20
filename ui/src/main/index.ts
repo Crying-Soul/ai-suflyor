@@ -66,6 +66,8 @@ const actions: Record<HotkeyAction, () => void> = {
   prevAnswer: () => sendUi(overlays.hints, { kind: "nav", dir: -1 }),
   nextAnswer: () => sendUi(overlays.hints, { kind: "nav", dir: 1 }),
   copyAnswer: () => sendUi(overlays.hints, { kind: "copy" }),
+  rateUp: () => sendUi(overlays.hints, { kind: "rate", value: 1 }),
+  rateDown: () => sendUi(overlays.hints, { kind: "rate", value: -1 }),
   zoomIn: () => zoom(0.1),
   zoomOut: () => zoom(-0.1),
   myQuestions: () => core.send({ cmd: "ask", screenshot: false, kind: "questions" }),

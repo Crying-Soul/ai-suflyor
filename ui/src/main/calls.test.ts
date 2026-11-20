@@ -79,3 +79,36 @@ test("search, export and move of a call", () => {
   assert.throws(() => calls.move(data, moved, path.join(data, "profile")));
   fs.rmSync(data, { recursive: true, force: true });
 });
+
+test("templates, stage, brief and profile suggestions", () => {
+  const data = fs.mkdtempSync(path.join(os.tmpdir(), "calls-"));
+  // A profile never saved shows the template; folders and calls are created with theirs.
+  assert.equal(calls.node(data, path.join(data, "profile")).context, calls.TEMPLATES.profile);
+  const f = calls.createFolder(data, "Acme");
+  assert.equal(calls.node(data, f).context, calls.TEMPLATES.folder);
+  const c = calls.createCall(data, f, "Тех");
+  assert.equal(calls.node(data, c).context, calls.TEMPLATES.call);
+
+  calls.save(data, c, { title: "Тех", context: "x", glossary: [], stage: "tech" });
+  assert.equal(calls.node(data, c).stage, "tech");
+  calls.save(data, c, { title: "Тех", context: "x", glossary: [], stage: "bogus" });
+  assert.equal(calls.node(data, c).stage, "");
+
+  fs.writeFileSync(path.join(c, "brief.md"), "<!-- source: abc -->\n## Стек\nGo\n");
+  assert.equal(calls.node(data, c).brief, "## Стек\nGo");
+
+  const summary = "## Темы\n- Go\n\n## Добавить в профиль\n- Вёл миграцию на Go 1.22\n- Знает Kafka Streams\n\n## Ещё\n- y\n";
+  assert.deepEqual(calls.suggestions(summary), ["Вёл миграцию на Go 1.22", "Знает Kafka Streams"]);
+  assert.deepEqual(calls.suggestions("## Темы\n- Go\n"), []);
+  fs.writeFileSync(path.join(c, "summary.md"), summary);
+  fs.mkdirSync(path.join(data, "profile"), { recursive: true });
+  fs.writeFileSync(path.join(data, "profile", "context.md"), "## Стек\nGo\n");
+  calls.addToProfile(data, c, "Знает Kafka Streams");
+  calls.addToProfile(data, c, "Вёл миграцию на Go 1.22");
+  assert.equal(fs.readFileSync(path.join(data, "profile", "context.md"), "utf8"), "## Стек\nGo\n\n## Из звонков\n- Знает Kafka Streams\n- Вёл миграцию на Go 1.22\n");
+  const left = fs.readFileSync(path.join(c, "summary.md"), "utf8");
+  assert.ok(!left.includes("Добавить в профиль") && left.includes("## Ещё"), left);
+  assert.throws(() => calls.addToProfile(data, c, "Знает Kafka Streams"));
+  // «Из звонков» in the middle: the fact goes to the end of that section, not of the file.
+  assert.equal(calls.withFact("## Из звонков\n- a\n\n## Как я говорю\nx\n", "b"), "## Из звонков\n- a\n- b\n\n## Как я говорю\nx\n");
+});

@@ -18,6 +18,9 @@ export const DEFAULT_HOTKEYS: Hotkeys = {
   continueTalk: "CommandOrControl+Alt+W",
   translate: "CommandOrControl+Alt+T",
   moreAnswer: "CommandOrControl+Alt+E",
+  // Not Ctrl+Alt+arrows: some Intel drivers rotate the screen on them.
+  rateUp: "CommandOrControl+Alt+1",
+  rateDown: "CommandOrControl+Alt+2",
 };
 
 const NAMED: Record<string, string> = {

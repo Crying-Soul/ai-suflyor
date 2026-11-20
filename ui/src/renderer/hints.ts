@@ -39,6 +39,8 @@ interface Turn {
   full: HTMLElement;
   text: Record<"quick" | "full", string>;
   error: Record<"quick" | "full", string>;
+  /** The user's rating: 1 useful, -1 not. */
+  rating: 1 | -1 | null;
 }
 
 const turns = new Map<number, Turn>();
@@ -111,7 +113,7 @@ function newTurn(id: number, question: string, trigger: string): Turn {
     card.classList.toggle("open");
   });
   turnsEl.prepend(card);
-  const turn: Turn = { card, state, quick, full, text: { quick: "", full: "" }, error: { quick: "", full: "" } };
+  const turn: Turn = { card, state, quick, full, text: { quick: "", full: "" }, error: { quick: "", full: "" }, rating: null };
   turns.set(id, turn);
   current = id;
   show(id);
@@ -194,6 +196,8 @@ const navPos = $("nav-pos");
 const prevBtn = $<HTMLButtonElement>("btn-prev");
 const nextBtn = $<HTMLButtonElement>("btn-next");
 const copyBtn = $<HTMLButtonElement>("btn-copy");
+const upBtn = $<HTMLButtonElement>("btn-up");
+const downBtn = $<HTMLButtonElement>("btn-down");
 /** «‹ 3/5 ›»: which answer is on show; the arrows stop at the ends, the counter hides under two answers. */
 function renderNav(): void {
   const ids = [...turns.keys()];
@@ -203,6 +207,33 @@ function renderNav(): void {
   prevBtn.disabled = i <= 0;
   nextBtn.disabled = i < 0 || i >= ids.length - 1;
   copyBtn.disabled = i < 0;
+  const t = turns.get(shown);
+  upBtn.disabled = downBtn.disabled = i < 0;
+  upBtn.setAttribute("aria-pressed", String(t?.rating === 1));
+  downBtn.setAttribute("aria-pressed", String(t?.rating === -1));
+}
+
+/** The call open in the core: ratings are saved into it, so without one there is nowhere to keep them. */
+let callOpen = false;
+void api.calls.current().then((c) => (callOpen = Boolean(c?.dir)));
+
+/** Rates the answer on show; the same rating again clears it. */
+function rate(value: 1 | -1): void {
+  const t = turns.get(shown);
+  if (!t) return;
+  if (!callOpen) return flash("Оценка сохраняется только в открытом звонке");
+  t.rating = t.rating === value ? null : value;
+  api.send({ cmd: "feedback", turn: shown, value: t.rating });
+  renderNav();
+  flash(t.rating === null ? "Оценка снята" : t.rating === 1 ? "Отмечено: полезно" : "Отмечено: мимо");
+}
+
+/** A short note in the state chip, then back to what it said. */
+function flash(text: string): void {
+  const before = chip.textContent;
+  const phase = chip.dataset.phase;
+  chip.textContent = text;
+  setTimeout(() => chip.dataset.phase === phase && chip.textContent === text && (chip.textContent = before), 1500);
 }
 
 /** -1: an older answer, 1: a newer one. Turns are kept in the order they were asked. */
@@ -218,10 +249,7 @@ function copyShown(): void {
   const text = t && (t.text.full.trim() || t.text.quick.trim());
   if (!text) return;
   api.copy(text);
-  const before = chip.textContent;
-  const phase = chip.dataset.phase;
-  chip.textContent = "Ответ скопирован";
-  setTimeout(() => chip.dataset.phase === phase && chip.textContent === "Ответ скопирован" && (chip.textContent = before), 1500);
+  flash("Ответ скопирован");
 }
 
 function clearTurns(): void {
@@ -234,6 +262,40 @@ function clearTurns(): void {
   setPhase("idle");
   renderNav();
 }
+
+// ---------- a long reply of the user's ----------
+
+/** After this long of the user's own reply, a quiet «пора закругляться». */
+const LONG_REPLY_MS = 90_000;
+/** The user's silence this long ends their reply even if the other side says nothing. */
+const REPLY_GAP_MS = 10_000;
+const talkEl = $("talk");
+/** Start of the user's current reply (their speech since the other side last spoke), and their last sound. */
+let replyStart: number | null = null;
+let lastMe = 0;
+
+function onSpeech(speaker: "me" | "them", active: boolean): void {
+  const now = Date.now();
+  if (speaker === "them") {
+    if (active) replyStart = null;
+  } else {
+    if (active && (replyStart === null || now - lastMe > REPLY_GAP_MS)) replyStart = now;
+    lastMe = now;
+  }
+  renderTalk();
+}
+
+function renderTalk(): void {
+  const now = Date.now();
+  if (replyStart !== null && now - lastMe > REPLY_GAP_MS) replyStart = null;
+  const ms = replyStart === null ? 0 : now - replyStart;
+  talkEl.hidden = ms < LONG_REPLY_MS;
+  if (!talkEl.hidden) {
+    const s = Math.floor(ms / 1000);
+    talkEl.textContent = `Вы говорите ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}, пора закругляться`;
+  }
+}
+setInterval(renderTalk, 1000);
 
 // ---------- events ----------
 
@@ -257,6 +319,7 @@ api.onEvent((e: CoreEvent) => {
       modelBtn.hidden = false;
       break;
     case "vad":
+      onSpeech(e.speaker, e.active);
       if (e.speaker !== "them") break;
       if (e.active) setPhase("listening");
       else if (chip.dataset.phase === "listening") setPhase("recognizing");
@@ -304,6 +367,10 @@ api.onEvent((e: CoreEvent) => {
         t.error[a.tier] = e.error;
         schedule(t);
       }
+      if (e.feedback) {
+        t.rating = e.feedback;
+        renderNav();
+      }
       // The full answer decides the chip; a cancelled one was replaced by a newer ask.
       if (a.tier === "full" && e.error !== "cancelled") {
         setTurnState(t, e.error ? "error" : "done");
@@ -319,6 +386,9 @@ api.onEvent((e: CoreEvent) => {
       break;
     case "cleared":
       clearTurns();
+      break;
+    case "call":
+      callOpen = Boolean(e.dir);
       break;
     case "core_down":
       setPhase("error", e.message);
@@ -345,6 +415,7 @@ overlayUi((m) => {
   if (m.kind === "nav") nav(m.dir);
   else if (m.kind === "looking") setPhase("looking");
   else if (m.kind === "copy") copyShown();
+  else if (m.kind === "rate") rate(m.value);
   else if (m.kind === "hotkeys") refreshKeys();
 });
 

@@ -12,6 +12,8 @@ export type Command =
   | { cmd: "open_call"; dir: string }
   | { cmd: "reload_context" }
   | { cmd: "close_call" }
+  /** Rates answer turn `turn` of the open call (saved as `feedback` in answers.jsonl); null clears it. */
+  | { cmd: "feedback"; turn: number; value: 1 | -1 | null }
   | { cmd: "shutdown" };
 
 export interface ContextPart {
@@ -63,7 +65,8 @@ export type CoreEvent =
   /** `turn` is shared by the quick and full answers of one ask; `q_t` is the question's first utterance. */
   | { ev: "answer_start"; id: number; turn: number; trigger: string; question: string; q_t?: number; tier: "quick" | "full" }
   | { ev: "answer_delta"; id: number; text: string }
-  | { ev: "answer_end"; id: number; error?: string }
+  /** `feedback`: the saved rating of a replayed answer. */
+  | { ev: "answer_end"; id: number; error?: string; feedback?: 1 | -1 }
   | { ev: "metrics"; name: string; ms: number }
   /** Tokens of one finished Claude turn. `api`: billed per token (false: a Claude Code subscription). */
   | { ev: "usage"; tier: string; model: string; api: boolean; input: number; cache_read: number; cache_write: number; output: number }
@@ -136,12 +139,20 @@ export interface NodeData {
   summary?: string;
   transcript?: TranscriptLine[];
   answers?: number;
+  /** Interview stage of a call (meta.json `stage`): "", hr, tech, system_design, final. */
+  stage?: string;
+  /** The call's brief.md without its header (likely questions, vacancy gaps), if built. */
+  brief?: string;
+  /** Lines of the summary's «Добавить в профиль» section not yet added. */
+  suggestions?: string[];
 }
 
 export interface NodePatch {
   title: string;
   context: string;
   glossary: string[];
+  /** Calls only. */
+  stage?: string;
 }
 
 export interface CallsApi {
@@ -167,6 +178,10 @@ export interface CallsApi {
   exportMd(dir: string): Promise<string | null>;
   /** Moves a call to another folder; resolves to its new directory. */
   move(dir: string, folder: string): Promise<string>;
+  /** «Подготовить»: builds the call's brief now (a model call, up to minutes); resolves to it. */
+  prepare(dir: string): Promise<string>;
+  /** Adds a fact from the call's summary to the profile notes and drops it from the summary. */
+  addToProfile(dir: string, fact: string): Promise<void>;
 }
 
 export interface ModelInfo {
@@ -266,7 +281,9 @@ export type HotkeyAction =
   | "myQuestions"
   | "continueTalk"
   | "translate"
-  | "moreAnswer";
+  | "moreAnswer"
+  | "rateUp"
+  | "rateDown";
 export type Hotkeys = Record<HotkeyAction, string>;
 
 /** UI themes: `data-theme` on <html> (static/themes.css). Stored by main in windows.json. */
@@ -282,6 +299,8 @@ export type UiMessage =
   | { kind: "nav"; dir: -1 | 1 }
   /** Copy the answer on show. */
   | { kind: "copy" }
+  /** Rate the answer on show: 1 useful, -1 not (again the same: cleared). */
+  | { kind: "rate"; value: 1 | -1 }
   /** The screen hotkey was pressed: a capture and an answer are coming. */
   | { kind: "looking" }
   /** Settings: show this section (the guide is "guide"). */
