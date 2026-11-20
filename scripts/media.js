@@ -191,7 +191,7 @@ async function screen() {
   const s = await scene("screen", [{ win: sh, ...SH }, { win: hi, ...HI }]);
   await s.caption(1, "Интервьюер показывает задачу на общем экране");
   await s.frame(1800);
-  await s.caption(2, "Ctrl+Shift+S: снимок активного окна уходит в Claude вместе с последним вопросом");
+  await s.caption(2, "Ctrl+Alt+S: снимок активного окна уходит в Claude вместе с последним вопросом");
   hi.webContents.send("ui", { kind: "looking" });
   await s.frame(1200);
   const thumb = (await sh.webContents.capturePage()).resize({ width: 320 }).toDataURL();
@@ -232,7 +232,7 @@ async function english() {
 app.whenReady().then(async () => {
   fs.mkdirSync(out, { recursive: true });
   ipcMain.handle("ready:list", () => [{ id: "whisper", level: "required", ok: true, title: "", why: "" }]);
-  ipcMain.handle("hotkeys:get", () => ({ ask: "CommandOrControl+Shift+Space", screenshotAsk: "CommandOrControl+Shift+S" }));
+  ipcMain.handle("hotkeys:get", () => ({ ask: "CommandOrControl+Alt+Space", screenshotAsk: "CommandOrControl+Alt+S" }));
   ipcMain.handle("calls:current", () => null);
   // SCENES=screen,english renders only those.
   const only = process.env.SCENES?.split(",");

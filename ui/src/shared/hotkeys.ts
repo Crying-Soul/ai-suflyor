@@ -2,11 +2,11 @@
 import type { Hotkeys } from "./protocol";
 
 export const DEFAULT_HOTKEYS: Hotkeys = {
-  ask: "CommandOrControl+Shift+Space",
-  screenshotAsk: "CommandOrControl+Shift+S",
-  toggleWindow: "CommandOrControl+Shift+H",
-  toggleAuto: "CommandOrControl+Shift+A",
   // In-call keys live under Ctrl+Alt: Ctrl+Shift combos collide with call apps (Teams answers on Ctrl+Shift+S/A).
+  ask: "CommandOrControl+Alt+Space",
+  screenshotAsk: "CommandOrControl+Alt+S",
+  toggleWindow: "CommandOrControl+Alt+H",
+  toggleAuto: "CommandOrControl+Alt+A",
   clickThrough: "CommandOrControl+Alt+X",
   cameraMode: "CommandOrControl+Alt+M",
   prevAnswer: "CommandOrControl+Alt+PageUp",
