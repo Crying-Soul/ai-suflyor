@@ -403,6 +403,16 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
         }
         Command::ReloadContext => call::reload(cfg, shared, answerer),
         Command::CloseCall => call::close(cfg, shared, answerer),
+        Command::Summarize { dir } => {
+            let dir = PathBuf::from(dir);
+            let open = shared.call.lock().unwrap().as_ref() == Some(&dir);
+            if open || !dir.is_dir() {
+                let why = if open { "звонок ещё идёт, сначала завершите его" } else { "нет папки звонка" };
+                let _ = shared.events.send(Event::Summary { dir: dir.display().to_string(), ok: false, error: Some(why.into()) });
+            } else {
+                call::summarize(cfg, shared, answerer, dir);
+            }
+        }
         Command::Feedback { turn, value } => call::set_feedback(shared, turn, value),
         Command::Shutdown => unreachable!(),
     }

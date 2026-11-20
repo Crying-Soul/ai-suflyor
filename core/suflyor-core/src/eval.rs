@@ -84,7 +84,10 @@ fn prose(s: &str) -> String {
 
 fn is_bullet(line: &str) -> bool {
     let t = line.trim_start();
-    t.starts_with("- ") || t.starts_with("* ") || t.starts_with("• ") || t.split_once(". ").is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    t.starts_with("- ")
+        || t.starts_with("* ")
+        || t.starts_with("• ")
+        || t.split_once(". ").is_some_and(|(n, _)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// The spoken paragraph (prose before the first blank line or bullet) and the bullet count.
@@ -331,14 +334,21 @@ mod tests {
 
     #[test]
     fn case_transcript_becomes_segments() {
-        let c = Case { id: "a".into(), kind: "theory".into(), question: "Почему?".into(), transcript: vec!["Q: Привет.".into(), "A: Здравствуйте.".into()] };
+        let c = Case {
+            id: "a".into(), kind: "theory".into(), question: "Почему?".into(), transcript: vec!["Q: Привет.".into(), "A: Здравствуйте.".into()]
+        };
         assert_eq!(llm::render(&segments(&c)), "Q: Привет.\nA: Здравствуйте.\nQ: Почему?");
     }
 
     #[test]
     fn the_shipped_set_parses() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../testdata/eval");
-        let cases: Vec<Case> = std::fs::read_to_string(dir.join("questions.jsonl")).unwrap().lines().filter(|l| !l.trim().is_empty()).map(|l| serde_json::from_str(l).unwrap()).collect();
+        let cases: Vec<Case> = std::fs::read_to_string(dir.join("questions.jsonl"))
+            .unwrap()
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
         assert!(cases.len() >= 30);
         let call = find_call(&dir).expect("a call in the set");
         assert!(context::assemble(&dir.join("profile"), Some(&call), "", &[]).text.contains("stage=\"tech\""));

@@ -83,6 +83,10 @@ pub enum Command {
     ReloadContext,
     /// Stops saving to the open call and writes its `summary.md`.
     CloseCall,
+    /// Writes `summary.md` of a call that is not open, from its saved files («Повторить итог»).
+    Summarize {
+        dir: String,
+    },
     /// The user's rating of answer turn `turn` in the open call: 1 good, -1 bad, null cleared.
     /// Saved as `feedback` on that turn's records in `answers.jsonl`.
     Feedback {
@@ -257,6 +261,8 @@ mod tests {
         assert!(matches!(c, Command::Ask { kind: AskKind::Questions, .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"continue"}"#).unwrap();
         assert!(matches!(c, Command::Ask { kind: AskKind::Continue, .. }));
+        let c: Command = serde_json::from_str(r#"{"cmd":"summarize","dir":"d"}"#).unwrap();
+        assert!(matches!(c, Command::Summarize { ref dir } if dir == "d"));
         let c: Command = serde_json::from_str(r#"{"cmd":"feedback","turn":3,"value":-1}"#).unwrap();
         assert!(matches!(c, Command::Feedback { turn: 3, value: Some(-1) }));
         let c: Command = serde_json::from_str(r#"{"cmd":"feedback","turn":3,"value":null}"#).unwrap();

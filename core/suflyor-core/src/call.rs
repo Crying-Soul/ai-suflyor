@@ -247,6 +247,12 @@ pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBu
     if !dir.is_dir() {
         bail!("no call directory {}", dir.display());
     }
+    // Another call still open: it ends here, with its summary, as if «Завершить звонок» was pressed.
+    let prev = shared.call.lock().unwrap().clone().filter(|p| *p != dir);
+    if let Some(prev) = prev {
+        info!("call {} replaced: writing its summary", prev.display());
+        summarize(cfg, shared, answerer, prev);
+    }
     let segs: Vec<FinalSegment> = read_jsonl(&dir.join(TRANSCRIPT));
     let (rows, answers) = read_answers(&dir.join(ANSWERS));
     *shared.call.lock().unwrap() = Some(dir.clone());
@@ -292,10 +298,16 @@ pub fn reload(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
 pub fn close(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
     let Some(dir) = shared.call.lock().unwrap().take() else { return };
     *shared.answer_rows.lock().unwrap() = AnswerRows::default();
+    apply(cfg, shared, answerer, None);
+    summarize(cfg, shared, answerer, dir);
+}
+
+/// Writes `summary.md` of a call in the background, from its saved files: «Очистить» empties only the
+/// transcript in memory, and a call closed in an earlier session («Повторить итог») has none.
+pub fn summarize(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBuf) {
     // The summary sees the call's own context (who they are, the vacancy), not just the profile.
     let context = context::assemble(&cfg.profile_dir(), Some(&dir), &cfg.user_context, &cfg.glossary).text;
-    apply(cfg, shared, answerer, None);
-    let segs = shared.transcript.lock().unwrap().clone();
+    let segs: Vec<FinalSegment> = read_jsonl(&dir.join(TRANSCRIPT));
     let hints: Vec<AnswerRecord> = read_jsonl(&dir.join(ANSWERS));
     let (shared, answerer) = (shared.clone(), answerer.clone());
     tokio::spawn(async move {
