@@ -158,9 +158,9 @@ struct Args {
     /// `--snap`: the monitor under the cursor.
     #[arg(long, requires = "snap")]
     monitor: bool,
-    /// `--snap`: this rectangle in physical pixels.
-    #[arg(long, requires = "snap", value_name = "X,Y,W,H", value_delimiter = ',', num_args = 4)]
-    rect: Option<Vec<i32>>,
+    /// `--snap`: this rectangle in physical pixels. One `X,Y,W,H` token; X and Y may be negative.
+    #[arg(long, requires = "snap", value_name = "X,Y,W,H", allow_hyphen_values = true, value_parser = parse_rect)]
+    rect: Option<[i32; 4]>,
     /// Display affinity of windows (0x11 = hidden from capture).
     #[arg(long, value_name = "HWND", num_args = 1..)]
     check_affinity: Option<Vec<isize>>,
@@ -171,6 +171,13 @@ struct Args {
     list_audio_apps: bool,
     #[arg(long)]
     list_mics: bool,
+}
+
+/// `X,Y,W,H` as one token. clap's `num_args` counts tokens before a delimiter splits them,
+/// so "0,0,200,100" was one value of four and the UI's capture test always failed.
+fn parse_rect(s: &str) -> Result<[i32; 4], String> {
+    let v = s.split(',').map(|p| p.trim().parse::<i32>().map_err(|_| format!("not a number: {p:?}"))).collect::<Result<Vec<_>, _>>()?;
+    v.try_into().map_err(|v: Vec<i32>| format!("need X,Y,W,H (4 numbers), got {}", v.len()))
 }
 
 fn main() -> Result<()> {
@@ -184,9 +191,9 @@ fn main() -> Result<()> {
     if let Some(out) = &args.snap {
         screen::dpi_aware();
         let t = std::time::Instant::now();
-        let shot = match args.rect.as_deref() {
-            Some(&[x, y, w, h]) => screen::capture_rect(x, y, w, h)?,
-            _ => screen::capture(args.monitor)?,
+        let shot = match args.rect {
+            Some([x, y, w, h]) => screen::capture_rect(x, y, w, h)?,
+            None => screen::capture(args.monitor)?,
         };
         std::fs::write(out, &shot.image)?;
         eprintln!("{}x{} за {} мс: {}", shot.width, shot.height, t.elapsed().as_millis(), shot.source);
@@ -476,5 +483,21 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
         }
         Command::Feedback { turn, value } => call::set_feedback(shared, turn, value),
         Command::Shutdown | Command::ReloadLlm { .. } => unreachable!("handled by the command loop"),
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    #[test]
+    fn rect_is_one_token_and_may_be_negative() {
+        let a = Args::try_parse_from(["core", "--snap", "a.webp", "--rect", "0,0,200,100"]).unwrap();
+        assert_eq!(a.rect, Some([0, 0, 200, 100]));
+        // A monitor left of the primary one starts at a negative X.
+        let a = Args::try_parse_from(["core", "--snap", "a.webp", "--rect", "-1920,-8,1920,1080"]).unwrap();
+        assert_eq!(a.rect, Some([-1920, -8, 1920, 1080]));
+        assert!(Args::try_parse_from(["core", "--snap", "a.webp", "--rect", "0,0,200"]).is_err());
+        assert!(Args::try_parse_from(["core", "--snap", "a.webp", "--rect", "0,0,x,1"]).is_err());
     }
 }
