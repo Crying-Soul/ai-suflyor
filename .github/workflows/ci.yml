@@ -9,21 +9,32 @@ jobs:
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
+      - name: Core format
+        run: cargo fmt --manifest-path core/Cargo.toml --all --check
+      - name: Core lints
+        run: cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings
       - name: Core tests
         run: cargo test --manifest-path core/Cargo.toml
-      - uses: actions/setup-node@v4
+      # `cargo test` regenerates the UI's protocol types (ts-rs); a diff means they were not committed.
+      - name: Protocol types are up to date
+        run: git diff --exit-code -- ui/src/shared/generated
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: ui/package-lock.json
-      - name: UI typecheck and tests
+      - name: UI typecheck, lint, tests and build
         working-directory: ui
         run: |
           npm ci
           npm run typecheck
+          npm run lint
           npm test
+          npm run build
