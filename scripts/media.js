@@ -12,7 +12,7 @@ const out = path.resolve(__dirname, "../.github/media");
 const wp = { preload: path.join(dist, "preload.js"), contextIsolation: true, sandbox: true, backgroundThrottling: false };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const T = 1000;
-const status = (translate = false) => ({ ev: "status", me: { state: "running", source: "mic: Focusrite USB" }, them: { state: "running", source: "system loopback: Speakers" }, stt: "ready (gpu)", auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", translate, mute_me: false, mute_them: false, busy: false });
+const status = (translate = false) => ({ ev: "status", me: { state: "running", source: "mic: Focusrite USB" }, them: { state: "running", source: "system loopback: Speakers" }, stt: { state: "ready", gpu: true }, auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", translate, mute_me: false, mute_them: false, busy: false });
 const call = { ev: "call", dir: "C:\\Users\\me\\Documents\\Suflyor\\folders\\yandex\\calls\\2026-11-05-1200-sys", title: "Системный дизайн", folder: "Яндекс Маркет", tokens: 5320, parts: [], warnings: [] };
 
 const PAD = 28, GAP = 20, CAP = 52;

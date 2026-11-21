@@ -18,12 +18,15 @@ export class CoreProcess {
   private args: () => string[];
   private cwd: string;
   private onEvent: (e: CoreEvent) => void;
+  /** Read at every start, like `args`: it carries the API key. */
+  private env: () => NodeJS.ProcessEnv;
 
-  constructor(exe: string, args: () => string[], cwd: string, onEvent: (e: CoreEvent) => void) {
+  constructor(exe: string, args: () => string[], cwd: string, onEvent: (e: CoreEvent) => void, env: () => NodeJS.ProcessEnv = () => process.env) {
     this.exe = exe;
     this.args = args;
     this.cwd = cwd;
     this.onEvent = onEvent;
+    this.env = env;
   }
 
   start(): void {
@@ -35,7 +38,7 @@ export class CoreProcess {
     }
     const args = this.args();
     console.log(`[core] spawn ${this.exe} ${args.join(" ")}`);
-    const proc = spawn(this.exe, args, { cwd: this.cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    const proc = spawn(this.exe, args, { cwd: this.cwd, env: this.env(), windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     this.proc = proc;
     const startedAt = Date.now();
 

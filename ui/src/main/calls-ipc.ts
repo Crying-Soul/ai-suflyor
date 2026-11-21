@@ -15,6 +15,8 @@ export interface CallsDeps {
   lastCall(): CallInfo | null;
 }
 
+export type RunCore = CallsDeps["runCore"];
+
 let d!: CallsDeps;
 
 /** userContext and glossary used to live in config.json; the profile node holds them now. */
@@ -94,7 +96,7 @@ export function registerCallsIpc(deps: CallsDeps): void {
   ipcMain.handle("calls:current", () => d.lastCall());
   ipcMain.handle("calls:search", (_e, q: string) => calls.search(d.dataDir(), q));
   ipcMain.handle("calls:export", async (_e, dir: string) => {
-    const md = calls.exportMarkdown(d.dataDir(), dir);
+    const md = await calls.exportMarkdown(d.dataDir(), dir);
     const name = `${path.basename(dir)}.md`;
     const r = await dialog.showSaveDialog(wins.calls ?? BrowserWindow.getFocusedWindow()!, {
       title: "Сохранить звонок",

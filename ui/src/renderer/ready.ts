@@ -27,7 +27,13 @@ function models(ops: ModelOps): HTMLElement {
 
 function result(): [HTMLElement, (ok: boolean, text: string) => void] {
   const p = el("p", { className: "result", role: "status" });
-  return [p, (ok, text) => ((p.className = ok ? "result" : "result error"), (p.textContent = text))];
+  return [
+    p,
+    (ok, text) => {
+      p.className = ok ? "result" : "result error";
+      p.textContent = text;
+    },
+  ];
 }
 
 function command(text: string): HTMLElement {
@@ -64,7 +70,7 @@ function claude(item: ReadyItem): HTMLElement {
   const [apiRes, apiSay] = result();
   const connect = small("Подключить", async () => {
     const r = await api.ready.useApiKey(key.value);
-    apiSay(r.ok, r.ok ? (r.note ?? "Ключ принят и сохранён, ядро перезапускается.") : (r.error ?? "Не удалось сохранить."));
+    apiSay(r.ok, r.ok ? (r.note ?? "Ключ принят и сохранён.") : (r.error ?? "Не удалось сохранить."));
   }, "btn small");
   key.onkeydown = (e) => e.key === "Enter" && connect.click();
   panes.api.append(
@@ -80,7 +86,7 @@ function claude(item: ReadyItem): HTMLElement {
     el("div", { className: "row" }, small("Проверить и использовать", async () => {
       codeSay(true, "Проверяю…");
       const r = await api.ready.useClaudeCode();
-      codeSay(r.ok, r.ok ? "Claude Code найден, ядро перезапускается." : (r.error ?? "Не найден."));
+      codeSay(r.ok, r.ok ? "Claude Code найден и подключён." : (r.error ?? "Не найден."));
     }, "btn small")),
     codeRes,
   );
@@ -128,10 +134,17 @@ function card(item: ReadyItem): Card {
 }
 
 function render(items: ReadyItem[]): void {
-  for (const [id, c] of cards) if (!items.some((i) => i.id === id)) (c.li.remove(), cards.delete(id));
+  for (const [id, c] of cards) {
+    if (items.some((i) => i.id === id)) continue;
+    c.li.remove();
+    cards.delete(id);
+  }
   for (const item of items) {
     let c = cards.get(item.id);
-    if (!c) cards.set(item.id, (c = card(item)));
+    if (!c) {
+      c = card(item);
+      cards.set(item.id, c);
+    }
     list.append(c.li); // keeps the order of `items`
     c.li.className = `item ${item.ok ? "ok" : "missing"} ${item.level}`;
     c.mark.textContent = item.ok ? "✓" : item.level === "required" ? "!" : "○";

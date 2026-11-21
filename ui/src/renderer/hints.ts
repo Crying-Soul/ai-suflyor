@@ -1,4 +1,4 @@
-import type { CoreEvent, ReadyItem, Status } from "../shared/protocol";
+import type { CoreEvent, ErrorKind, ReadyItem, Status } from "../shared/protocol";
 import { $, api, bindActions, coreDownText, el, humanError, icon, keyLabel, modelLabel, overlayUi, replayGuard, sttLabel } from "./common";
 import { render } from "./md";
 
@@ -29,8 +29,8 @@ const PHASE_TEXT: Record<Phase, string> = {
 /** What «Слушаю» would claim, checked against the core: no core, no recognition or a muted side say so. */
 function idleText(): { text: string; warn: boolean } {
   if (!status) return { text: "Жду ядро…", warn: false };
-  if (status.stt === "loading") return { text: "Загружаю распознавание…", warn: false };
-  if (!status.stt.startsWith("ready")) return { text: `Не слушаю: ${sttLabel(status.stt)}`, warn: true };
+  if (status.stt.state === "loading") return { text: "Загружаю распознавание…", warn: false };
+  if (status.stt.state !== "ready") return { text: `Не слушаю: ${sttLabel(status.stt)}`, warn: true };
   if (status.mute_them && status.mute_me) return { text: "Не слушаю: оба звука выключены", warn: true };
   if (status.mute_them) return { text: "Не слышу собеседника: его звук выключен", warn: true };
   if (status.them.state === "error") return { text: "Не слышу собеседника: звук недоступен", warn: true };
@@ -73,7 +73,8 @@ interface Turn {
   quick: HTMLElement;
   full: HTMLElement;
   text: Record<"quick" | "full", string>;
-  error: Record<"quick" | "full", string>;
+  /** A failed answer: its kind and raw cause. */
+  error: Record<"quick" | "full", { kind?: ErrorKind; raw: string } | null>;
   /** The user's rating: 1 useful, -1 not. */
   rating: 1 | -1 | null;
 }
@@ -148,7 +149,7 @@ function newTurn(id: number, question: string, trigger: string): Turn {
     card.classList.toggle("open");
   });
   turnsEl.prepend(card);
-  const turn: Turn = { card, state, quick, full, text: { quick: "", full: "" }, error: { quick: "", full: "" }, rating: null };
+  const turn: Turn = { card, state, quick, full, text: { quick: "", full: "" }, error: { quick: null, full: null }, rating: null };
   turns.set(id, turn);
   current = id;
   show(id);
@@ -169,7 +170,8 @@ let frame = 0;
 /** Re-renders changed cards once per frame: deltas arrive far faster than the screen refreshes. */
 function schedule(t: Turn): void {
   dirty.add(t);
-  frame ||= requestAnimationFrame(() => {
+  if (frame) return;
+  frame = requestAnimationFrame(() => {
     frame = 0;
     for (const d of dirty) paint(d);
     dirty.clear();
@@ -177,9 +179,9 @@ function schedule(t: Turn): void {
 }
 
 /** A failed answer: what happened in words, the raw cause folded away. */
-function failure(raw: string): HTMLElement {
+function failure({ kind, raw }: { kind?: ErrorKind; raw: string }): HTMLElement {
   const box = el("details", "error");
-  box.append(el("summary", "", humanError(raw)), el("p", "", raw));
+  box.append(el("summary", "", humanError(kind)), el("p", "", raw));
   return box;
 }
 
@@ -251,7 +253,10 @@ void api.calls.current().then((c) => (callOpen = Boolean(c?.dir)));
 function rate(value: 1 | -1): void {
   const t = turns.get(shown);
   if (!t) return;
-  if (!callOpen) return flash("Оценка сохраняется только в открытом звонке");
+  if (!callOpen) {
+    flash("Оценка сохраняется только в открытом звонке");
+    return;
+  }
   t.rating = t.rating === value ? null : value;
   api.send({ cmd: "feedback", turn: shown, value: t.rating });
   renderNav();
@@ -263,7 +268,9 @@ function flash(text: string): void {
   const before = chip.textContent;
   const was = chip.dataset.phase;
   chip.textContent = text;
-  setTimeout(() => chip.dataset.phase === was && chip.textContent === text && (chip.textContent = before), 1500);
+  setTimeout(() => {
+    if (chip.dataset.phase === was && chip.textContent === text) chip.textContent = before;
+  }, 1500);
 }
 
 /** -1: an older answer, 1: a newer one. Turns are kept in the order they were asked. */
@@ -373,9 +380,10 @@ api.onEvent((e: CoreEvent) => {
     case "answer_start": {
       if (document.body.classList.contains("replay")) replaying();
       const t = turns.get(e.turn) ?? newTurn(e.turn, e.question, e.trigger);
-      answers.set(e.id, { turn: e.turn, tier: e.tier });
-      t.text[e.tier] = "";
-      t.error[e.tier] = "";
+      const tier = e.tier === "quick" ? "quick" : "full";
+      answers.set(e.id, { turn: e.turn, tier });
+      t.text[tier] = "";
+      t.error[tier] = null;
       schedule(t);
       setTurnState(t, "answering");
       setPhase("answering");
@@ -395,24 +403,24 @@ api.onEvent((e: CoreEvent) => {
       answers.delete(e.id);
       if (!a || !t) break;
       // An early answer whose question went on: the card stays, folded, with a note.
-      if (e.error === "retracted") {
+      if (e.kind === "retracted") {
         t.card.classList.add("retracted");
         t.card.classList.remove("open");
         setTurnState(t, "retracted");
         if (a.turn === current) setPhase("listening");
         break;
       }
-      if (e.error && e.error !== "cancelled") {
-        t.error[a.tier] = e.error;
+      if (e.error && e.kind !== "cancelled") {
+        t.error[a.tier] = { kind: e.kind, raw: e.error };
         schedule(t);
       }
       if (e.feedback) {
-        t.rating = e.feedback;
+        t.rating = e.feedback > 0 ? 1 : -1;
         renderNav();
       }
       if (a.tier === "quick" && !e.error && a.turn === current && !document.body.classList.contains("replay")) say.textContent = t.text.quick;
       // The full answer decides the chip; a cancelled one was replaced by a newer ask.
-      if (a.tier === "full" && e.error !== "cancelled") {
+      if (a.tier === "full" && e.kind !== "cancelled") {
         setTurnState(t, e.error ? "error" : "done");
         if (a.turn === current) setPhase(e.error ? "error" : "done");
       }
@@ -433,7 +441,7 @@ api.onEvent((e: CoreEvent) => {
       break;
     case "error":
       // Claude failing outside an answer (its warm-up): said here, before the first question finds it.
-      if (/^Claude/.test(e.message)) setPhase("error", humanError(e.message), e.message);
+      if (e.kind) setPhase("error", humanError(e.kind), e.message);
       break;
     case "ready":
       if (phase === "error") setPhase("idle");
@@ -458,7 +466,7 @@ const refreshKeys = () => {
   void api.hotkeys().then((k) => {
     askKey = keyLabel(k.ask);
     moreTip = `Ещё 2–3 предложения к этой подсказке · ${keyLabel(k.moreAnswer)}`;
-    document.querySelectorAll<HTMLElement>(".turn .more").forEach((b) => (b.title = moreTip));
+    for (const b of document.querySelectorAll<HTMLElement>(".turn .more")) b.title = moreTip;
   });
 };
 refreshKeys();

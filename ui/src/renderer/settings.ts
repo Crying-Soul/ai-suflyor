@@ -1,5 +1,5 @@
 import type { ConfigSnapshot, ModelInfo, PackId, SaveResult, ThemeId, UpdateState } from "../shared/protocol";
-import { THEMES } from "../shared/protocol";
+import { appliesLive, THEMES } from "../shared/protocol";
 import type { HotkeyAction } from "../shared/protocol";
 import { accelerator, DEFAULT_HOTKEYS, duplicates } from "../shared/hotkeys";
 import { $, api, askConfirm, guardPopups, keyLabel } from "./common";
@@ -498,8 +498,9 @@ form.addEventListener("submit", async (e) => {
     saveState.textContent = "Нечего сохранять.";
     return;
   }
-  // Anything but hotkeys restarts the core: in a call, the answer being written is cut off.
-  const restarts = Object.keys(patch).some((k) => !k.startsWith("hotkeys."));
+  // Claude settings apply in place; audio, recognition and paths restart the core, and in a call the
+  // answer being written is cut off.
+  const restarts = Object.keys(patch).some((k) => !k.startsWith("hotkeys.") && !appliesLive(k));
   const call = restarts ? await api.calls.current().catch(() => null) : null;
   if (call?.dir && !(await askConfirm(`Идёт звонок «${call.title}». Сохранение перезапустит ядро на несколько секунд: подсказка, которая пишется сейчас, оборвётся. Сохранить?`, "Сохранить"))) return;
   saveBtn.disabled = true;
@@ -518,7 +519,7 @@ form.addEventListener("submit", async (e) => {
     hotkeysChanged();
   }
   saveState.className = "done";
-  saveState.textContent = restarts ? "Сохранено. Ядро перезапускается." : "Сохранено.";
+  saveState.textContent = restarts ? "Сохранено. Ядро перезапускается." : res.live ? "Сохранено и применено." : "Сохранено.";
 });
 
 $("btn-cancel").onclick = async () => {

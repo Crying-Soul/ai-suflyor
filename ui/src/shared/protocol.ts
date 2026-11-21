@@ -1,88 +1,24 @@
-// Mirror of core/crates/protocol (NDJSON over the core's stdio).
+// The core's protocol (NDJSON over its stdio) is generated from core/crates/protocol by ts-rs
+// (`cargo test` rewrites generated/protocol.ts); this file adds the UI's own types.
+import type { Event } from "./generated/protocol";
 
-export type Speaker = "me" | "them";
-export type AnswerMode = "confirmed" | "speculative";
-/** What an ask is for: answer the question, suggest questions to ask, or ways to continue. */
-export type AskKind = "answer" | "questions" | "continue" | "more";
-
-export type Command =
-  | { cmd: "ask"; screenshot: boolean; question?: string; kind?: AskKind }
-  | { cmd: "set"; auto?: boolean; model?: string; answer_mode?: AnswerMode; translate?: boolean; mute_me?: boolean; mute_them?: boolean }
-  | { cmd: "clear" }
-  | { cmd: "open_call"; dir: string }
-  | { cmd: "reload_context" }
-  | { cmd: "close_call" }
-  /** Writes `summary.md` of a call that is not open, from its saved files («Повторить итог»). */
-  | { cmd: "summarize"; dir: string }
-  /** Rates answer turn `turn` of the open call (saved as `feedback` in answers.jsonl); null clears it. */
-  | { cmd: "feedback"; turn: number; value: 1 | -1 | null }
-  | { cmd: "shutdown" };
-
-export interface ContextPart {
-  name: string;
-  tokens: number;
-  truncated: boolean;
-}
+export type * from "./generated/protocol";
+import type { Command, Speaker } from "./generated/protocol";
 
 /** The context in use; `dir` null = no call open, the profile alone. */
-export interface CallInfo {
-  dir: string | null;
-  title: string;
-  folder: string;
-  tokens: number;
-  parts: ContextPart[];
-  warnings: string[];
-}
-
-export interface CaptureStatus {
-  state: "starting" | "running" | "error";
-  source: string;
-  error?: string;
-}
-
-export interface Status {
-  me: CaptureStatus;
-  them: CaptureStatus;
-  stt: string;
-  auto: boolean;
-  model: string;
-  answer_mode: AnswerMode;
-  translate: boolean;
-  mute_me: boolean;
-  mute_them: boolean;
-  busy: boolean;
-  recording_dir?: string;
-}
+export type CallInfo = Omit<Extract<Event, { ev: "call" }>, "ev">;
 
 export type CoreEvent =
-  | { ev: "ready"; version: string }
-  | ({ ev: "status" } & Status)
-  | { ev: "level"; speaker: Speaker; rms: number; peak: number }
-  // `t` (epoch ms of the utterance start) keys one utterance across vad, partial and final.
-  | { ev: "vad"; speaker: Speaker; active: boolean; t: number }
-  /** Live hypothesis: `stable` agreed by two decodes in a row, `tail` may still change. */
-  | { ev: "partial"; speaker: Speaker; t: number; stable: string; tail: string }
-  /** Empty `text`: the utterance was dropped. `question`: "them" text that asks the user something. */
-  | { ev: "final"; speaker: Speaker; t: number; text: string; question: boolean }
-  /** `turn` is shared by the quick and full answers of one ask; `q_t` is the question's first utterance. */
-  | { ev: "answer_start"; id: number; turn: number; trigger: string; question: string; q_t?: number; tier: "quick" | "full" }
-  | { ev: "answer_delta"; id: number; text: string }
-  /** `feedback`: the saved rating of a replayed answer. */
-  | { ev: "answer_end"; id: number; error?: string; feedback?: 1 | -1 }
-  | { ev: "metrics"; name: string; ms: number }
-  /** Tokens of one finished Claude turn. `api`: billed per token (false: a Claude Code subscription). */
-  | { ev: "usage"; tier: string; model: string; api: boolean; input: number; cache_read: number; cache_write: number; output: number }
-  | { ev: "error"; message: string }
-  /** The screen that goes with answer turn `turn`; `thumb` is a small JPEG data URL. */
-  | { ev: "screenshot"; turn: number; width: number; height: number; thumb: string }
-  /** Translation of the other side's utterances `ts` (their `t`), as one piece. */
-  | { ev: "translation"; ts: number[]; text: string }
-  | ({ ev: "call" } & CallInfo)
-  | { ev: "summary"; dir: string; ok: boolean; error?: string }
+  | Event
   // Emitted by the UI main process itself, not the core:
   | { ev: "core_down"; message: string }
   /** A window sent "clear": every window drops its transcript and answers. */
   | { ev: "cleared" };
+
+/** Config keys the core applies without a restart (`reload_llm`): the Claude side only. Others
+ * (audio, speech recognition, paths) restart the core. */
+const LIVE_KEYS = ["anthropicApiKey", "model", "altModel", "quickModel", "effort", "twoTier", "answerMode", "autoDetect", "translate", "userLanguage"];
+export const appliesLive = (key: string): boolean => LIVE_KEYS.includes(key) || key.startsWith("llm.") || key.startsWith("claudeCode.");
 
 /** config.json as stored (`raw`) and with the core's defaults filled in (`effective`). */
 export interface ConfigSnapshot {
@@ -97,6 +33,8 @@ export interface SaveResult {
   error?: string;
   /** Saved, with something the user should know. */
   note?: string;
+  /** Applied without restarting the core (Claude settings only). */
+  live?: boolean;
 }
 
 export type NodeKind = "profile" | "folder" | "call";
@@ -220,7 +158,7 @@ export interface ReadyItem {
 export interface ReadyApi {
   list(): Promise<ReadyItem[]>;
   open(): void;
-  /** Saves the key and switches the backend to it (the core restarts). */
+  /** Saves the key and switches the backend to it. */
   useApiKey(key: string): Promise<SaveResult>;
   /** Switches to Claude Code and checks that `claude --version` answers. */
   useClaudeCode(): Promise<SaveResult>;
@@ -317,7 +255,7 @@ export type UiMessage =
   | { kind: "theme"; id: ThemeId };
 
 export interface PrivacyReport {
-  /** PNG data URL of the display with the overlays, as other apps capture it. */
+  /** Image data URL of the display with the overlays, as other apps capture it. */
   image: string;
   /** Each window and whether Windows hides it from capture (display affinity 0x11). */
   windows: { name: string; hidden: boolean }[];
@@ -332,7 +270,8 @@ export interface RendererApi {
   openSettings(section?: string): void;
   closeWindow(): void;
   loadConfig(): Promise<ConfigSnapshot>;
-  /** Dotted keys ("vad.minSilenceMs") to values; written into config.json, then the core restarts. */
+  /** Dotted keys ("vad.minSilenceMs") to values; written into config.json, then the core applies them
+   * (`appliesLive` keys) or restarts. */
   saveConfig(patch: Record<string, unknown>): Promise<SaveResult>;
   listMics(): Promise<string[]>;
   openCalls(): void;

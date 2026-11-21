@@ -1,22 +1,21 @@
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, shell } from "electron";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import type { CallInfo, Command, PrivacyReport, ConfigSnapshot, CoreEvent, ReadyItem, SaveResult, Status, HotkeyAction } from "../shared/protocol";
-import { isTheme } from "../shared/protocol";
+import type { CallInfo, Command, ConfigSnapshot, CoreEvent, SaveResult, Status, HotkeyAction } from "../shared/protocol";
+import { appliesLive, isTheme } from "../shared/protocol";
 import { DEFAULT_HOTKEYS } from "../shared/hotkeys";
-import * as readiness from "./readiness";
-import { cuda } from "./cuda";
 import * as update from "./update";
 import { createTray } from "./tray";
 import { startLogs } from "./log";
 import { CoreProcess, resolveCoreExe } from "./core";
+import { apiKey, coreEnv, encryptStoredKey, keyPatch } from "./api-key";
 import { configPath, coreArgs, loadHotkeys, newConfigPath, readRaw, rootDir, writeConfig } from "./config";
 import { migrateContext, registerCallsIpc } from "./calls-ipc";
 import { markStarted } from "./calls";
-import { activeModel, cudaDir, getModel, registerModelsIpc } from "./models-ipc";
+import { registerModelsIpc } from "./models-ipc";
+import { checkProtection, registerPrivacyIpc } from "./privacy";
+import * as readiness from "./readiness";
+import { forgetClaudeCodeCheck, readyItems, refreshReady, registerReadyIpc } from "./ready-ipc";
 import { createOverlay, openCalls, openReady, openSettings, sendUi, setTheme, toggleClickThrough, togglePreset, toggleWindows, wins, zoom } from "./windows";
 
 const overlays = wins.overlays;
@@ -37,7 +36,6 @@ function emit(e: CoreEvent): void {
     lastCall = e;
     tray?.setCall(e.dir ? e.title : null);
   }
-  if (e.ev === "summary") summaryDone?.(e.dir);
   // A restarted core knows nothing of the open call: open it again (its transcript is replayed).
   if (e.ev === "ready" && lastCall?.dir) openCall(lastCall.dir);
   // A muted source stays muted across a core restart (a settings change must not start listening).
@@ -60,7 +58,7 @@ function openCall(dir: string): void {
 }
 
 const coreExe = resolveCoreExe(app.getAppPath(), app.isPackaged);
-const core = new CoreProcess(coreExe, coreArgs, rootDir(), emit);
+const core = new CoreProcess(coreExe, coreArgs, rootDir(), emit, coreEnv);
 
 /** What each hotkey does; the overlay buttons run the same through `ui:action`. */
 /** Asks the core for an answer; the hints window says «Спрашиваю…» at once. */
@@ -71,7 +69,10 @@ function ask(cmd: Extract<Command, { cmd: "ask" }>): void {
 
 const actions: Record<HotkeyAction, () => void> = {
   ask: () => ask({ cmd: "ask", screenshot: false }),
-  screenshotAsk: () => (sendUi(overlays.hints, { kind: "looking" }), core.send({ cmd: "ask", screenshot: true })),
+  screenshotAsk: () => {
+    sendUi(overlays.hints, { kind: "looking" });
+    core.send({ cmd: "ask", screenshot: true });
+  },
   toggleWindow: () => toggleWindows(),
   toggleAuto: () => core.send({ cmd: "set", auto: !(lastStatus?.auto ?? true) }),
   clickThrough: () => toggleClickThrough(),
@@ -112,7 +113,7 @@ function registerHotkeys(): void {
 /** Runs the core with extra arguments and returns its stdout (and stderr). */
 function runCore(args: string[], timeout = 10_000): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) =>
-    execFile(coreExe, args, { cwd: rootDir(), windowsHide: true, timeout, maxBuffer: 64 << 20 }, (err, stdout, stderr) =>
+    execFile(coreExe, args, { cwd: rootDir(), env: coreEnv(), windowsHide: true, timeout, maxBuffer: 64 << 20 }, (err, stdout, stderr) =>
       err ? reject(new Error(stderr.trim().split("\n").pop() || String(err))) : resolve({ stdout, stderr }),
     ),
   );
@@ -127,57 +128,35 @@ async function loadConfig(): Promise<ConfigSnapshot> {
     console.warn(`[settings] core --print-config failed: ${e}`);
   }
   effective.hotkeys = { ...DEFAULT_HOTKEYS, ...(raw.hotkeys as object | undefined) };
+  // The core prints only whether a key is set; the form shows the key itself.
+  effective.anthropicApiKey = apiKey();
   return { path: configPath() ?? newConfigPath(), raw, effective };
 }
 
 function saveConfig(patch: Record<string, unknown>): SaveResult {
-  const res = writeConfig(patch);
+  const keys = Object.keys(patch);
+  const { anthropicApiKey, ...rest } = patch;
+  const res = writeConfig("anthropicApiKey" in patch ? { ...rest, ...keyPatch(String(anthropicApiKey ?? "").trim()) } : patch);
   if (!res.ok) return res;
   registerHotkeys();
   // Hotkeys live in main only: changing them must not restart the core and cut off an answer.
-  if (Object.keys(patch).every((k) => k.startsWith("hotkeys."))) return res;
-  claudeCodeOk = null;
+  if (keys.every((k) => k.startsWith("hotkeys."))) return res;
+  forgetClaudeCodeCheck();
   refreshReady();
+  // Claude settings apply in place: audio and speech recognition go on, the open call stays.
+  if (core.running() && keys.every((k) => k.startsWith("hotkeys.") || appliesLive(k))) {
+    core.send({ cmd: "reload_llm", anthropic_api_key: apiKey() || null });
+    return { ...res, live: true };
+  }
   core.restart();
   resolveDataDir();
   return res;
 }
 
-const DATA_DIR = "Suflyor";
-
-/** Renames `from` to `to` when only `from` exists. True when `to` is there to use. */
-function moveOnce(from: string, to: string): boolean {
-  if (fs.existsSync(to)) return true;
-  if (!fs.existsSync(from)) return false;
-  try {
-    fs.renameSync(from, to);
-    return true;
-  } catch (e) {
-    console.warn(`move ${from} -> ${to}: ${e}`);
-    return false;
-  }
-}
-
-/** Pins dataDir to the real Documents folder once: it may be redirected (F:\Documents, OneDrive),
- *  which the core's %USERPROFILE%\Documents default does not know. */
-function pinDataDir(): void {
-  const docs = app.getPath("documents");
-  const dir = path.join(docs, DATA_DIR);
-  const raw = readRaw().dataDir;
-  // Renamed from «Call Assistant»: the old default folder moves once; a folder the user chose stays.
-  const old = path.join(docs, "Call Assistant");
-  if (raw && path.resolve(String(raw)).toLowerCase() !== old.toLowerCase()) return;
-  if (raw || fs.existsSync(old)) {
-    // Not moved (open in Explorer, say): keep using the old folder.
-    if (!moveOnce(old, dir)) return void (raw || writeConfig({ dataDir: old }));
-  }
-  writeConfig({ dataDir: dir });
-}
-
 /** The core's effective dataDir (it fills in the default), relative paths against the config's folder. */
 async function resolveDataDir(): Promise<void> {
   const cfg = await loadConfig();
-  const dir = String(cfg.effective.dataDir ?? "") || path.join(app.getPath("documents"), DATA_DIR);
+  const dir = String(cfg.effective.dataDir ?? "") || path.join(app.getPath("documents"), "Suflyor");
   dataDir = path.resolve(path.dirname(cfg.path), dir);
 }
 
@@ -189,143 +168,6 @@ function registerUpdateIpc(): void {
   ipcMain.on("update:install", () => void update.install(() => core.stopped()));
 }
 
-// ---------- «Готовность»: what is missing, and the way to get it ----------
-
-/** `claude --version` through the configured command; null = not checked since the config changed. */
-let claudeCodeOk: boolean | null = null;
-async function checkClaudeCode(): Promise<boolean> {
-  if (claudeCodeOk !== null) return claudeCodeOk;
-  const cmd = ((readRaw().claudeCode as { command?: string[] } | undefined)?.command ?? ["claude"]).filter(Boolean);
-  claudeCodeOk = await promisify(execFile)(cmd[0] ?? "claude", [...cmd.slice(1), "--version"], { timeout: 10_000, windowsHide: true }).then(
-    () => true,
-    () => false,
-  );
-  return claudeCodeOk;
-}
-
-const nvidia: Promise<boolean> = app
-  .whenReady()
-  .then(() => app.getGPUInfo("basic"))
-  .then((i) => ((i as { gpuDevice?: { vendorId: number }[] }).gpuDevice ?? []).some((d) => d.vendorId === 0x10de))
-  .catch(() => false);
-
-async function readyItems(): Promise<ReadyItem[]> {
-  const raw = readRaw();
-  const backend = (raw.llm as { backend?: string } | undefined)?.backend === "claude-code" ? "claude-code" : "api";
-  return readiness.check({
-    coreError,
-    modelExists: fs.existsSync(activeModel()),
-    backend,
-    apiKey: Boolean(raw.anthropicApiKey || process.env.ANTHROPIC_API_KEY),
-    claudeCodeOk: backend === "claude-code" && (await checkClaudeCode()),
-    nvidia: await nvidia,
-    cudaInstalled: cuda.status(cudaDir()).state === "installed",
-    status: lastStatus,
-  });
-}
-
-let readyTimer: NodeJS.Timeout | undefined;
-/** Recomputes the list and sends it to whoever shows it (debounced: status events come in bursts). */
-function refreshReady(): void {
-  clearTimeout(readyTimer);
-  readyTimer = setTimeout(async () => {
-    const items = await readyItems();
-    for (const w of [wins.ready, overlays.transcript, overlays.hints]) w?.webContents.send("ready:changed", items);
-  }, 300);
-}
-
-/** Lists models with the key: free, and a wrong key answers 401 at once instead of at the first question. */
-async function checkApiKey(key: string): Promise<"ok" | "rejected" | "offline"> {
-  try {
-    const r = await fetch("https://api.anthropic.com/v1/models?limit=1", {
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    return r.status === 401 || r.status === 403 ? "rejected" : "ok";
-  } catch {
-    return "offline";
-  }
-}
-
-function registerReadyIpc(): void {
-  ipcMain.on("core:restart", () => core.restart());
-  ipcMain.handle("ready:list", readyItems);
-  ipcMain.on("ready:open", openReady);
-  ipcMain.handle("ready:apiKey", async (_e, key: string) => {
-    const k = String(key).trim();
-    if (!k.startsWith("sk-ant-")) return { ok: false, error: "Ключ API Anthropic начинается с sk-ant-." };
-    const check = await checkApiKey(k);
-    if (check === "rejected") return { ok: false, error: "Anthropic не принял ключ. Проверьте, что он скопирован целиком и не отозван." };
-    const res = saveConfig({ anthropicApiKey: k, "llm.backend": "api" });
-    return res.ok && check === "offline" ? { ...res, note: "Ключ сохранён, но проверить его не удалось: нет связи с api.anthropic.com." } : res;
-  });
-  ipcMain.handle("ready:claudeCode", async () => {
-    const res = saveConfig({ "llm.backend": "claude-code" });
-    if (!res.ok) return res;
-    return (await checkClaudeCode()) ? res : { ok: false, error: "Команда claude не ответила. Установите Claude Code и войдите в аккаунт." };
-  });
-  ipcMain.on("ready:model", (_e, id: string) => void getModel(id));
-  ipcMain.on("ready:logs", () => shell.openPath(logDir));
-}
-
-// ---------- capture protection: check it applied, and let the user see it ----------
-
-const hwnd = (w: BrowserWindow) => w.getNativeWindowHandle().readBigUInt64LE(0).toString();
-
-/** WDA_EXCLUDEFROMCAPTURE needs Windows 10 2004 (build 19041); older builds show a black box. */
-const osHidesWindows = () => process.platform !== "win32" || Number(os.release().split(".")[2] ?? 0) >= 19041;
-
-function ourWindows(): [string, BrowserWindow][] {
-  const all: [string, BrowserWindow | null | undefined][] = [
-    ["Транскрипт", overlays.transcript],
-    ["Подсказки", overlays.hints],
-    ["Настройки", wins.settings],
-    ["Звонки", wins.calls],
-  ];
-  return all.filter((e): e is [string, BrowserWindow] => Boolean(e[1]));
-}
-
-/** Display affinity of each window, read by the core (0x11 = hidden from capture). */
-async function affinities(): Promise<{ name: string; hidden: boolean }[]> {
-  const wins = ourWindows();
-  const { stdout } = await runCore(["--check-affinity", ...wins.map(([, w]) => hwnd(w))]);
-  const lines = stdout.trim().split(/\r?\n/);
-  return wins.map(([name], i) => ({ name, hidden: /\s0x11$/.test(lines[i] ?? "") }));
-}
-
-/** Once after start: a window that is not hidden from capture is said loudly. */
-async function checkProtection(): Promise<void> {
-  if (!osHidesWindows()) emit({ ev: "error", message: "Windows старше 10 2004: в демонстрации экрана окна видны чёрными прямоугольниками" });
-  try {
-    const bad = (await affinities()).filter((w) => !w.hidden);
-    if (bad.length) emit({ ev: "error", message: `Окно может попасть в демонстрацию экрана: ${bad.map((w) => w.name).join(", ")}` });
-  } catch (e) {
-    console.warn(`[privacy] affinity check failed: ${e}`);
-  }
-}
-
-/** Captures the display with the overlays the way other apps do, so the user sees they are absent. */
-async function privacyTest(): Promise<PrivacyReport> {
-  for (const w of Object.values(overlays)) if (!w.isVisible()) w.showInactive();
-  await new Promise((r) => setTimeout(r, 300));
-  const anchor = overlays.hints ?? overlays.transcript;
-  const display = anchor ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay();
-  const r = screen.dipToScreenRect(null, display.bounds);
-  const file = path.join(app.getPath("temp"), `suflyor-privacy-${Date.now()}.png`);
-  try {
-    await runCore(["--snap", file, "--rect", `${r.x},${r.y},${r.width},${r.height}`]);
-    const image = `data:image/png;base64,${fs.readFileSync(file).toString("base64")}`;
-    return { image, windows: await affinities(), osOk: osHidesWindows() };
-  } finally {
-    fs.rmSync(file, { force: true });
-  }
-}
-
-// Renamed from CallAssistant: window state, logs and downloaded models move to the new userData once.
-// Per file: Electron has created userData itself by now.
-for (const name of ["call-assistant-ui", "CallAssistant"]) {
-  for (const f of ["windows.json", "logs", "whisper-models"]) moveOnce(path.join(app.getPath("appData"), name, f), path.join(app.getPath("userData"), f));
-}
 // A second copy would add a second tray and core and fight over the hotkeys and config.json.
 if (!app.requestSingleInstanceLock()) app.exit(0);
 app.on("second-instance", () => {
@@ -361,8 +203,8 @@ app.whenReady().then(() => {
   registerCallsIpc({ core, runCore, dataDir: () => dataDir, lastCall: () => lastCall });
   registerModelsIpc({ core, saveConfig, refreshReady });
   registerUpdateIpc();
-  registerReadyIpc();
-  ipcMain.handle("privacy:test", privacyTest);
+  registerReadyIpc({ core, saveConfig, coreError: () => coreError, lastStatus: () => lastStatus, logDir });
+  registerPrivacyIpc(runCore);
   ipcMain.on("logs:open", () => shell.openPath(logDir));
   const replay = (w: BrowserWindow) => {
     if (lastStatus) w.webContents.send("core-event", { ev: "status", ...lastStatus });
@@ -387,10 +229,10 @@ app.whenReady().then(() => {
     restartCore: () => core.restart(),
     quit: () => app.quit(),
   });
-  setTimeout(checkProtection, 3000);
+  setTimeout(() => void checkProtection(runCore, emit), 3000);
   registerHotkeys();
+  encryptStoredKey();
   // The core reads the migrated profile, so it starts after the migration.
-  pinDataDir();
   resolveDataDir()
     .then(migrateContext)
     .finally(() => core.start());
@@ -404,29 +246,8 @@ app.whenReady().then(() => {
   }, overlaysOn);
 });
 
-/** Resolves the wait of a quit for the open call's summary. */
-let summaryDone: ((dir: string) => void) | null = null;
-/** The longest a quit waits for the summary: it is written by the full model. */
-const QUIT_SUMMARY_MS = 180_000;
-let quitting = false;
-
-// Quitting with a call open ends it like «Завершить звонок»: the summary is written before the core stops.
-app.on("before-quit", (e) => {
-  const dir = lastCall?.dir;
-  if (quitting || !dir || !core.running()) return;
-  e.preventDefault();
-  quitting = true;
-  for (const w of BrowserWindow.getAllWindows()) w.hide();
-  tray?.setCall("пишу итог звонка, потом закроюсь");
-  const finish = () => {
-    summaryDone = null;
-    app.quit();
-  };
-  summaryDone = (d) => d === dir && finish();
-  setTimeout(finish, QUIT_SUMMARY_MS);
-  core.send({ cmd: "close_call" });
-});
-
+// Quitting with a call open does not wait for its summary: the core leaves the call marked, and
+// writes the summary at the next start (call::defer_summary).
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   core.stop();

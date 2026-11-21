@@ -206,7 +206,7 @@ $("btn-owed").onclick = () => {
 };
 
 function clearRows(): void {
-  list.querySelectorAll(".block").forEach((b) => b.remove());
+  for (const b of list.querySelectorAll(".block")) b.remove();
   segs.clear();
   dropped.clear();
   live.clear();
@@ -255,8 +255,8 @@ function renderStatus(s: Status): void {
     mutes[sp].parentElement!.classList.toggle("muted", muted);
   }
   statusEl.textContent = s.recording_dir ? `${sttLabel(s.stt)}, пишу WAV` : sttLabel(s.stt);
-  statusEl.classList.toggle("error", s.stt.startsWith("error"));
-  statusEl.title = s.stt.startsWith("error") ? s.stt.slice(6).trim() : metricsTip;
+  statusEl.classList.toggle("error", s.stt.state === "error");
+  statusEl.title = s.stt.state === "error" ? s.stt.message : metricsTip;
 }
 
 function setMeter(speaker: Speaker, peak: number): void {
@@ -362,8 +362,8 @@ api.onEvent((e: CoreEvent) => {
       break;
     }
     case "error":
-      // Our own Russian messages (capture protection) read as they are; a raw cause becomes words.
-      statusEl.textContent = /[а-яё]/i.test(e.message) && !/^Claude/.test(e.message) ? e.message : humanError(e.message);
+      // A Claude failure is worded by its kind; the core's other messages are meant for the user as they are.
+      statusEl.textContent = e.kind ? humanError(e.kind) : e.message;
       statusEl.title = e.message;
       statusEl.classList.add("error");
       break;
@@ -424,5 +424,8 @@ const renderThroughNote = () =>
   void api.hotkeys().then((k) => ($("through-note").textContent = `Клики проходят сквозь окна. Выключить: ${keyLabel(k.clickThrough)}`));
 renderThroughNote();
 overlayUi((m) => {
-  if (m.kind === "hotkeys") (refreshKeys(), renderThroughNote());
+  if (m.kind === "hotkeys") {
+    refreshKeys();
+    renderThroughNote();
+  }
 });

@@ -244,8 +244,12 @@ function moveControl(n: NodeData, isLive: boolean): HTMLElement {
   const others = tree.folders.filter((f) => f !== here);
   const box = el("div", "move");
   // Said, not just missing: the user looking for «Перенести» learns why it is not there.
-  if (isLive) return (box.append(el("span", "hint", "Перенести можно после «Завершить звонок».")), box);
-  if (!others.length) return (box.append(el("span", "hint", "Перенести некуда: другой папки нет.")), box);
+  const say = (text: string) => {
+    box.append(el("span", "hint", text));
+    return box;
+  };
+  if (isLive) return say("Перенести можно после «Завершить звонок».");
+  if (!others.length) return say("Перенести некуда: другой папки нет.");
   const pick = el("select", "select");
   pick.setAttribute("aria-label", "Папка, куда перенести звонок");
   pick.append(...others.map((f) => Object.assign(el("option", "", f.title), { value: f.dir })));

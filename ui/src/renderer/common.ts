@@ -1,4 +1,4 @@
-import type { HotkeyAction, Hotkeys, RendererApi, Status, UiMessage } from "../shared/protocol";
+import type { ErrorKind, HotkeyAction, Hotkeys, RendererApi, Status, SttState, UiMessage } from "../shared/protocol";
 import { DEFAULT_THEME, isTheme } from "../shared/protocol";
 import { MARK_SVG } from "../shared/mark";
 
@@ -57,24 +57,38 @@ export function bindActions(): () => void {
   return refresh;
 }
 
-/** Russian label of the core's STT state ("loading", "ready (gpu)", "error: …"). */
-export function sttLabel(stt: string): string {
-  if (stt === "off") return "распознавание выключено";
-  if (stt === "loading") return "загружаю модель речи…";
-  if (stt.startsWith("ready")) return stt.includes("gpu") ? "готово, GPU" : "готово, CPU";
-  // The raw cause goes to the tooltip; «Проверка готовности» names the fix.
-  if (stt.startsWith("error")) return "распознавание не запущено";
-  return stt;
+/** Russian label of the core's STT state. */
+export function sttLabel(stt: SttState): string {
+  switch (stt.state) {
+    case "off":
+      return "распознавание выключено";
+    case "loading":
+      return "загружаю модель речи…";
+    case "ready":
+      return stt.gpu ? "готово, GPU" : "готово, CPU";
+    // The raw cause goes to the tooltip; «Проверка готовности» names the fix.
+    case "error":
+      return "распознавание не запущено";
+  }
 }
 
-/** A failure in words, by its raw cause (which goes to a tooltip or a fold, never in front). */
-export function humanError(raw: string): string {
-  if (/timed? ?out|timeout/i.test(raw)) return "Claude не ответил вовремя";
-  if (/401|403|api[_ ]?key|auth|login|credential/i.test(raw)) return "Claude не подключён: проверьте ключ или вход";
-  if (/429|rate|overloaded|529/i.test(raw)) return "Claude перегружен, повторите через минуту";
-  if (/connect|network|dns|offline|resolve/i.test(raw)) return "Нет связи с Claude";
-  if (/^Claude/.test(raw)) return "Claude недоступен";
-  return "Что-то пошло не так";
+/** A Claude failure in words, by its kind (the raw cause goes to a tooltip or a fold, never in front). */
+export function humanError(kind: ErrorKind | undefined): string {
+  switch (kind) {
+    case "timeout":
+      return "Claude не ответил вовремя";
+    case "auth":
+      return "Claude не подключён: проверьте ключ или вход";
+    case "rate_limit":
+    case "overloaded":
+      return "Claude перегружен, повторите через минуту";
+    case "network":
+      return "Нет связи с Claude";
+    case "refused":
+      return "Claude отказался отвечать на этот вопрос";
+    default:
+      return "Claude недоступен";
+  }
 }
 
 /** core_down in words: restarting by itself, or stopped for good (then the tray restarts it). */
@@ -186,7 +200,12 @@ export function guardPopups(): void {
   new MutationObserver((ms) => {
     for (const m of ms) {
       if (m.type === "attributes") move(m.target as Element);
-      else m.addedNodes.forEach((n) => n instanceof HTMLElement && (move(n), n.querySelectorAll("[title]").forEach(move)));
+      else
+        for (const n of m.addedNodes) {
+          if (!(n instanceof HTMLElement)) continue;
+          move(n);
+          n.querySelectorAll("[title]").forEach(move);
+        }
     }
   }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["title"] });
   let timer = 0;
@@ -244,7 +263,10 @@ export function askConfirm(text: string, ok = "Да", cancel: string | null = "�
       resolve(v);
       // Leaves faster than it came (tokens.css): the answer is already in, the dialog only fades.
       d.classList.add("closing");
-      setTimeout(() => (d.close(), d.remove()), 120);
+      setTimeout(() => {
+        d.close();
+        d.remove();
+      }, 120);
     };
     yes.onclick = () => done(true);
     d.addEventListener("cancel", (e) => {

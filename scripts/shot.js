@@ -13,7 +13,7 @@ if (THEME) {
 const cfg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../config.json"), "utf8"));
 const wp = { preload: path.join(dist, "preload.js"), contextIsolation: true, sandbox: true, backgroundThrottling: false };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const status = { ev: "status", me: { state: "running", source: "mic: Focusrite USB (2- Focusrite USB Audio) [48000 Hz, 2 ch]" }, them: { state: "running", source: "system loopback: Speakers [192000 Hz, 2 ch]" }, stt: "ready (gpu)", auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", translate: true, mute_me: false, mute_them: true, busy: false };
+const status = { ev: "status", me: { state: "running", source: "mic: Focusrite USB (2- Focusrite USB Audio) [48000 Hz, 2 ch]" }, them: { state: "running", source: "system loopback: Speakers [192000 Hz, 2 ch]" }, stt: { state: "ready", gpu: true }, auto: true, model: "claude-sonnet-5-5", answer_mode: "confirmed", translate: true, mute_me: false, mute_them: true, busy: false };
 const T = 1000;
 // Live phase: speech just started, then a partial with a settled prefix, then a question final.
 const callEv = { ev: "call", dir: "C:\\Users\\me\\Documents\\Suflyor\\folders\\yandex\\calls\\2026-11-05-1200-sys", title: "Системный дизайн", folder: "Яндекс Маркет", tokens: 5320, parts: [], warnings: [] };

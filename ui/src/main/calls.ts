@@ -1,6 +1,7 @@
 // Call folders on disk: <dataDir>/profile, folders/<slug>, folders/<slug>/calls/<date>-<slug>.
 // Every node has context.md, meta.json {title, glossary, ...} and files/. The core reads the same layout.
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import type { CallsTree, NodeData, NodeFile, NodeKind, NodePatch, SearchHit, TranscriptLine } from "../shared/protocol";
 
@@ -93,12 +94,24 @@ export function writeAtomic(p: string, data: string): void {
   fs.renameSync(`${p}.tmp`, p);
 }
 
+// Writes stay synchronous (one small file each). Reads that walk many files are async: the main
+// process also routes hotkeys and the core's events, and must not stall on a large data folder.
 const readText = (p: string) => (fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "");
-const title = (dir: string) => String(readJson(path.join(dir, "meta.json")).title ?? "") || path.basename(dir);
-const subdirs = (dir: string) =>
-  fs.existsSync(dir)
-    ? fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(dir, d.name)).sort()
-    : [];
+const read = (p: string) => fsp.readFile(p, "utf8").catch(() => "");
+const exists = (p: string) => fsp.access(p).then(() => true, () => false);
+async function readMeta(dir: string): Promise<Record<string, unknown>> {
+  try {
+    return JSON.parse(await fsp.readFile(path.join(dir, "meta.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+const title = async (dir: string) => String((await readMeta(dir)).title ?? "") || path.basename(dir);
+const subdirs = async (dir: string) =>
+  (await fsp.readdir(dir, { withFileTypes: true }).catch(() => []))
+    .filter((d) => d.isDirectory())
+    .map((d) => path.join(dir, d.name))
+    .sort();
 
 export function kindOf(dataDir: string, dir: string): NodeKind {
   const rel = path.relative(dataDir, dir).split(path.sep);
@@ -108,53 +121,50 @@ export function kindOf(dataDir: string, dir: string): NodeKind {
   throw new Error(`не узел контекста: ${dir}`);
 }
 
-export function tree(dataDir: string): CallsTree {
-  return {
-    dataDir,
-    profile: path.join(dataDir, "profile"),
-    folders: subdirs(path.join(dataDir, "folders")).map((f) => ({
-      dir: f,
-      title: title(f),
-      // Newest call first: names start with the date.
-      calls: subdirs(path.join(f, "calls"))
-        .reverse()
-        .map((c) => {
-          const started = readJson(path.join(c, "meta.json")).started;
-          return { dir: c, title: title(c), hasSummary: fs.existsSync(path.join(c, "summary.md")), started: typeof started === "string" ? started : undefined };
-        }),
-    })),
+export async function tree(dataDir: string): Promise<CallsTree> {
+  const call = async (c: string) => {
+    const meta = await readMeta(c);
+    const started = typeof meta.started === "string" ? meta.started : undefined;
+    return { dir: c, title: String(meta.title ?? "") || path.basename(c), hasSummary: await exists(path.join(c, "summary.md")), started };
   };
+  const folder = async (f: string) => ({
+    dir: f,
+    title: await title(f),
+    // Newest call first: names start with the date.
+    calls: await Promise.all((await subdirs(path.join(f, "calls"))).reverse().map(call)),
+  });
+  return { dataDir, profile: path.join(dataDir, "profile"), folders: await Promise.all((await subdirs(path.join(dataDir, "folders"))).map(folder)) };
 }
 
 /** Tokens the way the core counts them (characters / 3). */
 const tokens = (s: string) => Math.ceil([...s].length / 3);
 
 /** Cached PDF text, if it is not older than the PDF (the core's rule). */
-function pdfCache(file: string): string | null {
+async function pdfCache(file: string): Promise<string | null> {
   const cache = path.join(path.dirname(file), ".text", `${path.basename(file)}.txt`);
   try {
-    return fs.statSync(cache).mtimeMs >= fs.statSync(file).mtimeMs ? fs.readFileSync(cache, "utf8") : null;
+    const [c, f] = await Promise.all([fsp.stat(cache), fsp.stat(file)]);
+    return c.mtimeMs >= f.mtimeMs ? await fsp.readFile(cache, "utf8") : null;
   } catch {
     return null;
   }
 }
 
-function files(dir: string): NodeFile[] {
+async function files(dir: string): Promise<NodeFile[]> {
   const fdir = path.join(dir, "files");
-  if (!fs.existsSync(fdir)) return [];
-  return fs
-    .readdirSync(fdir, { withFileTypes: true })
-    .filter((d) => d.isFile() && CONTEXT_EXT.has(path.extname(d.name).toLowerCase()))
-    .map((d) => {
+  const entries = (await fsp.readdir(fdir, { withFileTypes: true }).catch(() => [])).filter((d) => d.isFile() && CONTEXT_EXT.has(path.extname(d.name).toLowerCase()));
+  const list = await Promise.all(
+    entries.map(async (d) => {
       const p = path.join(fdir, d.name);
-      const text = path.extname(d.name).toLowerCase() === ".pdf" ? pdfCache(p) : fs.readFileSync(p, "utf8");
-      return { name: d.name, size: fs.statSync(p).size, tokens: text === null ? null : tokens(text) };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+      const text = path.extname(d.name).toLowerCase() === ".pdf" ? await pdfCache(p) : await read(p);
+      return { name: d.name, size: (await fsp.stat(p)).size, tokens: text === null ? null : tokens(text) };
+    }),
+  );
+  return list.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function transcript(dir: string): TranscriptLine[] {
-  return readText(path.join(dir, "transcript.jsonl"))
+async function transcript(dir: string): Promise<TranscriptLine[]> {
+  return (await read(path.join(dir, "transcript.jsonl")))
     .split("\n")
     .flatMap((l) => {
       try {
@@ -167,27 +177,27 @@ function transcript(dir: string): TranscriptLine[] {
     .sort((a, b) => a.t - b.t);
 }
 
-export function node(dataDir: string, dir: string): NodeData {
+export async function node(dataDir: string, dir: string): Promise<NodeData> {
   const kind = kindOf(dataDir, dir);
-  const meta = readJson(path.join(dir, "meta.json"));
+  const meta = await readMeta(dir);
   const ctxFile = path.join(dir, "context.md");
   const data: NodeData = {
     dir,
     kind,
-    title: kind === "profile" ? "Обо мне" : title(dir),
+    title: kind === "profile" ? "Обо мне" : await title(dir),
     // A profile never saved starts from the template (folders and calls get it when created).
-    context: kind === "profile" && !fs.existsSync(ctxFile) ? TEMPLATES.profile : readText(ctxFile),
+    context: kind === "profile" && !(await exists(ctxFile)) ? TEMPLATES.profile : await read(ctxFile),
     glossary: Array.isArray(meta.glossary) ? meta.glossary.map(String) : [],
-    files: files(dir),
+    files: await files(dir),
   };
   if (kind === "call") {
     data.started = typeof meta.started === "string" ? meta.started : undefined;
-    data.summary = readText(path.join(dir, "summary.md"));
-    data.transcript = transcript(dir);
-    data.answers = readText(path.join(dir, "answers.jsonl")).split("\n").filter((l) => l.trim()).length;
+    data.summary = await read(path.join(dir, "summary.md"));
+    data.transcript = await transcript(dir);
+    data.answers = (await read(path.join(dir, "answers.jsonl"))).split("\n").filter((l) => l.trim()).length;
     data.stage = typeof meta.stage === "string" ? meta.stage : "";
     // The first line is the core's cache key (`<!-- source: … -->`).
-    data.brief = readText(path.join(dir, "brief.md")).replace(/^<!--[^\n]*-->\n/, "").trim() || undefined;
+    data.brief = (await read(path.join(dir, "brief.md"))).replace(/^<!--[^\n]*-->\n/, "").trim() || undefined;
     data.suggestions = suggestions(data.summary);
   }
   return data;
@@ -212,6 +222,7 @@ function slug(parent: string, base: string, prefix = ""): string {
   const s =
     base
       .toLowerCase()
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are not allowed in Windows file names.
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
       .replace(/\s+/g, "-")
       .replace(/^[-.]+|[-.]+$/g, "")
@@ -315,26 +326,26 @@ function snippet(text: string, q: string): string | null {
 }
 
 /** Folders and calls whose title, notes, summary or transcript contain `query` (any case). */
-export function search(dataDir: string, query: string, limit = 50): SearchHit[] {
+export async function search(dataDir: string, query: string, limit = 50): Promise<SearchHit[]> {
   const q = query.trim().toLowerCase();
   if (q.length < 2) return [];
   const hits: SearchHit[] = [];
-  const look = (dir: string, folder: string | undefined, parts: [string, string][]) => {
+  const look = (dir: string, title: string, folder: string | undefined, parts: [string, string][]) => {
     for (const [where, text] of parts) {
       const s = snippet(text, q);
-      if (s !== null) return void hits.push({ dir, title: title(dir), folder, where, snippet: s });
+      if (s !== null) return void hits.push({ dir, title, folder, where, snippet: s });
     }
   };
-  for (const f of subdirs(path.join(dataDir, "folders"))) {
-    const ft = title(f);
-    look(f, undefined, [["название", ft], ["заметки", readText(path.join(f, "context.md"))]]);
-    for (const c of subdirs(path.join(f, "calls")).reverse()) {
-      const lines = transcript(c).map((l) => l.text).join("\n");
-      look(c, ft, [
-        ["название", title(c)],
-        ["заметки", readText(path.join(c, "context.md"))],
-        ["итог", readText(path.join(c, "summary.md"))],
-        ["транскрипт", lines],
+  for (const f of await subdirs(path.join(dataDir, "folders"))) {
+    const ft = await title(f);
+    look(f, ft, undefined, [["название", ft], ["заметки", await read(path.join(f, "context.md"))]]);
+    for (const c of (await subdirs(path.join(f, "calls"))).reverse()) {
+      const [ct, notes, summary, lines] = await Promise.all([title(c), read(path.join(c, "context.md")), read(path.join(c, "summary.md")), transcript(c)]);
+      look(c, ct, ft, [
+        ["название", ct],
+        ["заметки", notes],
+        ["итог", summary],
+        ["транскрипт", lines.map((l) => l.text).join("\n")],
       ]);
       if (hits.length >= limit) return hits;
     }
@@ -343,21 +354,21 @@ export function search(dataDir: string, query: string, limit = 50): SearchHit[] 
 }
 
 /** The call as one Markdown document: summary, notes, the transcript and the full hints. */
-export function exportMarkdown(dataDir: string, dir: string): string {
+export async function exportMarkdown(dataDir: string, dir: string): Promise<string> {
   if (kindOf(dataDir, dir) !== "call") throw new Error("экспортируется только звонок");
-  const n = node(dataDir, dir);
+  const n = await node(dataDir, dir);
   const clock = (t: number) => new Date(t).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   const out = [`# ${n.title}`, ""];
-  out.push(`Папка: ${title(path.dirname(path.dirname(dir)))}`);
+  out.push(`Папка: ${await title(path.dirname(path.dirname(dir)))}`);
   if (n.started) out.push(`Начало: ${new Date(n.started).toLocaleString("ru-RU", { dateStyle: "long", timeStyle: "short" })}`);
   if (n.summary?.trim()) out.push("", "## Итог", "", n.summary.trim());
   if (n.context.trim()) out.push("", "## Заметки", "", n.context.trim());
-  const lines = transcript(dir);
+  const lines = n.transcript ?? [];
   if (lines.length) {
     out.push("", "## Транскрипт", "");
     for (const l of lines) out.push(`**${clock(l.t)} ${l.speaker === "them" ? "Собеседник" : "Я"}:** ${l.text}`, "");
   }
-  const hints = readText(path.join(dir, "answers.jsonl"))
+  const hints = (await read(path.join(dir, "answers.jsonl")))
     .split("\n")
     .flatMap((l) => {
       try {
