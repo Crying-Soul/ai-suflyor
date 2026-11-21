@@ -7,7 +7,7 @@ pub mod claude_code;
 pub mod mock;
 
 use anyhow::Result;
-use protocol::Speaker;
+use protocol::{ErrorKind, Speaker};
 
 use crate::FinalSegment;
 
@@ -23,13 +23,159 @@ pub enum Chunk {
     },
 }
 
-/// The `usage` event of a turn's `Chunk::Usage`; None for other chunks.
-pub fn usage_event(tier: &str, model: &str, api: bool, c: &Chunk) -> Option<protocol::Event> {
-    let Chunk::Usage { input, cache_read, cache_write, output } = *c else { return None };
-    Some(protocol::Event::Usage { tier: tier.into(), model: model.into(), api, input, cache_read, cache_write, output })
+/// Token counts as the Messages API reports them (stream events and Claude Code `result`).
+#[derive(Debug, Default, Clone, Copy, serde::Deserialize)]
+pub struct Usage {
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
 }
 
-/// One user turn: text and, for "Экран + вопрос", a PNG of the screen placed before it.
+impl Usage {
+    pub fn cache_read(&self) -> u64 {
+        self.cache_read_input_tokens.unwrap_or(0)
+    }
+
+    pub fn cache_write(&self) -> u64 {
+        self.cache_creation_input_tokens.unwrap_or(0)
+    }
+
+    pub fn chunk(&self) -> Chunk {
+        Chunk::Usage {
+            input: self.input_tokens.unwrap_or(0),
+            cache_read: self.cache_read(),
+            cache_write: self.cache_write(),
+            output: self.output_tokens.unwrap_or(0),
+        }
+    }
+}
+
+/// The events of a streamed Messages API answer that matter here; Claude Code wraps the same ones.
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StreamEvent {
+    MessageStart {
+        message: MessageStart,
+    },
+    ContentBlockDelta {
+        delta: Delta,
+    },
+    MessageDelta {
+        delta: MessageDelta,
+        #[serde(default)]
+        usage: Option<Usage>,
+    },
+    MessageStop,
+    Error {
+        error: ErrorBody,
+    },
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct MessageStart {
+    #[serde(default)]
+    pub usage: Usage,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Delta {
+    TextDelta {
+        text: String,
+    },
+    #[serde(other)]
+    Other,
+}
+
+impl Delta {
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Delta::TextDelta { text } => Some(text),
+            Delta::Other => None,
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct MessageDelta {
+    #[serde(default)]
+    pub stop_reason: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ErrorBody {
+    /// "overloaded_error", "rate_limit_error", ...
+    #[serde(rename = "type", default)]
+    pub kind: String,
+    #[serde(default)]
+    pub message: String,
+}
+
+impl ErrorBody {
+    pub fn error_kind(&self) -> ErrorKind {
+        match self.kind.as_str() {
+            "overloaded_error" | "api_error" => ErrorKind::Overloaded,
+            "rate_limit_error" => ErrorKind::RateLimit,
+            "authentication_error" | "permission_error" => ErrorKind::Auth,
+            _ => ErrorKind::Other,
+        }
+    }
+}
+
+/// The `usage` event of a turn's `Chunk::Usage`; None for other chunks.
+pub fn usage_event(tier: protocol::Tier, model: &str, api: bool, c: &Chunk) -> Option<protocol::Event> {
+    let Chunk::Usage { input, cache_read, cache_write, output } = *c else { return None };
+    Some(protocol::Event::Usage { tier, model: model.into(), api, input, cache_read, cache_write, output })
+}
+
+/// A failure that already knows its kind (no key, a timeout, a refusal...).
+#[derive(Debug)]
+pub struct Failure {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Failure {}
+
+pub fn fail(kind: ErrorKind, message: impl Into<String>) -> anyhow::Error {
+    Failure { kind, message: message.into() }.into()
+}
+
+/// What kind of Claude failure `e` is, for the UI's wording.
+pub fn error_kind(e: &anyhow::Error) -> ErrorKind {
+    for cause in e.chain() {
+        if let Some(f) = cause.downcast_ref::<Failure>() {
+            return f.kind;
+        }
+        if let Some(h) = cause.downcast_ref::<api::HttpError>() {
+            return match h.status {
+                401 | 403 => ErrorKind::Auth,
+                429 => ErrorKind::RateLimit,
+                500.. => ErrorKind::Overloaded,
+                _ => ErrorKind::Other,
+            };
+        }
+        if let Some(r) = cause.downcast_ref::<reqwest::Error>() {
+            return if r.is_timeout() { ErrorKind::Timeout } else { ErrorKind::Network };
+        }
+    }
+    ErrorKind::Other
+}
+
+/// One user turn: text and, for "Экран + вопрос", a picture of the screen (`screen::MEDIA_TYPE`) placed before it.
 pub struct Turn {
     pub text: String,
     pub image: Option<std::sync::Arc<Vec<u8>>>,
@@ -44,9 +190,10 @@ impl Turn {
     pub fn content(&self) -> serde_json::Value {
         use base64::Engine as _;
         let mut blocks = Vec::new();
-        if let Some(png) = &self.image {
-            let data = base64::engine::general_purpose::STANDARD.encode(png.as_slice());
-            blocks.push(serde_json::json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}}));
+        if let Some(image) = &self.image {
+            let data = base64::engine::general_purpose::STANDARD.encode(image.as_slice());
+            let media_type = crate::screen::MEDIA_TYPE;
+            blocks.push(serde_json::json!({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}));
         }
         blocks.push(serde_json::json!({"type": "text", "text": self.text}));
         serde_json::Value::Array(blocks)
@@ -72,11 +219,12 @@ impl Session {
         }
     }
 
-    /// Starts the backend ahead of the first question (claude-code: spawn + one short turn).
-    pub async fn warm(&mut self, model: &str) -> Result<()> {
+    /// Starts the backend ahead of the first question (claude-code: spawn + one short turn; the API:
+    /// a pooled connection, and with `cache` the system prompt written to the prompt cache).
+    pub async fn warm(&mut self, model: &str, cache: bool, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
         match self {
-            Session::Api(_) => Ok(()),
-            Session::Code(s) => s.warm(model).await,
+            Session::Api(s) => s.warm(model, cache, out).await,
+            Session::Code(s) => s.warm(model, out).await,
             #[cfg(test)]
             Session::Mock(_) => Ok(()),
         }

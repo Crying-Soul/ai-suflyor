@@ -125,15 +125,16 @@ fn supervise(speaker: Speaker, source: Source, shared: Arc<Shared>, queue: Arc<S
                 // Levels still work, but nothing gets transcribed: say so instead of showing "running".
                 error!("VAD disabled for {}: {e:#}", speaker.as_str());
                 let message = format!("VAD не загрузился, распознавание выключено: {e:#}");
-                let _ = shared.events.send(Event::Error { message: message.clone() });
+                let _ = shared.events.send(Event::Error { message: message.clone(), kind: None });
                 set_capture_status(&shared, speaker, CaptureStatus { state: CaptureState::Error, source: capture.description.clone(), error: Some(message) });
                 None
             }
         };
-        let failure = drain(speaker, capture, &shared, &queue, silero, &vad.seg, vad.partial_ms, writer.as_mut(), stop);
+        let ctx = Stream { speaker, shared: &shared, queue: &queue, vad: &vad, stop };
+        let failure = drain(&ctx, capture, silero, writer.as_mut());
         if !stop.load(Ordering::Relaxed) {
             if let Some(e) = &failure {
-                let _ = shared.events.send(Event::Error { message: format!("{}: {e}", speaker.as_str()) });
+                let _ = shared.events.send(Event::Error { message: format!("{}: {e}", speaker.as_str()), kind: None });
             }
             let error = failure.map_or_else(|| "capture stopped, restarting".into(), |e| format!("{e}, restarting"));
             set_capture_status(&shared, speaker, CaptureStatus { state: CaptureState::Error, source: format!("{source:?}"), error: Some(error) });
@@ -145,21 +146,24 @@ fn supervise(speaker: Speaker, source: Source, shared: Arc<Shared>, queue: Arc<S
     }
 }
 
-/// Runs until the capture or VAD fails or stop is requested. Returns why it stopped, if it failed.
-#[allow(clippy::too_many_arguments)]
-fn drain(
+/// What one speaker's stream works with while a capture runs.
+#[derive(Clone, Copy)]
+struct Stream<'a> {
     speaker: Speaker,
-    mut capture: Capture,
-    shared: &Shared,
-    queue: &SttQueue,
-    silero: Option<Silero>,
-    seg_cfg: &SegmenterConfig,
-    partial_ms: usize,
-    mut writer: Option<&mut hound::WavWriter<std::io::BufWriter<std::fs::File>>>,
-    stop: &AtomicBool,
-) -> Option<String> {
+    shared: &'a Shared,
+    queue: &'a SttQueue,
+    vad: &'a VadSetup,
+    stop: &'a AtomicBool,
+}
+
+type WavWriter = hound::WavWriter<std::io::BufWriter<std::fs::File>>;
+
+/// Runs until the capture or VAD fails or stop is requested. Returns why it stopped, if it failed.
+fn drain(ctx: &Stream, mut capture: Capture, silero: Option<Silero>, mut writer: Option<&mut WavWriter>) -> Option<String> {
+    let Stream { speaker, shared, queue, vad, stop } = *ctx;
+    let (seg_cfg, partial_ms) = (&vad.seg, vad.partial_ms);
     // Timeline of this capture: sample index 0 = capture start.
-    let epoch_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    let epoch_ms = crate::now_ms();
     let mut segmenter = Segmenter::new(seg_cfg.clone());
     let mut events = Vec::new();
     let mut vad_ms = 0.0f64;
@@ -278,7 +282,7 @@ fn emit(speaker: Speaker, shared: &Shared, queue: &SttQueue, epoch_ms: u64, pos:
             }
             VadEvent::Resume { .. } => {
                 if speaker == Speaker::Them
-                    && let Some(a) = shared.answerer.get()
+                    && let Some(a) = shared.answerer()
                 {
                     a.on_them_resumed();
                 }

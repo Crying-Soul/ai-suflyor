@@ -2,8 +2,10 @@
 //! UI -> core: [`Command`] on stdin. core -> UI: [`Event`] on stdout. Logs go to stderr.
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "protocol.ts")]
 #[serde(rename_all = "lowercase")]
 pub enum Speaker {
     Me,
@@ -20,7 +22,8 @@ impl Speaker {
 }
 
 /// When the core starts an automatic answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "protocol.ts")]
 #[serde(rename_all = "lowercase")]
 pub enum AnswerMode {
     /// Only after the end of the question is confirmed (silence + end-of-turn score).
@@ -31,7 +34,8 @@ pub enum AnswerMode {
 }
 
 /// What an ask is for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, TS)]
+#[ts(export, export_to = "protocol.ts")]
 #[serde(rename_all = "snake_case")]
 pub enum AskKind {
     /// Answer the detected (or picked) question.
@@ -45,16 +49,19 @@ pub enum AskKind {
     More,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, TS)]
+#[ts(export, export_to = "protocol.ts", optional_fields = nullable)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Command {
     Ask {
         #[serde(default)]
+        #[ts(as = "Option<bool>")]
         screenshot: bool,
         /// Ask about this text instead of the detected question (a transcript row the user picked).
         #[serde(default)]
         question: Option<String>,
         #[serde(default)]
+        #[ts(as = "Option<AskKind>")]
         kind: AskKind,
     },
     Set {
@@ -79,6 +86,13 @@ pub enum Command {
     OpenCall {
         dir: String,
     },
+    /// Re-reads config.json and restarts the Claude side (models, effort, connection, two tiers,
+    /// auto-answer, languages) without touching audio and speech recognition; the transcript stays.
+    /// The UI keeps the API key encrypted, so it hands it over here (and in the env at spawn).
+    ReloadLlm {
+        #[serde(default)]
+        anthropic_api_key: Option<String>,
+    },
     /// Rebuilds the context after its files changed; the transcript stays.
     ReloadContext,
     /// Stops saving to the open call and writes its `summary.md`.
@@ -98,14 +112,16 @@ pub enum Command {
 }
 
 /// One piece of the assembled context, for the UI's breakdown.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "protocol.ts")]
 pub struct ContextPart {
     pub name: String,
     pub tokens: u64,
     pub truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, TS)]
+#[ts(export, export_to = "protocol.ts")]
 #[serde(rename_all = "lowercase")]
 pub enum CaptureState {
     #[default]
@@ -114,7 +130,8 @@ pub enum CaptureState {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, TS)]
+#[ts(export, export_to = "protocol.ts", optional_fields)]
 pub struct CaptureStatus {
     pub state: CaptureState,
     /// Human-readable source, e.g. device name or "process chrome.exe (pid 1234)".
@@ -123,11 +140,96 @@ pub struct CaptureStatus {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+/// State of the speech recognizer.
+#[derive(Debug, Clone, PartialEq, Serialize, TS)]
+#[ts(export, export_to = "protocol.ts")]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub enum SttState {
+    Off,
+    Loading,
+    Ready { gpu: bool },
+    Error { message: String },
+}
+
+/// Which Claude turn: the two answer tiers and the one-off sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "protocol.ts")]
+#[serde(rename_all = "lowercase")]
+pub enum Tier {
+    /// The one-line hint.
+    Quick,
+    /// The full answer.
+    Full,
+    Summary,
+    Brief,
+    Translate,
+}
+
+impl Tier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Tier::Quick => "quick",
+            Tier::Full => "full",
+            Tier::Summary => "summary",
+            Tier::Brief => "brief",
+            Tier::Translate => "translate",
+        }
+    }
+}
+
+/// What started an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "protocol.ts")]
+#[serde(rename_all = "lowercase")]
+pub enum Trigger {
+    /// Auto-detect after the question's final.
+    Auto,
+    /// Auto-detect at the first pause (speculative mode).
+    Early,
+    /// The ask hotkey or button.
+    Hotkey,
+    /// A transcript row the user picked.
+    Picked,
+    /// «Экран + вопрос».
+    Screen,
+    /// «Мои вопросы».
+    Questions,
+    /// «Что сказать».
+    Continue,
+    /// «Продолжить ответ».
+    More,
+}
+
+/// Why an answer ended without text, or what kind of failure an error is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, TS)]
+#[ts(export, export_to = "protocol.ts")]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorKind {
+    /// A newer ask replaced it.
+    Cancelled,
+    /// An early answer dropped because the other side kept talking.
+    Retracted,
+    /// No key, a rejected key, or a Claude Code login problem.
+    Auth,
+    /// HTTP 429.
+    RateLimit,
+    /// HTTP 5xx / 529.
+    Overloaded,
+    /// No answer in time.
+    Timeout,
+    /// No connection.
+    Network,
+    /// Claude declined to answer.
+    Refused,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "protocol.ts", optional_fields)]
 pub struct Status {
     pub me: CaptureStatus,
     pub them: CaptureStatus,
-    pub stt: String,
+    pub stt: SttState,
     pub auto: bool,
     pub model: String,
     pub answer_mode: AnswerMode,
@@ -139,7 +241,8 @@ pub struct Status {
     pub recording_dir: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, TS)]
+#[ts(export, export_to = "protocol.ts", optional_fields)]
 #[serde(tag = "ev", rename_all = "snake_case")]
 pub enum Event {
     Ready {
@@ -179,13 +282,13 @@ pub enum Event {
         id: u64,
         /// Shared by the quick and full answers of one ask.
         turn: u64,
-        trigger: String,
+        trigger: Trigger,
         question: String,
         /// Start (`t`) of the first transcript utterance the question was taken from.
         #[serde(skip_serializing_if = "Option::is_none")]
         q_t: Option<u64>,
-        /// "quick" (one-line hint) or "full".
-        tier: String,
+        /// Quick or full.
+        tier: Tier,
     },
     AnswerDelta {
         id: u64,
@@ -193,8 +296,12 @@ pub enum Event {
     },
     AnswerEnd {
         id: u64,
+        /// The raw cause of a failure, for the details fold.
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+        /// Set whenever `error` is.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kind: Option<ErrorKind>,
         /// The saved rating of a replayed answer (see `Command::Feedback`).
         #[serde(skip_serializing_if = "Option::is_none")]
         feedback: Option<i8>,
@@ -206,7 +313,7 @@ pub enum Event {
     /// Tokens of one finished Claude turn, for the per-call count in the UI.
     /// `tier`: quick, full, summary, brief, translate. `api`: billed per token (false: Claude Code subscription).
     Usage {
-        tier: String,
+        tier: Tier,
         model: String,
         api: bool,
         input: u64,
@@ -216,6 +323,9 @@ pub enum Event {
     },
     Error {
         message: String,
+        /// A Claude failure: the UI words it by kind. None: `message` is already meant for the user.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        kind: Option<ErrorKind>,
     },
     /// A screenshot goes with answer turn `turn`; `thumb` is a small JPEG data URL for the card.
     Screenshot {
@@ -279,6 +389,8 @@ mod tests {
         assert!(matches!(c, Command::Clear));
         let c: Command = serde_json::from_str(r#"{"cmd":"open_call","dir":"C:\\x"}"#).unwrap();
         assert!(matches!(c, Command::OpenCall { ref dir } if dir == "C:\\x"));
+        let c: Command = serde_json::from_str(r#"{"cmd":"reload_llm"}"#).unwrap();
+        assert!(matches!(c, Command::ReloadLlm { anthropic_api_key: None }));
         let c: Command = serde_json::from_str(r#"{"cmd":"close_call"}"#).unwrap();
         assert!(matches!(c, Command::CloseCall));
     }
@@ -291,5 +403,9 @@ mod tests {
         assert_eq!(serde_json::to_string(&e).unwrap(), r#"{"ev":"partial","speaker":"me","t":7,"stable":"a b","tail":"c"}"#);
         let e = Event::Call { dir: None, title: String::new(), folder: String::new(), tokens: 3, parts: vec![], warnings: vec![] };
         assert_eq!(serde_json::to_string(&e).unwrap(), r#"{"ev":"call","dir":null,"title":"","folder":"","tokens":3,"parts":[],"warnings":[]}"#);
+        let e = Event::AnswerEnd { id: 1, error: Some("x".into()), kind: Some(ErrorKind::RateLimit), feedback: None };
+        assert_eq!(serde_json::to_string(&e).unwrap(), r#"{"ev":"answer_end","id":1,"error":"x","kind":"rate_limit"}"#);
+        let s = SttState::Ready { gpu: true };
+        assert_eq!(serde_json::to_string(&s).unwrap(), r#"{"state":"ready","gpu":true}"#);
     }
 }

@@ -1,17 +1,55 @@
 //! Messages API over raw HTTP + SSE (no official Rust SDK). Append-only history, so every
 //! request reads the previous prefix from the prompt cache.
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
+use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
+use protocol::ErrorKind;
+use serde::Deserialize;
 use serde_json::{Value, json};
-use tracing::warn;
+use tracing::{info, warn};
 
-use super::{Chunk, Turn};
+use super::{Chunk, StreamEvent, Turn, Usage};
+
+const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
+
+/// One client for every session: quick, full, translation and one-off turns share its pooled HTTP/2
+/// connection. Keep-alive pings hold it open while idle, so a question after a quiet minute does not
+/// pay for a new TCP and TLS handshake.
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .pool_idle_timeout(None)
+        .tcp_keepalive(Duration::from_secs(30))
+        .http2_keep_alive_interval(Duration::from_secs(20))
+        .http2_keep_alive_timeout(Duration::from_secs(10))
+        .http2_keep_alive_while_idle(true)
+        .build()
+        .expect("reqwest client")
+});
+
+/// Retries wait at most this long: in a live call a late answer is worth little.
+const MAX_RETRY_WAIT: Duration = Duration::from_secs(2);
+
+/// A non-success HTTP answer of the API.
+#[derive(Debug)]
+pub struct HttpError {
+    pub status: u16,
+    pub message: String,
+}
+
+impl std::fmt::Display for HttpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HTTP {}: {}", self.status, self.message)
+    }
+}
+
+impl std::error::Error for HttpError {}
 
 pub struct ApiSession {
-    client: reqwest::Client,
     key: String,
     system: String,
     effort: String,
@@ -22,13 +60,7 @@ pub struct ApiSession {
 
 impl ApiSession {
     pub fn new(key: String, system: String, effort: String, max_tokens: u32) -> ApiSession {
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .pool_idle_timeout(Duration::from_secs(300))
-            .tcp_keepalive(Duration::from_secs(30))
-            .build()
-            .expect("reqwest client");
-        ApiSession { client, key, system, effort, max_tokens, messages: Vec::new(), fresh: true }
+        ApiSession { key, system, effort, max_tokens, messages: Vec::new(), fresh: true }
     }
 
     pub fn prepare(&mut self) -> bool {
@@ -44,13 +76,13 @@ impl ApiSession {
         self.fresh = true;
     }
 
-    fn body(&self, model: &str) -> Value {
+    fn body(&self, model: &str, messages: &[Value], max_tokens: u32, stream: bool) -> Value {
         let mut b = json!({
             "model": model,
-            "max_tokens": self.max_tokens,
-            "stream": true,
+            "max_tokens": max_tokens,
+            "stream": stream,
             "system": [{"type": "text", "text": self.system, "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
-            "messages": self.messages,
+            "messages": messages,
             // Automatic breakpoint on the last block: the history prefix is cached between turns.
             "cache_control": {"type": "ephemeral"},
             "output_config": {"effort": self.effort},
@@ -67,38 +99,66 @@ impl ApiSession {
         b
     }
 
-    pub async fn ask(&mut self, model: &str, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
+    /// Opens the pooled connection ahead of the first question; with `cache`, also writes the system
+    /// prompt to the prompt cache (a one-token turn), so the first answer of a call reads it instead.
+    pub async fn warm(&mut self, model: &str, cache: bool, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
         if self.key.is_empty() {
-            bail!("no Anthropic API key: set anthropicApiKey or ANTHROPIC_API_KEY, or switch to the Claude Code connection");
+            return Ok(());
         }
-        // The user turn stays in history even if the answer fails: consecutive user turns are merged by the API.
-        self.messages.push(json!({"role": "user", "content": turn.content()}));
-        let body = self.body(model);
-        let mut attempt = 0;
-        let resp = loop {
-            let mut req =
-                self.client.post("https://api.anthropic.com/v1/messages").header("x-api-key", &self.key).header("anthropic-version", "2023-06-01").json(&body);
+        if !cache {
+            // Any answer will do: the point is the handshake.
+            let _ = CLIENT.head("https://api.anthropic.com/").send().await;
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let body = self.body(model, &[json!({"role": "user", "content": "OK"})], 1, false);
+        let reply: Value = self.send(model, &body).await?.json().await?;
+        let usage: Usage = serde_json::from_value(reply["usage"].clone()).unwrap_or_default();
+        info!("prompt cache warmed in {} ms: write {}, read {}", started.elapsed().as_millis(), usage.cache_write(), usage.cache_read());
+        out(usage.chunk());
+        Ok(())
+    }
+
+    /// POST with up to two retries on 429, 5xx and connection failures, honouring a short `retry-after`.
+    async fn send(&self, model: &str, body: &Value) -> Result<reqwest::Response> {
+        let mut attempt = 0u32;
+        loop {
+            let mut req = CLIENT.post(MESSAGES_URL).header("x-api-key", &self.key).header("anthropic-version", "2023-06-01").json(body);
             if fallback_supported(model) {
                 req = req.header("anthropic-beta", "server-side-fallback-2026-07-01");
             }
+            attempt += 1;
+            let backoff = Duration::from_millis(400 * attempt as u64);
             match req.send().await {
-                Ok(r) if r.status().is_success() => break r,
+                Ok(r) if r.status().is_success() => return Ok(r),
                 Ok(r) => {
                     let status = r.status();
-                    let text = r.text().await.unwrap_or_default();
+                    let wait = retry_after(r.headers()).unwrap_or(backoff);
+                    let message = error_message(&r.text().await.unwrap_or_default());
                     let retry = status.as_u16() == 429 || status.is_server_error();
-                    if !retry || attempt >= 2 {
-                        bail!("HTTP {status}: {}", error_message(&text));
+                    if !retry || attempt > 2 || wait > MAX_RETRY_WAIT {
+                        return Err(HttpError { status: status.as_u16(), message }.into());
                     }
-                    warn!("claude api HTTP {status}, retrying");
+                    warn!("claude api HTTP {status}, retrying in {} ms", wait.as_millis());
+                    tokio::time::sleep(wait).await;
                 }
-                Err(e) if attempt < 2 && (e.is_connect() || e.is_timeout()) => warn!("claude api: {e}, retrying"),
+                Err(e) if attempt <= 2 && (e.is_connect() || e.is_timeout()) => {
+                    warn!("claude api: {e}, retrying");
+                    tokio::time::sleep(backoff).await;
+                }
                 Err(e) => return Err(e.into()),
             }
-            attempt += 1;
-            tokio::time::sleep(Duration::from_millis(400 * attempt)).await;
-        };
+        }
+    }
 
+    pub async fn ask(&mut self, model: &str, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
+        if self.key.is_empty() {
+            return Err(super::fail(ErrorKind::Auth, "no Anthropic API key: set it in «Проверка готовности», or switch to the Claude Code connection"));
+        }
+        // The user turn stays in history even if the answer fails: consecutive user turns are merged by the API.
+        self.messages.push(json!({"role": "user", "content": turn.content()}));
+        let body = self.body(model, &self.messages, self.max_tokens, true);
+        let resp = self.send(model, &body).await?;
         let answer = read_stream(resp.bytes_stream(), out).await?;
         if !answer.is_empty() {
             self.messages.push(json!({"role": "assistant", "content": [{"type": "text", "text": answer}]}));
@@ -107,56 +167,53 @@ impl ApiSession {
     }
 }
 
+/// `retry-after` in seconds (the API sends whole seconds).
+fn retry_after(h: &reqwest::header::HeaderMap) -> Option<Duration> {
+    h.get("retry-after")?.to_str().ok()?.trim().parse::<f64>().ok().map(Duration::from_secs_f64)
+}
+
 /// Reads an SSE answer stream, passing text deltas and usage to `out`; returns the whole text.
-async fn read_stream<B: AsRef<[u8]>, E: Into<anyhow::Error>>(
-    mut stream: impl futures_util::Stream<Item = std::result::Result<B, E>> + Unpin,
+async fn read_stream<B: AsRef<[u8]>, E: std::error::Error + Send + Sync + 'static>(
+    stream: impl futures_util::Stream<Item = std::result::Result<B, E>> + Unpin,
     out: &mut (dyn FnMut(Chunk) + Send),
 ) -> Result<String> {
-    let mut buf: Vec<u8> = Vec::new();
+    let mut events = stream.eventsource();
     let mut answer = String::new();
-    let (mut input, mut cache_read, mut cache_write, mut output) = (0, 0, 0, 0);
-    let mut stop_reason = String::new();
+    let mut usage = Usage::default();
+    let mut stop_reason = None;
     let mut stopped = false;
-    'read: while let Some(bytes) = stream.next().await {
-        buf.extend_from_slice(bytes.map_err(Into::into)?.as_ref());
-        while let Some(end) = find_event_end(&buf) {
-            let event: Vec<u8> = buf.drain(..end).collect();
-            let event = String::from_utf8_lossy(&event);
-            for data in event.lines().filter_map(|l| l.strip_prefix("data:")) {
-                let Ok(v) = serde_json::from_str::<Value>(data.trim()) else { continue };
-                match v["type"].as_str().unwrap_or("") {
-                    "message_start" => {
-                        let u = &v["message"]["usage"];
-                        input = u["input_tokens"].as_u64().unwrap_or(0);
-                        cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
-                        cache_write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                    }
-                    "content_block_delta" if v["delta"]["type"] == "text_delta" => {
-                        let t = v["delta"]["text"].as_str().unwrap_or("");
-                        answer.push_str(t);
-                        out(Chunk::Text(t.to_string()));
-                    }
-                    "message_delta" => {
-                        stop_reason = v["delta"]["stop_reason"].as_str().unwrap_or("").to_string();
-                        output = v["usage"]["output_tokens"].as_u64().unwrap_or(output);
-                    }
-                    "message_stop" => {
-                        stopped = true;
-                        break 'read;
-                    }
-                    "error" => bail!("stream error: {}", v["error"]["message"].as_str().unwrap_or("unknown")),
-                    _ => {}
+    while let Some(event) = events.next().await {
+        let event = event?;
+        let Ok(ev) = serde_json::from_str::<StreamEvent>(&event.data) else { continue };
+        match ev {
+            StreamEvent::MessageStart { message } => usage = message.usage,
+            StreamEvent::ContentBlockDelta { delta } => {
+                if let Some(t) = delta.text() {
+                    answer.push_str(t);
+                    out(Chunk::Text(t.to_string()));
                 }
             }
+            StreamEvent::MessageDelta { delta, usage: u } => {
+                stop_reason = delta.stop_reason;
+                if let Some(o) = u.and_then(|u| u.output_tokens) {
+                    usage.output_tokens = Some(o);
+                }
+            }
+            StreamEvent::MessageStop => {
+                stopped = true;
+                break;
+            }
+            StreamEvent::Error { error } => return Err(super::fail(error.error_kind(), format!("stream error: {}", error.message))),
+            StreamEvent::Other => {}
         }
     }
-    out(Chunk::Usage { input, cache_read, cache_write, output });
+    out(usage.chunk());
     // A connection cut mid-answer ends the stream without message_stop: not a finished answer.
     if !stopped {
-        bail!("the answer stream was cut off");
+        return Err(super::fail(ErrorKind::Network, "the answer stream was cut off"));
     }
-    if stop_reason == "refusal" {
-        bail!("Claude declined to answer this request");
+    if stop_reason.as_deref() == Some("refusal") {
+        return Err(super::fail(ErrorKind::Refused, "Claude declined to answer this request"));
     }
     Ok(answer)
 }
@@ -165,30 +222,17 @@ fn fallback_supported(model: &str) -> bool {
     model.starts_with("claude-sonnet-5-5") || model.starts_with("claude-opus-5-5")
 }
 
-/// End (exclusive) of the first complete SSE event, including its blank-line terminator.
-fn find_event_end(buf: &[u8]) -> Option<usize> {
-    let lf = buf.windows(2).position(|w| w == b"\n\n").map(|i| i + 2);
-    let crlf = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4);
-    match (lf, crlf) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
-    }
-}
-
 fn error_message(body: &str) -> String {
-    serde_json::from_str::<Value>(body).ok().and_then(|v| v["error"]["message"].as_str().map(String::from)).unwrap_or_else(|| body.chars().take(300).collect())
+    #[derive(Deserialize)]
+    struct Body {
+        error: super::ErrorBody,
+    }
+    serde_json::from_str::<Body>(body).map(|b| b.error.message).unwrap_or_else(|_| body.chars().take(300).collect())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sse_framing() {
-        assert_eq!(find_event_end(b"event: a\ndata: {}\n\nrest"), Some(19));
-        assert_eq!(find_event_end(b"data: {}\r\n\r\n"), Some(12));
-        assert_eq!(find_event_end(b"data: {"), None);
-    }
 
     async fn read(parts: &[&str]) -> Result<String> {
         let chunks: Vec<std::result::Result<Vec<u8>, std::io::Error>> = parts.iter().map(|p| Ok(p.as_bytes().to_vec())).collect();
@@ -203,16 +247,52 @@ mod tests {
         assert!(read(&[delta]).await.is_err(), "no message_stop: the connection was cut");
     }
 
+    #[tokio::test]
+    async fn events_split_across_chunks_and_crlf() {
+        let parts = [
+            "event: content_block_delta\r\ndata: {\"type\":\"content_block_del",
+            "ta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"a\"}}\r\n\r\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+        ];
+        assert_eq!(read(&parts).await.unwrap(), "a");
+    }
+
+    #[tokio::test]
+    async fn usage_from_start_and_delta() {
+        let start = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"cache_read_input_tokens\":100,\"cache_creation_input_tokens\":null,\"output_tokens\":1}}}\n\n";
+        let delta = "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":42}}\n\n";
+        let stop = "data: {\"type\":\"message_stop\"}\n\n";
+        let chunks: Vec<std::result::Result<Vec<u8>, std::io::Error>> = [start, delta, stop].iter().map(|p| Ok(p.as_bytes().to_vec())).collect();
+        let mut got = None;
+        read_stream(futures_util::stream::iter(chunks), &mut |c| {
+            if let Chunk::Usage { input, cache_read, cache_write, output } = c {
+                got = Some((input, cache_read, cache_write, output));
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(got, Some((5, 100, 0, 42)));
+    }
+
+    #[test]
+    fn retry_after_seconds() {
+        let mut h = reqwest::header::HeaderMap::new();
+        assert_eq!(retry_after(&h), None);
+        h.insert("retry-after", "1".parse().unwrap());
+        assert_eq!(retry_after(&h), Some(Duration::from_secs(1)));
+    }
+
     #[test]
     fn body_per_model() {
         let s = ApiSession::new("k".into(), "sys".into(), "low".into(), 100);
-        let b = s.body("claude-sonnet-5-5");
+        let b = s.body("claude-sonnet-5-5", &[], 100, true);
         assert_eq!(b["thinking"]["type"], "between_tools");
         assert_eq!(b["fallbacks"], "default");
-        let b = s.body("claude-opus-5-5");
+        let b = s.body("claude-opus-5-5", &[], 100, true);
         assert!(b.get("thinking").is_none());
-        let b = s.body("claude-haiku-5-5");
+        let b = s.body("claude-haiku-5-5", &[], 1, false);
         assert_eq!(b["thinking"]["type"], "disabled");
         assert!(b.get("fallbacks").is_none());
+        assert_eq!((b["max_tokens"].as_u64(), b["stream"].as_bool()), (Some(1), Some(false)));
     }
 }

@@ -5,17 +5,13 @@
 
 use std::sync::Arc;
 
-use protocol::Event;
+use protocol::{Event, Tier};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::Shared;
 use crate::config::Config;
 use crate::llm::{Chunk, Session, Turn};
-
-/// The pair the speech detection hands over: English speech, Russian user.
-pub const FROM: &str = "en";
-pub const TO: &str = "ru";
 
 const SYSTEM: &str = "You translate what the other side says in a live call, often a job interview, into {lang}. \
 Each message is their speech from speech recognition: it may have recognition errors, infer the intended words. \
@@ -35,24 +31,40 @@ enum Msg {
 #[derive(Clone)]
 pub struct Translator {
     tx: mpsc::UnboundedSender<Msg>,
+    /// ISO 639-1: speech already in it is not translated.
+    user_language: String,
+}
+
+/// The name the prompt uses for an ISO 639-1 code.
+fn language_name(code: &str) -> String {
+    match code {
+        "ru" => "Russian".into(),
+        "en" => "English".into(),
+        "de" => "German".into(),
+        "fr" => "French".into(),
+        "es" => "Spanish".into(),
+        _ => format!("the language with ISO 639-1 code \"{code}\""),
+    }
 }
 
 impl Translator {
     pub fn start(cfg: &Config, shared: Arc<Shared>) -> Translator {
-        let lang = if cfg.user_language == TO { "Russian".to_string() } else { cfg.user_language.clone() };
-        let session = crate::answer::session(cfg, "translate", SYSTEM.replace("{lang}", &lang));
-        Translator::with(session, cfg.quick_model.clone(), shared)
+        let session = crate::answer::session(cfg, Tier::Translate, SYSTEM.replace("{lang}", &language_name(&cfg.user_language)));
+        Translator::with(session, cfg.quick_model.clone(), cfg.user_language.clone(), shared)
     }
 
-    fn with(session: Session, model: String, shared: Arc<Shared>) -> Translator {
+    fn with(session: Session, model: String, user_language: String, shared: Arc<Shared>) -> Translator {
         let (tx, rx) = mpsc::unbounded_channel();
         tokio::spawn(run(session, model, shared, rx));
-        Translator { tx }
+        Translator { tx, user_language }
     }
 
-    /// A final "them" utterance starting at `t`.
-    pub fn push(&self, t: u64, text: String) {
-        let _ = self.tx.send(Msg::Line(t, text));
+    /// A final "them" utterance starting at `t`, in `lang` (None: unknown). Speech in the user's own
+    /// language is skipped.
+    pub fn push(&self, t: u64, text: String, lang: Option<&str>) {
+        if lang != Some(self.user_language.as_str()) {
+            let _ = self.tx.send(Msg::Line(t, text));
+        }
     }
 
     /// The transcript was cleared: queued lines are dropped, the session starts over.
@@ -92,7 +104,7 @@ async fn run(mut session: Session, model: String, shared: Arc<Shared>, mut rx: m
                 continue;
             }
             Msg::Warm => {
-                if let Err(e) = session.warm(&model).await {
+                if let Err(e) = session.warm(&model, false, &mut |_| {}).await {
                     warn!("translate: warm-up failed: {e:#}");
                 }
                 continue;
@@ -118,7 +130,7 @@ async fn run(mut session: Session, model: String, shared: Arc<Shared>, mut rx: m
                 .ask(&model, &Turn::text(&text), &mut |c| match c {
                     Chunk::Text(t) => out.push_str(&t),
                     c => {
-                        if let Some(e) = crate::llm::usage_event("translate", &model, api, &c) {
+                        if let Some(e) = crate::llm::usage_event(Tier::Translate, &model, api, &c) {
                             let _ = shared.events.send(e);
                         }
                     }
@@ -138,7 +150,7 @@ async fn run(mut session: Session, model: String, shared: Arc<Shared>, mut rx: m
             Err(e) => {
                 warn!("translate: {e:#}");
                 if !std::mem::replace(&mut reported, true) {
-                    let _ = shared.events.send(Event::Error { message: format!("перевод: {e:#}") });
+                    let _ = shared.events.send(Event::Error { message: format!("перевод: {e:#}"), kind: Some(crate::llm::error_kind(&e)) });
                 }
             }
         }
@@ -175,13 +187,14 @@ mod tests {
         let (shared, mut events) = Shared::for_test();
         let mut mock = MockSession::new(Duration::ZERO, vec![], 0).0;
         mock.fail = true;
-        let t = Translator::with(Session::Mock(mock), "haiku".into(), shared);
-        t.push(1, "a".into());
+        let t = Translator::with(Session::Mock(mock), "haiku".into(), "ru".into(), shared);
+        t.push(0, "уже по-русски".into(), Some("ru"));
+        t.push(1, "a".into(), Some("de"));
         let first = events.recv().await.unwrap();
-        assert!(matches!(first, Event::Error { ref message } if message.contains("перевод")));
-        t.push(2, "b".into());
+        assert!(matches!(first, Event::Error { ref message, .. } if message.contains("перевод")));
+        t.push(2, "b".into(), None);
         tokio::time::sleep(Duration::from_millis(50)).await;
-        t.push(3, "c".into());
+        t.push(3, "c".into(), Some("en"));
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(events.try_recv().is_err(), "no second error, no translation");
     }

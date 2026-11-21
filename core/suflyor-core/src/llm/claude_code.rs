@@ -6,13 +6,43 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow};
+use protocol::ErrorKind;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tracing::{info, warn};
 
-use super::{Chunk, Turn};
+use super::{Chunk, StreamEvent, Turn, Usage};
+
+/// The lines of `claude -p --output-format stream-json` that matter here.
+#[derive(serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Message {
+    StreamEvent {
+        event: StreamEvent,
+    },
+    System {
+        #[serde(default)]
+        subtype: String,
+        #[serde(default)]
+        model: Value,
+        #[serde(default)]
+        tools: Value,
+    },
+    Result {
+        #[serde(default)]
+        usage: Usage,
+        #[serde(default)]
+        is_error: bool,
+        #[serde(default)]
+        result: Option<String>,
+        #[serde(default)]
+        subtype: String,
+    },
+    #[serde(other)]
+    Other,
+}
 
 struct Proc {
     _child: Child,
@@ -85,10 +115,15 @@ impl CodeSession {
     }
 
     /// The first turn of a fresh process takes several seconds (sign-in check); pay it up front.
-    pub async fn warm(&mut self, model: &str) -> Result<()> {
+    pub async fn warm(&mut self, model: &str, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
         let fresh = self.prepare(model).await?;
         let t = std::time::Instant::now();
-        self.ask(&Turn::text("Reply with OK."), &mut |_| {}).await?;
+        self.ask(&Turn::text("Reply with OK."), &mut |c| {
+            if matches!(c, Chunk::Usage { .. }) {
+                out(c);
+            }
+        })
+        .await?;
         info!("claude code warm in {} ms", t.elapsed().as_millis());
         self.fresh = fresh;
         Ok(())
@@ -113,7 +148,7 @@ impl CodeSession {
                 },
                 Ok(None) | Err(_) => {
                     self.proc = None;
-                    bail!("claude code exited (check `claude login` and claudeCode.command)");
+                    return Err(super::fail(ErrorKind::Auth, "claude code exited (check `claude login` and claudeCode.command)"));
                 }
             }
         }
@@ -122,28 +157,20 @@ impl CodeSession {
     pub async fn ask(&mut self, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
         self.send(json!({"type": "user", "message": {"role": "user", "content": turn.content()}})).await?;
         loop {
-            let v = self.next().await?;
-            match v["type"].as_str().unwrap_or("") {
-                "stream_event" => {
-                    let e = &v["event"];
-                    if e["type"] == "content_block_delta" && e["delta"]["type"] == "text_delta" {
-                        out(Chunk::Text(e["delta"]["text"].as_str().unwrap_or("").to_string()));
+            let Ok(msg) = serde_json::from_value::<Message>(self.next().await?) else { continue };
+            match msg {
+                Message::StreamEvent { event: StreamEvent::ContentBlockDelta { delta } } => {
+                    if let Some(t) = delta.text() {
+                        out(Chunk::Text(t.to_string()));
                     }
                 }
-                "system" if v["subtype"] == "init" => {
-                    info!("claude code session: model {}, tools {}", v["model"], v["tools"]);
+                Message::System { subtype, model, tools } if subtype == "init" => {
+                    info!("claude code session: model {model}, tools {tools}");
                 }
-                "result" => {
-                    let u = &v["usage"];
-                    out(Chunk::Usage {
-                        input: u["input_tokens"].as_u64().unwrap_or(0),
-                        cache_read: u["cache_read_input_tokens"].as_u64().unwrap_or(0),
-                        cache_write: u["cache_creation_input_tokens"].as_u64().unwrap_or(0),
-                        output: u["output_tokens"].as_u64().unwrap_or(0),
-                    });
-                    if v["is_error"].as_bool().unwrap_or(false) {
-                        let msg = v["result"].as_str().or(v["subtype"].as_str()).unwrap_or("error");
-                        return Err(anyhow!("claude code: {msg}"));
+                Message::Result { usage, is_error, result, subtype } => {
+                    out(usage.chunk());
+                    if is_error {
+                        return Err(anyhow!("claude code: {}", result.unwrap_or(subtype)));
                     }
                     return Ok(());
                 }

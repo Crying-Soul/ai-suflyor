@@ -2,13 +2,13 @@
 //! answers are appended to `transcript.jsonl` / `answers.jsonl`, and closing it writes `summary.md`.
 //! With no call open only the profile context is used and nothing is saved.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
-use protocol::Event;
+use protocol::{Event, Tier, Trigger};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -21,9 +21,14 @@ use crate::{brief, context};
 /// One finished answer of one tier, as saved in `answers.jsonl`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AnswerRecord {
+    /// Unique in the call; ratings in `feedback.jsonl` refer to it. Records written before ids
+    /// existed have none and are known by their row (`row-<n>`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    /// The live turn when it was written. Turn ids restart with the core, so not unique in the file.
     pub turn: u64,
-    pub tier: String,
-    pub trigger: String,
+    pub tier: Tier,
+    pub trigger: Trigger,
     pub question: String,
     #[serde(default)]
     pub q_t: Option<u64>,
@@ -32,23 +37,27 @@ pub struct AnswerRecord {
     /// Screenshot of this turn in `shots/`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shot: Option<String>,
-    /// The user's rating: 1 good, -1 bad (`Command::Feedback`).
+    /// The user's rating: 1 good, -1 bad. Read from `feedback.jsonl`; older versions wrote it here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feedback: Option<i8>,
 }
 
-/// Rows of the open call's `answers.jsonl` (non-empty lines, from 0) by live answer turn.
-/// Turn ids restart with the core, so a saved `turn` is not unique in the file; the row is.
-#[derive(Default)]
-pub struct AnswerRows {
-    /// Row the next appended answer gets.
-    next: usize,
-    by_turn: std::collections::HashMap<u64, Vec<usize>>,
+/// The saved answer ids of each live turn of the open call (a quick and a full one, usually).
+pub type AnswerIds = HashMap<u64, Vec<String>>;
+
+/// One rating in `feedback.jsonl`; the last line for an id wins, `value: null` clears it.
+#[derive(Serialize, Deserialize)]
+struct Rating {
+    id: String,
+    value: Option<i8>,
 }
 
 const TRANSCRIPT: &str = "transcript.jsonl";
 const ANSWERS: &str = "answers.jsonl";
+const FEEDBACK: &str = "feedback.jsonl";
 const SUMMARY: &str = "summary.md";
+/// Left in a call that was open at quit: its summary is written at the next start.
+const SUMMARY_PENDING: &str = ".summary-pending";
 
 fn append(file: &Path, v: &impl Serialize) {
     let r = (|| {
@@ -84,65 +93,56 @@ pub fn save_final(shared: &Shared, seg: &FinalSegment) {
 }
 
 /// Saves the turn's screenshot in the open call; returns its file name.
-pub fn save_shot(shared: &Shared, turn: u64, png: &[u8]) -> Option<String> {
+pub fn save_shot(shared: &Shared, turn: u64, image: &[u8]) -> Option<String> {
     let dir = shared.call.lock().unwrap().as_ref()?.join("shots");
-    let name = format!("{}-{turn}.png", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_millis());
-    let r = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&name), png));
+    let name = format!("{}-{turn}.{}", crate::now_ms(), crate::screen::EXTENSION);
+    let r = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join(&name), image));
     r.map_err(|e| warn!("save {}: {e}", dir.display())).ok()?;
     Some(name)
 }
 
-pub fn save_answer(shared: &Shared, rec: AnswerRecord) {
-    // The call lock serializes appends and ratings, so row numbers stay true.
+pub fn save_answer(shared: &Shared, mut rec: AnswerRecord) {
     if let Some(dir) = shared.call.lock().unwrap().as_ref() {
-        let mut rows = shared.answer_rows.lock().unwrap();
-        let row = rows.next;
-        rows.next += 1;
-        rows.by_turn.entry(rec.turn).or_default().push(row);
+        rec.id = format!("{}-{}-{}", crate::now_ms(), rec.turn, rec.tier.as_str());
+        shared.answer_ids.lock().unwrap().entry(rec.turn).or_default().push(rec.id.clone());
         append(&dir.join(ANSWERS), &rec);
     }
 }
 
-/// Non-empty lines of `answers.jsonl` with their row; a line that does not parse keeps its row.
-fn read_answers(file: &Path) -> (usize, Vec<(usize, AnswerRecord)>) {
-    let rows = lines(file);
-    let recs = rows.iter().enumerate().filter_map(|(i, l)| serde_json::from_str(l).ok().map(|r| (i, r))).collect();
-    (rows.len(), recs)
+/// The saved answers of a call with their ratings applied; records without an id get their row's.
+fn read_answers(dir: &Path) -> Vec<AnswerRecord> {
+    let mut ratings: HashMap<String, Option<i8>> = HashMap::new();
+    for r in read_jsonl::<Rating>(&dir.join(FEEDBACK)) {
+        ratings.insert(r.id, r.value);
+    }
+    lines(&dir.join(ANSWERS))
+        .iter()
+        .enumerate()
+        .filter_map(|(row, l)| {
+            let mut r: AnswerRecord = serde_json::from_str(l).ok()?;
+            if r.id.is_empty() {
+                r.id = format!("row-{row}");
+            }
+            if let Some(v) = ratings.get(&r.id) {
+                r.feedback = *v;
+            }
+            Some(r)
+        })
+        .collect()
 }
 
-/// Saves the rating of live turn `turn` on its rows of the open call (write then rename).
+/// Saves the rating of live turn `turn` for its answers in the open call.
 pub fn set_feedback(shared: &Shared, turn: u64, value: Option<i8>) {
     let call = shared.call.lock().unwrap();
     let Some(dir) = call.as_ref() else { return };
-    let Some(rows) = shared.answer_rows.lock().unwrap().by_turn.get(&turn).cloned() else {
+    let Some(ids) = shared.answer_ids.lock().unwrap().get(&turn).cloned() else {
         warn!("feedback: no saved answer of turn {turn}");
         return;
     };
-    let file = dir.join(ANSWERS);
-    let r = (|| {
-        let mut out = String::new();
-        for (i, mut line) in lines(&file).into_iter().enumerate() {
-            if rows.contains(&i)
-                && let Ok(serde_json::Value::Object(mut o)) = serde_json::from_str(&line)
-            {
-                match value {
-                    Some(v) => o.insert("feedback".into(), v.into()),
-                    None => o.remove("feedback"),
-                };
-                line = serde_json::Value::Object(o).to_string();
-            }
-            out.push_str(&line);
-            out.push('\n');
-        }
-        let tmp = file.with_extension("jsonl.tmp");
-        std::fs::write(&tmp, out)?;
-        std::fs::rename(&tmp, &file)?;
-        anyhow::Ok(())
-    })();
-    match r {
-        Ok(()) => info!("feedback {value:?} on turn {turn}"),
-        Err(e) => warn!("feedback on {}: {e:#}", file.display()),
+    for id in ids {
+        append(&dir.join(FEEDBACK), &Rating { id, value });
     }
+    info!("feedback {value:?} on turn {turn}");
 }
 
 /// Assembles the context of `dir` (or the profile alone), hands it to the answerer and the STT
@@ -177,18 +177,19 @@ pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Optio
     if let Some(p) = cached.as_deref().and_then(brief::prepared) {
         add_part(&mut ev, PREPARED_PART, p);
     }
+    let call_open = dir.is_some();
     if !answerer.has_quick() || a.tokens() < brief::MIN_TOKENS {
-        answerer.reconfigure(&a.text, &full, &full);
+        answerer.reconfigure(&a.text, &full, &full, call_open);
         let _ = shared.events.send(ev);
         return;
     }
     if let Some(b) = cached {
-        answerer.reconfigure(&a.text, &full, &b);
+        answerer.reconfigure(&a.text, &full, &b, call_open);
         add_brief_part(&mut ev, &b, false);
         let _ = shared.events.send(ev);
         return;
     }
-    answerer.reconfigure(&a.text, &full, &a.text);
+    answerer.reconfigure(&a.text, &full, &a.text, call_open);
     add_brief_part(&mut ev, "", true);
     let _ = shared.events.send(ev.clone());
     info!("brief: building for {}", place.display());
@@ -210,7 +211,7 @@ pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Optio
             Ok(_) => warn!("brief: empty reply"),
             Err(e) => {
                 warn!("brief: {e:#}");
-                let _ = shared.events.send(Event::Error { message: format!("досье: {e:#}") });
+                let _ = shared.events.send(Event::Error { message: format!("досье: {e:#}"), kind: Some(crate::llm::error_kind(&e)) });
             }
         }
     });
@@ -254,9 +255,10 @@ pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBu
         summarize(cfg, shared, answerer, prev);
     }
     let segs: Vec<FinalSegment> = read_jsonl(&dir.join(TRANSCRIPT));
-    let (rows, answers) = read_answers(&dir.join(ANSWERS));
+    let answers = read_answers(&dir);
+    let _ = std::fs::remove_file(dir.join(SUMMARY_PENDING)); // it is open again: it ends the normal way
     *shared.call.lock().unwrap() = Some(dir.clone());
-    *shared.answer_rows.lock().unwrap() = AnswerRows { next: rows, by_turn: Default::default() };
+    shared.answer_ids.lock().unwrap().clear();
     *shared.transcript.lock().unwrap() = segs.clone();
     Answerer::forget_notes(shared);
     // The `call` event goes first: the UI clears its windows when the call changes.
@@ -271,21 +273,21 @@ pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBu
 
 /// Saved answers as answer events, under fresh ids, turns kept together. A saved turn id comes back
 /// in a later session of the same call, so a turn also ends where its quick and full pair is complete.
-fn replay(shared: &Shared, answerer: &Answerer, answers: Vec<(usize, AnswerRecord)>) {
-    let mut turns: BTreeMap<u64, (u64, Vec<String>)> = BTreeMap::new();
-    for (row, r) in answers {
+fn replay(shared: &Shared, answerer: &Answerer, answers: Vec<AnswerRecord>) {
+    let mut turns: BTreeMap<u64, (u64, Vec<Tier>)> = BTreeMap::new();
+    for r in answers {
         let entry = turns.entry(r.turn).or_insert_with(|| (answerer.next_id(), Vec::new()));
         if entry.1.contains(&r.tier) {
             *entry = (answerer.next_id(), Vec::new());
         }
-        entry.1.push(r.tier.clone());
+        entry.1.push(r.tier);
         let turn = entry.0;
-        shared.answer_rows.lock().unwrap().by_turn.entry(turn).or_default().push(row);
+        shared.answer_ids.lock().unwrap().entry(turn).or_default().push(r.id);
         let id = answerer.next_id();
         let ev = &shared.events;
         let _ = ev.send(Event::AnswerStart { id, turn, trigger: r.trigger, question: r.question, q_t: r.q_t, tier: r.tier });
         let _ = ev.send(Event::AnswerDelta { id, text: r.text });
-        let _ = ev.send(Event::AnswerEnd { id, error: None, feedback: r.feedback });
+        let _ = ev.send(Event::AnswerEnd { id, error: None, kind: None, feedback: r.feedback });
     }
 }
 
@@ -297,7 +299,7 @@ pub fn reload(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
 /// Stops saving, goes back to the profile context and writes the summary in the background.
 pub fn close(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
     let Some(dir) = shared.call.lock().unwrap().take() else { return };
-    *shared.answer_rows.lock().unwrap() = AnswerRows::default();
+    shared.answer_ids.lock().unwrap().clear();
     apply(cfg, shared, answerer, None);
     summarize(cfg, shared, answerer, dir);
 }
@@ -308,7 +310,7 @@ pub fn summarize(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: P
     // The summary sees the call's own context (who they are, the vacancy), not just the profile.
     let context = context::assemble(&cfg.profile_dir(), Some(&dir), &cfg.user_context, &cfg.glossary).text;
     let segs: Vec<FinalSegment> = read_jsonl(&dir.join(TRANSCRIPT));
-    let hints: Vec<AnswerRecord> = read_jsonl(&dir.join(ANSWERS));
+    let hints = read_answers(&dir);
     let (shared, answerer) = (shared.clone(), answerer.clone());
     tokio::spawn(async move {
         let r = if segs.is_empty() {
@@ -316,11 +318,30 @@ pub fn summarize(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: P
         } else {
             answerer.summarize(&context, &segs, &hints).await.and_then(|s| Ok(std::fs::write(dir.join(SUMMARY), s + "\n")?))
         };
+        // Tried once: a failure is shown, and «Повторить итог» tries again.
+        let _ = std::fs::remove_file(dir.join(SUMMARY_PENDING));
         if let Err(e) = &r {
             warn!("summary of {}: {e:#}", dir.display());
         }
         let _ = shared.events.send(Event::Summary { dir: dir.display().to_string(), ok: r.is_ok(), error: r.err().map(|e| format!("{e:#}")) });
     });
+}
+
+/// At quit: the open call gets its summary at the next start (`pending_summaries`) instead of
+/// holding up the quit for the full model.
+pub fn defer_summary(shared: &Shared) {
+    if let Some(dir) = shared.call.lock().unwrap().take().filter(|d| !lines(&d.join(TRANSCRIPT)).is_empty()) {
+        match std::fs::write(dir.join(SUMMARY_PENDING), "") {
+            Ok(()) => info!("call {} left open: summary at the next start", dir.display()),
+            Err(e) => warn!("{}: {e}", dir.join(SUMMARY_PENDING).display()),
+        }
+    }
+}
+
+/// Calls left open at an earlier quit (`<dataDir>/folders/*/calls/*/.summary-pending`).
+pub fn pending_summaries(cfg: &Config) -> Vec<PathBuf> {
+    let subdirs = |d: PathBuf| std::fs::read_dir(d).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect::<Vec<_>>();
+    subdirs(cfg.path(&cfg.data_dir).join("folders")).into_iter().flat_map(|f| subdirs(f.join("calls"))).filter(|c| c.join(SUMMARY_PENDING).exists()).collect()
 }
 
 #[cfg(test)]
@@ -344,9 +365,10 @@ mod tests {
         assert_eq!(read_jsonl::<FinalSegment>(&f).len(), 3, "an append after a torn line stays readable");
 
         let r = AnswerRecord {
+            id: "x".into(),
             turn: 1,
-            tier: "full".into(),
-            trigger: "auto".into(),
+            tier: Tier::Full,
+            trigger: Trigger::Auto,
             question: "q".into(),
             q_t: Some(5),
             model: "m".into(),
@@ -360,14 +382,15 @@ mod tests {
     }
 
     #[test]
-    fn feedback_lands_on_the_rows_of_its_turn() {
+    fn feedback_lands_on_the_answers_of_its_turn() {
         let dir = tempfile::tempdir().unwrap();
         let (shared, _rx) = Shared::for_test();
         *shared.call.lock().unwrap() = Some(dir.path().to_path_buf());
-        let rec = |turn: u64, tier: &str| AnswerRecord {
+        let rec = |turn: u64, tier: Tier| AnswerRecord {
+            id: String::new(),
             turn,
-            tier: tier.into(),
-            trigger: "auto".into(),
+            tier,
+            trigger: Trigger::Auto,
             question: "q".into(),
             q_t: None,
             model: "m".into(),
@@ -375,19 +398,36 @@ mod tests {
             shot: None,
             feedback: None,
         };
-        // An earlier session of the same call used turn 1 too.
-        append(&dir.path().join(ANSWERS), &rec(1, "full"));
+        // An earlier version: no id, the rating inline. Its session used turn 1 too.
+        let old = AnswerRecord { feedback: Some(1), ..rec(1, Tier::Full) };
+        append(&dir.path().join(ANSWERS), &old);
         std::fs::OpenOptions::new().append(true).open(dir.path().join(ANSWERS)).unwrap().write_all(b"{torn\n").unwrap();
-        let (rows, old) = read_answers(&dir.path().join(ANSWERS));
-        assert_eq!((rows, old.len()), (2, 1));
-        *shared.answer_rows.lock().unwrap() = AnswerRows { next: rows, by_turn: Default::default() };
-        save_answer(&shared, rec(1, "quick"));
-        save_answer(&shared, rec(1, "full"));
+        save_answer(&shared, rec(1, Tier::Quick));
+        save_answer(&shared, rec(1, Tier::Full));
         set_feedback(&shared, 1, Some(-1));
-        let got: Vec<Option<i8>> = read_answers(&dir.path().join(ANSWERS)).1.into_iter().map(|(_, r)| r.feedback).collect();
-        assert_eq!(got, vec![None, Some(-1), Some(-1)], "only this session's turn 1");
-        assert!(std::fs::read_to_string(dir.path().join(ANSWERS)).unwrap().contains("{torn"), "a broken line is kept");
+        let got: Vec<(String, Option<i8>)> = read_answers(dir.path()).into_iter().map(|r| (r.id, r.feedback)).collect();
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0], ("row-0".to_string(), Some(1)), "the old rating stays, the old record gets its row id");
+        assert!(got[1..].iter().all(|(id, f)| !id.is_empty() && *f == Some(-1)), "only this session's turn 1: {got:?}");
         set_feedback(&shared, 1, None);
-        assert!(read_answers(&dir.path().join(ANSWERS)).1.iter().all(|(_, r)| r.feedback.is_none()));
+        assert!(read_answers(dir.path())[1..].iter().all(|r| r.feedback.is_none()));
+        assert!(std::fs::read_to_string(dir.path().join(ANSWERS)).unwrap().contains("{torn"), "a broken line is kept");
+    }
+
+    #[test]
+    fn an_open_call_is_summarized_at_the_next_start() {
+        let data = tempfile::tempdir().unwrap();
+        let call = data.path().join("folders").join("acme").join("calls").join("c1");
+        std::fs::create_dir_all(&call).unwrap();
+        let cfg = Config { data_dir: data.path().display().to_string(), ..Config::default() };
+        let (shared, _rx) = Shared::for_test();
+        *shared.call.lock().unwrap() = Some(call.clone());
+        defer_summary(&shared);
+        assert!(pending_summaries(&cfg).is_empty(), "nothing said in the call: nothing to summarize");
+        append(&call.join(TRANSCRIPT), &FinalSegment { speaker: Speaker::Them, t_ms: 1, end_ms: 2, text: "Привет".into() });
+        *shared.call.lock().unwrap() = Some(call.clone());
+        defer_summary(&shared);
+        assert_eq!(pending_summaries(&cfg), vec![call]);
+        assert!(shared.call.lock().unwrap().is_none());
     }
 }

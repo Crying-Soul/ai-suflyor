@@ -8,7 +8,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
-use protocol::Speaker;
+use protocol::{Speaker, Tier};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -185,7 +185,7 @@ fn segments(case: &Case) -> Vec<FinalSegment> {
     segs
 }
 
-async fn one_turn(cfg: &Config, tier: &'static str, system: String, model: &str, text: String) -> Result<String> {
+async fn one_turn(cfg: &Config, tier: Tier, system: String, model: &str, text: String) -> Result<String> {
     let mut s: Session = answer::session(cfg, tier, system);
     s.prepare(model).await?;
     let mut out = String::new();
@@ -258,8 +258,8 @@ pub async fn run(cfg: &Config, dir: &Path, out: Option<PathBuf>, judge: bool, ba
         let segs = segments(case);
         let turn = llm::turn_text(&segs, &case.question, llm::Screen::None);
         let known = format!("{full_ctx}\n{turn}");
-        let quick = one_turn(cfg, "quick", llm::system_prompt(true, &quick_ctx, &cfg.user_language), &cfg.quick_model, turn.clone());
-        let full = one_turn(cfg, "full", llm::system_prompt(false, &full_ctx, &cfg.user_language), &cfg.model, turn.clone());
+        let quick = one_turn(cfg, Tier::Quick, llm::system_prompt(true, &quick_ctx, &cfg.user_language), &cfg.quick_model, turn.clone());
+        let full = one_turn(cfg, Tier::Full, llm::system_prompt(false, &full_ctx, &cfg.user_language), &cfg.model, turn.clone());
         let (quick, full) = tokio::join!(quick, full);
         let error = [&quick, &full].iter().find_map(|r| r.as_ref().err().map(|e| format!("{e:#}")));
         let (quick, full) = (quick.unwrap_or_default(), full.unwrap_or_default());
@@ -273,7 +273,7 @@ pub async fn run(cfg: &Config, dir: &Path, out: Option<PathBuf>, judge: bool, ba
                 row.quick,
                 row.full
             );
-            match one_turn(cfg, "judge", JUDGE_SYSTEM.to_string(), &cfg.alt_model, text).await.and_then(|r| parse_judge(&r)) {
+            match one_turn(cfg, Tier::Full, JUDGE_SYSTEM.to_string(), &cfg.alt_model, text).await.and_then(|r| parse_judge(&r)) {
                 Ok(j) => row.judge = Some(j),
                 Err(e) => warn!("eval {}: judge: {e:#}", case.id),
             }

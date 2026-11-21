@@ -223,10 +223,11 @@ impl Config {
         Ok((cfg, None))
     }
 
+    /// The default is the real Documents folder (a Known Folder: it may be redirected to OneDrive or another drive).
     fn fill_data_dir(&mut self) {
         if self.data_dir.trim().is_empty() {
-            let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).unwrap_or_default();
-            self.data_dir = home.join("Documents").join("Suflyor").display().to_string();
+            let docs = dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents"))).unwrap_or_default();
+            self.data_dir = docs.join("Suflyor").display().to_string();
         }
     }
 

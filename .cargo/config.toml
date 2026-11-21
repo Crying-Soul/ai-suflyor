@@ -1,0 +1,4 @@
+# ts-rs writes the TypeScript mirror of the protocol crate here when `cargo test` runs.
+[env]
+TS_RS_EXPORT_DIR = { value = "ui/src/shared/generated", relative = true }
+TS_RS_LARGE_INT = "number"

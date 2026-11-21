@@ -7,7 +7,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
-use protocol::{Event, Speaker};
+use protocol::{Event, Speaker, SttState};
 use stt::{DecodeOptions, ModelOptions, State, Whisper};
 use tracing::{debug, error, info, warn};
 use vad::Utterance;
@@ -90,7 +90,7 @@ pub fn spawn(cfg: &Config, shared: Arc<Shared>, queue: Arc<SttQueue>) -> std::io
     std::thread::Builder::new().name("stt".into()).spawn(move || {
         if let Err(e) = run(&cfg, &shared, &queue) {
             error!("stt worker: {e:#}");
-            shared.update_status(|s| s.stt = format!("error: {e:#}"));
+            shared.update_status(|s| s.stt = SttState::Error { message: format!("{e:#}") });
             // Drain so producers never block on a dead worker.
             while queue.pop().is_some() {}
         }
@@ -101,7 +101,7 @@ pub fn spawn(cfg: &Config, shared: Arc<Shared>, queue: Arc<SttQueue>) -> std::io
 type Speculative = ((u64, usize), Option<String>, f64);
 
 fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
-    shared.update_status(|s| s.stt = "loading".into());
+    shared.update_status(|s| s.stt = SttState::Loading);
     let t = Instant::now();
     let dll = cfg.path(&cfg.stt.dll);
     let model = Whisper::load(
@@ -132,7 +132,7 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
     let load_ms = t.elapsed().as_secs_f64() * 1000.0;
     info!("whisper ready in {load_ms:.0} ms");
     let _ = shared.events.send(Event::Metrics { name: "stt_load".into(), ms: load_ms });
-    shared.update_status(|s| s.stt = if cfg.stt.use_gpu { "ready (gpu)".into() } else { "ready (cpu)".into() });
+    shared.update_status(|s| s.stt = SttState::Ready { gpu: cfg.stt.use_gpu });
 
     // Per speaker: the text of its last final (whisper prompt context).
     let mut last_text: [String; 2] = Default::default();
@@ -193,7 +193,7 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
             let Some(text) = text else { continue };
             if job.speculative
                 && speaker == Speaker::Them
-                && let Some(a) = shared.answerer.get()
+                && let Some(a) = shared.answerer()
             {
                 a.on_them_early(crate::FinalSegment { speaker, t_ms: t, end_ms: t + (job.utt.speech_end_sample - start) / 16, text: text.clone() });
             }
@@ -241,29 +241,21 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
         let seg = crate::FinalSegment { speaker, t_ms: t, end_ms: t + (job.utt.speech_end_sample - start) / 16, text: text.clone() };
         crate::call::save_final(shared, &seg);
         shared.transcript.lock().unwrap().push(seg);
-        // The local model has one pair: English speech, a Russian-speaking user (the detected language, or the configured one).
-        let english = lang.as_deref().or(opts_language(cfg)) == Some(crate::translate::FROM);
-        let wanted = english && cfg.user_language == crate::translate::TO;
+        // The translator skips speech already in the user's language (the detected language, or the configured one).
         if speaker == Speaker::Them
-            && wanted
             && shared.status.lock().unwrap().translate
-            && let Some(tr) = shared.translator.get()
+            && let Some(tr) = shared.translator()
         {
-            tr.push(t, text.clone());
+            tr.push(t, text.clone(), lang.as_deref().or(base.language.as_deref()));
         }
         last_text[idx] = text;
         if speaker == Speaker::Them
-            && let Some(a) = shared.answerer.get()
+            && let Some(a) = shared.answerer()
         {
             a.on_them_final();
         }
     }
     Ok(())
-}
-
-/// The configured speech language, None for "auto".
-fn opts_language(cfg: &Config) -> Option<&str> {
-    Some(cfg.language.as_str()).filter(|l| !l.is_empty() && *l != "auto")
 }
 
 /// A "them" partial younger than this can still be echoed by the mic.

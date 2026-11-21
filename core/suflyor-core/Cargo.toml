@@ -16,10 +16,13 @@ audio.workspace = true
 vad.workspace = true
 stt.workspace = true
 textproc.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "http2"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream", "json", "http2", "system-proxy"] }
 futures-util = "0.3"
 pdf-extract = "0.12"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
+eventsource-stream = "0.2"
+clap = { version = "4", features = ["derive"] }
+dirs = "7"
 base64 = "0.22"
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi"] }
 

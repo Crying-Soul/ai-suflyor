@@ -284,10 +284,11 @@ fn merge_glossary(lists: &[Vec<String>]) -> Vec<String> {
         if out.iter().any(|o| o.eq_ignore_ascii_case(term) || o.to_lowercase() == term.to_lowercase()) {
             continue;
         }
-        if len + term.len() + 2 > GLOSSARY_CHARS {
+        let chars = term.chars().count() + 2;
+        if len + chars > GLOSSARY_CHARS {
             break;
         }
-        len += term.len() + 2;
+        len += chars;
         out.push(term.to_string());
     }
     out

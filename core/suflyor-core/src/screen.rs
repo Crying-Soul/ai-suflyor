@@ -6,7 +6,7 @@ use std::io::Cursor;
 
 use anyhow::{Context, Result, bail};
 use image::codecs::jpeg::JpegEncoder;
-use image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
+use image::codecs::webp::WebPEncoder;
 use image::imageops::{self, FilterType};
 use image::{ImageEncoder, RgbImage, RgbaImage};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
@@ -22,8 +22,15 @@ use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetForegroundWindow,
 const MAX_SIDE: u32 = 1568;
 const THUMB_SIDE: u32 = 320;
 
+/// Lossless WebP: on a real screen about half the bytes of a PNG at the same encode time (measured
+/// 442 KB against 804 KB, 8 ms each, 1568x882), and text stays exact, unlike JPEG. Every API request
+/// resends the images of its history, so the bytes count on every later turn too.
+pub const MEDIA_TYPE: &str = "image/webp";
+pub const EXTENSION: &str = "webp";
+
 pub struct Shot {
-    pub png: Vec<u8>,
+    /// The picture sent to Claude (`MEDIA_TYPE`).
+    pub image: Vec<u8>,
     pub width: u32,
     pub height: u32,
     /// dHash of the picture: close hashes mean the screen did not change.
@@ -158,18 +165,14 @@ pub fn same_screen(a: u64, b: u64) -> bool {
 
 pub fn encode(img: &RgbaImage, source: String) -> Result<Shot> {
     let big = fit(img, MAX_SIDE, FilterType::Lanczos3);
-    let mut png = Vec::new();
-    // Fast compression: a few hundred KB more is nothing next to the encode time saved.
-    PngEncoder::new_with_quality(Cursor::new(&mut png), CompressionType::Fast, PngFilter::Adaptive).write_image(
-        big.as_raw(),
-        big.width(),
-        big.height(),
-        image::ExtendedColorType::Rgba8,
-    )?;
+    // The screen is opaque: RGB, no alpha channel to encode.
+    let rgb: RgbImage = image::DynamicImage::ImageRgba8(big.clone()).to_rgb8();
+    let mut image = Vec::new();
+    WebPEncoder::new_lossless(Cursor::new(&mut image)).write_image(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)?;
     let small: RgbImage = image::DynamicImage::ImageRgba8(fit(&big, THUMB_SIDE, FilterType::Triangle)).to_rgb8();
     let mut thumb = Vec::new();
     JpegEncoder::new_with_quality(&mut thumb, 80).write_image(small.as_raw(), small.width(), small.height(), image::ExtendedColorType::Rgb8)?;
-    Ok(Shot { png, width: big.width(), height: big.height(), hash: dhash(&big), thumb, source })
+    Ok(Shot { image, width: big.width(), height: big.height(), hash: dhash(&big), thumb, source })
 }
 
 /// The foreground window (or the monitor under the cursor), ready to send.
@@ -212,10 +215,10 @@ mod tests {
     }
 
     #[test]
-    fn encode_png_and_thumb() {
+    fn encode_webp_and_thumb() {
         let s = encode(&stripes(1920, 1080, 16), "test".into()).unwrap();
         assert_eq!((s.width, s.height), (1568, 882));
-        assert_eq!(&s.png[1..4], b"PNG");
+        assert_eq!((&s.image[..4], &s.image[8..12]), (&b"RIFF"[..], &b"WEBP"[..]));
         assert_eq!(&s.thumb[..2], &[0xff, 0xd8]);
     }
 }
