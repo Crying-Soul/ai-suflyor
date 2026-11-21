@@ -30,8 +30,8 @@ function blit(dst, dw, img, x0, y0) {
 }
 
 async function page(file, w, h) {
-  const win = new BrowserWindow({ width: w, height: h, frame: false, show: false, backgroundColor: "#0c0b0a", webPreferences: wp });
-  await win.loadFile(path.join(dist, file), { query: { theme: "prompter" } });
+  const win = new BrowserWindow({ width: w, height: h, frame: false, show: false, backgroundColor: "#161618", webPreferences: wp });
+  await win.loadFile(path.join(dist, file), { query: { theme: "graphite" } });
   // A hidden window's compositor never runs CSS animations: entering cards would stay at opacity 0.
   await win.webContents.insertCSS(NO_MOTION);
   return win;
@@ -139,9 +139,9 @@ async function demo() {
     full: ["- Go: не перемещает объекты, нет поколений, работает параллельно с программой.\n", "- Java: G1/ZGC с поколениями и уплотнением, больше настроек.\n", "- В Go главный рычаг: `GOGC` и `GOMEMLIMIT`."],
   });
   await s.frame(2400);
-  for (const id of ["panel", "paper", "dusk", "prompter"]) {
+  for (const id of ["night", "day", "contrast", "graphite"]) {
     for (const w of ws) w.webContents.send("ui", { kind: "theme", id });
-    await s.frame(id === "prompter" ? 2000 : 1500);
+    await s.frame(id === "graphite" ? 2000 : 1500);
   }
   s.finish();
 }

@@ -3,7 +3,7 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const dist = path.resolve(__dirname, "../ui/dist");
-// THEME=panel (prompter|panel|paper|dusk) renders that theme into recordings/shots/<theme>.
+// THEME=day (graphite|night|day|contrast) renders that theme into recordings/shots/<theme>.
 const THEME = process.env.THEME;
 const out = path.resolve(__dirname, "../recordings/shots", THEME ?? "");
 if (THEME) {
