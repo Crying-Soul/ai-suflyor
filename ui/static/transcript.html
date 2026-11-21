@@ -10,7 +10,7 @@
 <body>
   <div id="app">
     <header id="bar">
-      <span class="title">Транскрипт</span>
+      <span data-mark></span><span class="title">Транскрипт</span>
       <button id="btn-call" class="call-chip unsaved" type="button" title="Звонок: начать, завершить, открыть «Звонки»" aria-haspopup="menu" aria-expanded="false">Без звонка · не сохраняю</button>
       <span class="spacer"></span>
       <button id="btn-help" class="icon-btn" type="button" title="Справка: что умеет приложение и как оно устроено" aria-label="Справка">
@@ -46,7 +46,7 @@
       <button id="jump" class="pill" type="button" hidden>Новые реплики ниже</button>
     </div>
 
-    <p id="live" class="live" role="status"><span class="mark keep-motion"></span><span id="live-word"></span></p>
+    <p id="live" class="live" role="status"><span class="mark"></span><span id="live-word"></span></p>
 
     <div id="owed" class="owed" role="status" hidden>
       <p><span class="owed-label">Вопрос без ответа</span><span id="owed-text" class="owed-text"></span></p>

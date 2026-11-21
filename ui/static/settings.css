@@ -1,7 +1,3 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: Dusk (by request) · redesign: full
- * nav: a ruled section list, the chosen one marked by a periwinkle dot · signature: the section list beside one form pane · states: loading, unsaved, saving, saved, error, invalid · dusk: fog/periwinkle-apricot/glass
- * axes: dark/grotesk-sans/cool · posture: committed · contrast: pass · v2.0.0 */
-/* Hallmark · pre-emit critique: P3 H2 E3 S3 R3 V3 · weakest: H, a settings form has no hero; the section head carries the scale */
 @import url("./tokens.css");
 @import url("./base.css");
 @import url("./fonts.css");
@@ -25,12 +21,12 @@ nav button {
   font: 400 var(--text-sm)/1 var(--font-body); text-align: left; cursor: pointer;
   transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
 }
-nav button::before { content: ""; flex: none; width: 6px; height: 6px; border-radius: var(--radius-pill); background: transparent; }
+nav button::before { content: ""; flex: none; width: 2px; height: 12px; border-radius: 1px; background: transparent; }
 nav button:hover { background: color-mix(in oklab, var(--color-light) 5%, transparent); color: var(--color-ink); }
 nav button:active { background: color-mix(in oklab, var(--color-light) 8%, transparent); }
 nav button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; transition: none; }
 nav button[aria-current="true"] { color: var(--color-ink); font-weight: 500; }
-nav button[aria-current="true"]::before { background: var(--color-accent); }
+nav button[aria-current="true"]::before { background: var(--color-ink); }
 
 form, .guide { overflow-y: auto; padding: var(--space-lg) var(--space-xl) var(--space-xl); }
 form[hidden] { display: none; }
@@ -50,11 +46,11 @@ body.on-guide #btn-save, body.on-guide #save-state { display: none; }
 .keys { border-collapse: collapse; font-size: var(--text-sm); }
 .keys td { padding: var(--space-2xs) var(--space-md) var(--space-2xs) 0; border-bottom: 1px solid var(--color-rule); color: var(--color-ink-2); }
 .keys td:last-child { color: var(--color-ink); font: 500 var(--text-xs)/1.4 var(--font-code); white-space: nowrap; }
-/* The pipeline: numbered stages down a periwinkle rail. */
+/* The pipeline: numbered stages down a rail. */
 .flow { margin: 0; padding: 0; list-style: none; counter-reset: stage; display: grid; }
 .flow li { position: relative; display: grid; grid-template-columns: 8.5rem minmax(0, 1fr); gap: var(--space-md); padding: var(--space-xs) 0 var(--space-xs) var(--space-lg); font-size: var(--text-sm); counter-increment: stage; }
-.flow li::before { content: counter(stage); position: absolute; left: 0; top: var(--space-xs); width: 18px; height: 18px; display: grid; place-items: center; border-radius: var(--radius-pill); background: color-mix(in oklab, var(--color-accent) 22%, transparent); color: var(--color-accent); font-size: 0.7rem; font-weight: 600; }
-.flow li + li::after { content: ""; position: absolute; left: 8.5px; top: calc(-1 * var(--space-xs)); height: calc(2 * var(--space-xs)); width: 1px; background: color-mix(in oklab, var(--color-accent) 40%, transparent); }
+.flow li::before { content: counter(stage); position: absolute; left: 0; top: var(--space-xs); width: 18px; height: 18px; display: grid; place-items: center; border-radius: var(--radius-pill); background: var(--sel); color: var(--color-ink-2); font-family: var(--font-code); font-size: 0.7rem; font-weight: 600; }
+.flow li + li::after { content: ""; position: absolute; left: 8.5px; top: calc(-1 * var(--space-xs)); height: calc(2 * var(--space-xs)); width: 1px; background: var(--color-rule); }
 .flow b { color: var(--color-ink); font-weight: 500; }
 .flow span { color: var(--color-ink-2); }
 .plain { margin: 0; padding-left: 1.2em; display: grid; gap: var(--space-xs); color: var(--color-ink-2); font-size: var(--text-sm); }
@@ -87,7 +83,7 @@ legend h2 { font-size: var(--text-xl); }
 .privacy-out img { width: 100%; border-radius: var(--radius-inner); box-shadow: 0 0 0 1px var(--color-rule); }
 .privacy-list { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--space-3xs); font-size: var(--text-sm); }
 .privacy-list li::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: var(--space-xs); border-radius: var(--radius-pill); vertical-align: middle; }
-.privacy-list .ok::before { background: var(--color-accent); }
+.privacy-list .ok::before { background: var(--color-success); }
 .privacy-list .bad { color: var(--color-error); }
 .privacy-list .bad::before { background: var(--color-error); }
 
@@ -97,11 +93,11 @@ legend h2 { font-size: var(--text-xl); }
   form { padding-inline: var(--space-lg); }
 }
 
-/* Theme picker: each card carries its own data-theme, so it is drawn in that theme's paper, ink and accent. */
+/* Theme picker: each card carries its own data-theme, so it is drawn in that theme's paper, ink and signal colour. */
 .themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: var(--space-sm); }
 .theme { display: grid; gap: var(--space-2xs); padding: var(--space-sm); border: 0; border-radius: var(--radius-inner); background: var(--color-paper); color: var(--color-ink); box-shadow: inset 0 0 0 1px var(--color-rule); font: inherit; text-align: left; cursor: pointer; }
 .theme:hover { box-shadow: inset 0 0 0 1px var(--color-muted); }
-.theme[aria-checked="true"] { box-shadow: inset 0 0 0 2px var(--color-accent); }
+.theme[aria-checked="true"] { box-shadow: inset 0 0 0 2px var(--color-ink); }
 .theme:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .sw { display: flex; align-items: center; gap: var(--space-xs); margin-bottom: var(--space-2xs); }
 .sw-q { width: 3px; height: 1.6em; border-radius: 2px; background: var(--color-accent); }
@@ -112,4 +108,4 @@ legend h2 { font-size: var(--text-xl); }
 .hotkey-row .hint { grid-column: 1 / -1; margin: 0; }
 .hotkey-row .hint[hidden] { display: none; }
 .input.hotkey { cursor: pointer; caret-color: transparent; font-variant-numeric: tabular-nums; }
-.input.hotkey:focus-visible { border-color: var(--color-accent); }
+.input.hotkey:focus-visible { border-color: var(--color-ink-2); }

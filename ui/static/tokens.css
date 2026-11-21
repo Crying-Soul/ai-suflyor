@@ -1,30 +1,50 @@
-:root, [data-theme="dusk"] {
+/* Design tokens. Two layers:
+ *  - shared (here, for every theme): type, spacing, radii, motion;
+ *  - semantic colours (--bg … --sel): the only thing a theme sets. Graphite is the default below;
+ *    themes.css re-colours the same eleven names and nothing else.
+ * The older component names (--color-paper, --color-accent, …) are aliases of the semantic ones. */
+:root, [data-theme="graphite"] {
   color-scheme: dark;
-  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
+  /* ---------- semantic: Графит ---------- */
+  --bg: #161618; --bg-2: #1d1d20; --bg-3: #26262a; --line: #2e2e33;
+  --ink: #f2f1ee; --ink-2: #b9b8b3; --ink-3: #85847f;
+  /* One hue per meaning: the other side and work in progress; something needs you; the system is ready. */
+  --them: #f0b35b; --attn: #ff6b4a; --ok: #8bd3a4;
+  --sel: #2c2c31; --shade: #0e0e10;
+}
+:root {
+  /* ---------- shared: type ---------- */
+  --font-display: "Onest", ui-sans-serif, system-ui, sans-serif; --font-body: "Onest", ui-sans-serif, system-ui, sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --display-weight: 600; --tracking-display: -0.015em;
   --text-xs: 0.75rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.2rem; --text-xl: 1.44rem; --text-2xl: 1.728rem; --text-3xl: 2.074rem;
   --text-display-s: 1.44rem; --text-display: 1.728rem; --text-section: 1.2rem; --text-title: 1rem; --text-lead: 1rem;
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --ease-in: cubic-bezier(0.7, 0, 0.84, 0); --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
-  /* Motion by meaning: a state changes colour only; new content rises 4px; what leaves goes faster than it came. */
-  --motion-state: var(--dur-micro); --motion-enter: var(--dur-short); --motion-exit: var(--dur-micro); --shift-enter: 4px;
-  --color-error: oklch(72% 0.15 27); --color-success: oklch(76% 0.13 150);
-  --container: 1440px; --gutter: 64px; --gap-columns: 32px; --section-gap-s: 120px; --section-gap: 144px; --section-gap-l: 176px;
+  /* The quick answer: the largest text in the overlay. */
+  --text-answer: 1.375rem;
+  /* ---------- shared: space and shape ---------- */
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
+  --container: 1440px; --gutter: 64px; --gap-columns: 32px;
   --z-base: 1; --z-raised: 10; --z-dropdown: 100; --z-sticky: 200; --z-sticky-nav: 300; --z-modal: 400; --z-toast: 500; --z-tooltip: 600;
-  --color-paper: oklch(17.5% 0.014 268); --color-paper-2: oklch(21% 0.016 268); --color-paper-3: oklch(25% 0.017 268);
-  --color-ink: oklch(96% 0.006 75); --color-ink-2: oklch(85% 0.010 262); --color-muted: oklch(70% 0.016 262);
-  --color-rule: oklch(30% 0.016 266); --color-light: oklch(100% 0 0); --color-shade: oklch(10% 0.022 268);
-  --color-accent: oklch(77% 0.10 274); --color-accent-ink: oklch(19% 0.035 274); --color-accent-hi: oklch(84% 0.085 274);
-  --color-accent-deep: oklch(44% 0.13 274); --color-accent-soft: oklch(91% 0.038 274); --color-focus: oklch(80% 0.10 274);
-  --color-accent-2: oklch(83% 0.095 62); --color-dusk: oklch(70% 0.12 330);
-  /* The filled button. Dusk: the accent; other themes (themes.css) may use ink instead. */
-  --color-primary: var(--color-accent); --color-primary-ink: var(--color-accent-ink); --color-primary-hi: var(--color-accent-hi);
-  --color-day-ink: oklch(22% 0.022 268); --color-day-muted: oklch(38% 0.022 266); --color-fog: oklch(94% 0.012 70);
-  --color-well: oklch(95.5% 0.008 75); --color-well-2: oklch(92% 0.010 75); --color-well-ink: oklch(21% 0.016 268); --color-well-muted: oklch(47% 0.016 265); --color-well-rule: oklch(87.5% 0.009 75); --color-card: oklch(99.5% 0.003 75);
-  --glass: oklch(22% 0.018 268 / 0.58); --glass-blur: 22px;
-  --glass-hi: inset 0 1px 0 oklch(100% 0 0 / 0.10), inset 0 0 0 1px oklch(100% 0 0 / 0.06);
-  --shadow-card: 0 1px 0 oklch(100% 0 0 / 0.06) inset, 0 40px 80px -32px oklch(8% 0.02 268 / 0.7);
-  --font-display: "Wix Madefor Display", ui-sans-serif, system-ui, sans-serif; --font-body: "Wix Madefor Text", ui-sans-serif, system-ui, sans-serif;
-  --font-code: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  --radius-card: 18px; --radius-inner: 10px; --radius-pill: 999px; --rule-hair: 1px;
-  --tracking-display: -0.022em; --display-weight: 500;
+  /* No pills: controls 6px, windows and panes 10px. */
+  --radius-card: 10px; --radius-inner: 6px; --radius-pill: 6px; --rule-hair: 1px;
+  /* Width of the label column in the overlays (who, time, «вопрос»): answer text starts on one vertical. */
+  --label-col: 56px;
+  /* ---------- shared: motion (docs/brand/v2: four durations, three curves, no springs) ---------- */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); --ease-in: cubic-bezier(0.4, 0, 1, 1); --ease-in-out: cubic-bezier(0.3, 0, 0, 1);
+  --dur-micro: 90ms; --dur-short: 160ms; --dur-size: 240ms; --dur-long: 360ms;
+  /* State changes colour only; new content rises 4px; what leaves goes at 0.6 of the way in. */
+  --motion-state: var(--dur-micro); --motion-enter: var(--dur-short); --motion-exit: 100ms; --shift-enter: 4px;
+}
+/* Aliases used by the components. Declared on every theme root too, so a theme set on an inner element
+ * (the Settings swatches) resolves them from its own colours. */
+:root, [data-theme] {
+  --color-paper: var(--bg); --color-paper-2: var(--bg-2); --color-paper-3: var(--bg-3);
+  --color-ink: var(--ink); --color-ink-2: var(--ink-2); --color-muted: var(--ink-3);
+  --color-rule: var(--line); --color-shade: var(--shade); --color-light: var(--wash, oklch(100% 0 0));
+  --color-accent: var(--them); --color-accent-2: var(--them); --color-error: var(--attn); --color-success: var(--ok);
+  --color-accent-ink: var(--bg); --color-focus: var(--ink-2);
+  /* The filled button is ink on paper in every theme: colour is kept for meaning. */
+  --color-primary: var(--ink); --color-primary-ink: var(--bg); --color-primary-hi: var(--ink);
+  /* Flat surfaces: no blur, no glow; depth comes from hairlines. */
+  --glass: var(--bg-2); --glass-hi: inset 0 0 0 1px var(--line); --shadow-card: 0 0 0 1px var(--line);
 }

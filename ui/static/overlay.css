@@ -1,9 +1,4 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: Dusk (by request) · redesign: full
- * nav: kept (a drag bar per window) · signature: the apricot strip for a question nobody asked about yet · states: empty, live, recognizing, partial, question owed, answered, answering, error, core down · dusk: fog/periwinkle-apricot/glass
- * axes: dark/grotesk-sans/cool · posture: committed · contrast: pass · v2.0.0 */
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, the same Dusk system as the last run by request; the composition moved to a ledger of utterances and one glass pane */
-/* Hallmark · finish-review: subagent · 6 findings · 5 resolved 1 partial (thin scrollbar keeps Chromium arrows on Windows) · gap: error and core-down states not captured */
-/* Shared frame of the two overlay windows: slate paper, a drag bar, a footer of controls. */
+/* Shared frame of the two overlay windows: one flat surface, a drag bar, a footer of controls. */
 @import url("./tokens.css");
 @import url("./base.css");
 @import url("./fonts.css");
@@ -20,9 +15,9 @@ body { overflow: hidden; font-size: var(--text-sm); }
 }
 
 /* Top bar: the whole strip drags the frameless window; its buttons stay clickable. */
-#bar { display: flex; align-items: center; gap: var(--space-xs); min-height: 44px; -webkit-app-region: drag; user-select: none; }
+#bar { display: flex; align-items: center; gap: var(--space-xs); min-height: 40px; -webkit-app-region: drag; user-select: none; }
 #bar button { -webkit-app-region: no-drag; }
-.title { flex: none; font: var(--display-weight) var(--text-md)/1 var(--font-display); letter-spacing: var(--tracking-display); }
+.title { flex: none; color: var(--color-ink-2); font: 500 var(--text-sm)/1 var(--font-body); }
 .spacer { flex: 1; }
 
 footer { display: flex; align-items: center; gap: var(--space-xs); min-height: 44px; }
@@ -35,25 +30,18 @@ body.mini .mode[data-action="cameraMode"], body.through .mode[data-action="click
 
 .empty { display: none; max-width: 40ch; padding: var(--space-md) 0; color: var(--color-muted); }
 
-/* Status words with their mark: apricot only when the user owes something, periwinkle while working and when done. */
-.state-word { display: inline-flex; align-items: center; gap: var(--space-2xs); white-space: nowrap; color: var(--color-muted); font-size: var(--text-xs); font-weight: 500; }
-.state-word .mark { flex: none; width: 6px; height: 6px; border-radius: var(--radius-pill); background: currentColor; }
+/* Status words: the word says the state; a 2px tick before it carries the colour (the other side, or a problem). */
+.state-word { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--color-muted); font-size: var(--text-xs); font-weight: 500; }
+.state-word .mark { flex: none; width: 2px; height: 11px; border-radius: 1px; background: currentColor; }
 .icon { flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 [data-state="question"] .state-word { color: var(--color-accent-2); }
-[data-state="asked"] .state-word, .state-word[data-state="done"] { color: var(--color-accent); }
-[data-state="live"] .mark, [data-state="waiting"] .mark, .state-word[data-state="answering"] .mark { background: var(--color-accent); }
+[data-state="asked"] .state-word, .state-word[data-state="done"] { color: var(--color-ink-2); }
+[data-state="live"] .mark, [data-state="waiting"] .mark { background: var(--color-accent); }
+.state-word[data-state="answering"] { color: var(--color-ink); }
 .state-word[data-state="error"] { color: var(--color-error); }
-/* One breathing mark per window says «working» (the hints chip, the transcript's live line); the rest stay still. */
-/* The floor stays at 0.55: lower, a working periwinkle mark reads as the grey idle one. */
-@keyframes breathe { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.55; transform: scale(0.7); } }
-/* Reduced motion keeps the difference between «working» and «done» (.keep-motion is spared by base.css):
- * opacity only, slower, no scaling. */
-@media (prefers-reduced-motion: reduce) {
-  @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
-  .keep-motion, .keep-motion::before { animation-duration: 2.4s !important; }
-}
+/* Nothing loops during a call: «working» is a word and the wait line under the state, never a pulse. */
 
-/* New content rises in, short and soft: reading is not interrupted. Instant under reduced motion (base.css). */
+/* New content rises 4px over 160ms: the eye's corner notices, reading is not interrupted. Instant under reduced motion (base.css). */
 @keyframes enter { from { opacity: 0; transform: translateY(var(--shift-enter)); } }
 /* A replayed call or a restarted core fills the window at once: only what arrives live rises in. */
 body.replay .block, body.replay .tr, body.replay .turn { animation: none !important; }

@@ -1,75 +1,34 @@
-/* Themes: `data-theme` on <html> (set from the page URL, then live from main), or on any element
- * to preview a theme inside it (the Settings swatches). tokens.css holds the shared scale and Dusk;
- * each block here re-colours those tokens, then adds the few component rules that make the theme.
- * Imported after tokens.css, so a block wins over :root at equal specificity.
- * Brief and anti-references: docs/PRODUCT.md. */
+/* Themes: `data-theme` on <html> (set from the page URL, then live from main), or on any element to preview
+ * a theme inside it (the Settings swatches). A theme sets the eleven semantic colours of tokens.css and
+ * nothing else: no component rules here, so a theme cannot break a layout. Графит, the default, is in tokens.css.
+ * Imported after tokens.css, so a block wins over :root at equal specificity. Contrast figures are WCAG on --bg. */
 
-/* ---------- Телесуфлёр: near-black stage, the answer in big white type, amber for the other side ---------- */
-[data-theme="prompter"] {
+/* ---------- Ночь: pure black, the window vanishes on a dark screen and on OLED ---------- */
+[data-theme="night"] {
   color-scheme: dark;
-  --color-paper: oklch(13.5% 0.004 70); --color-paper-2: oklch(18% 0.005 70); --color-paper-3: oklch(23% 0.006 70);
-  --color-ink: oklch(97% 0.008 85); --color-ink-2: oklch(84% 0.008 85); --color-muted: oklch(66% 0.008 85);
-  --color-rule: oklch(27% 0.006 70); --color-shade: oklch(9% 0.004 70); --color-light: oklch(100% 0 0);
-  /* Amber: the other side and work in progress. Coral: a question nobody asked about yet. */
-  --color-accent: oklch(80% 0.13 72); --color-accent-ink: oklch(20% 0.04 72); --color-accent-hi: oklch(86% 0.11 72);
-  --color-focus: oklch(84% 0.11 72); --color-accent-2: oklch(74% 0.15 35);
-  --color-primary: var(--color-ink); --color-primary-ink: var(--color-paper); --color-primary-hi: oklch(100% 0 0);
-  --glass: var(--color-paper-2); --glass-hi: inset 0 0 0 1px var(--color-rule); --shadow-card: 0 24px 48px -24px oklch(0% 0 0 / 0.8);
-  --radius-card: 12px; --radius-inner: 8px; --radius-pill: 8px;
-  --font-display: "Wix Madefor Display", ui-sans-serif, system-ui, sans-serif; --display-weight: 500; --tracking-display: -0.022em;
+  --bg: #000000; --bg-2: #0b0b0c; --bg-3: #151517; --line: #1e1e21;
+  --ink: #e9e8e4; --ink-2: #a3a29d; --ink-3: #7c7b76;
+  --them: #d9a04e; --attn: #f2603f; --ok: #7cc497;
+  --sel: #18181b; --shade: #000000;
 }
-/* The current answer is not a card: it stands on the stage, the question marked by an amber rule. */
-:root[data-theme="prompter"] .turn.current { padding: var(--space-xs) 0 0; background: none; box-shadow: none; }
-:root[data-theme="prompter"] .turn.current .q { padding-left: var(--space-sm); border-left: 2px solid var(--color-accent); color: var(--color-ink-2); font-size: var(--text-sm); }
-:root[data-theme="prompter"] .turn.current .quick { font-size: 1.45rem; line-height: 1.24; }
-:root[data-theme="prompter"] .turn:not(.current):not(.open):not(:hover) { opacity: 0.62; }
-:root[data-theme="prompter"] .title { color: var(--color-muted); font: 500 var(--text-sm)/1 var(--font-body); }
 
-/* ---------- Приборная панель: graphite instrument, mono labels, one signal orange ---------- */
-[data-theme="panel"] {
-  color-scheme: dark;
-  --color-paper: oklch(17% 0.004 250); --color-paper-2: oklch(21% 0.005 250); --color-paper-3: oklch(25% 0.006 250);
-  --color-ink: oklch(95% 0.004 250); --color-ink-2: oklch(81% 0.006 250); --color-muted: oklch(64% 0.008 250);
-  --color-rule: oklch(29% 0.006 250); --color-shade: oklch(12% 0.004 250); --color-light: oklch(100% 0 0);
-  /* Orange: the other side and work in progress. Yellow: a question owed. */
-  --color-accent: oklch(72% 0.17 48); --color-accent-ink: oklch(18% 0.03 48); --color-accent-hi: oklch(78% 0.15 48);
-  --color-focus: oklch(78% 0.15 48); --color-accent-2: oklch(85% 0.15 95); --color-success: oklch(78% 0.14 150);
-  --color-primary: var(--color-accent); --color-primary-ink: var(--color-accent-ink); --color-primary-hi: var(--color-accent-hi);
-  --glass: var(--color-shade); --glass-hi: inset 0 0 0 1px var(--color-rule); --shadow-card: none;
-  --radius-card: 8px; --radius-inner: 6px; --radius-pill: 6px;
-  --font-display: "Wix Madefor Display", ui-sans-serif, system-ui, sans-serif; --display-weight: 500; --tracking-display: -0.022em;
-}
-:root[data-theme="panel"] :is(.title, .chip, .state-word, .q .trigger, .bh .who, .lbl) { font-family: var(--font-code); font-weight: 600; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
-:root[data-theme="panel"] :is(#latency, #nav-pos, .bh .time, .pct) { font-family: var(--font-code); font-size: 11px; }
-/* State line: an inset well, like a readout. */
-:root[data-theme="panel"] .state { padding: 0 var(--space-2xs) 0 var(--space-sm); border-radius: var(--radius-inner); background: var(--color-shade); box-shadow: inset 0 0 0 1px var(--color-rule); }
-:root[data-theme="panel"] .chip::before { border-radius: 2px; width: 8px; height: 8px; }
-:root[data-theme="panel"] .chip:is([data-phase="answering"], [data-phase="recognizing"], [data-phase="looking"])::before { box-shadow: 0 0 6px color-mix(in oklab, var(--color-accent) 60%, transparent); }
-:root[data-theme="panel"] .turn.current { padding: var(--space-xs) 0 0; background: none; box-shadow: none; }
-:root[data-theme="panel"] .turn:not(.current) { border-top-style: dashed; }
-:root[data-theme="panel"] .full ul { list-style: "— "; }
-/* Keys, not pills: raised caps with a hard bottom edge. */
-:root[data-theme="panel"] .btn-ghost { background: var(--color-paper-3); box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.05), 0 1px 0 var(--color-shade); color: var(--color-ink); }
-:root[data-theme="panel"] .btn { box-shadow: inset 0 1px 0 oklch(100% 0 0 / 0.25), 0 1px 0 var(--color-shade); }
-
-/* ---------- Тихая бумага: warm paper, the answer set in a serif, terracotta for the other side ---------- */
-[data-theme="paper"] {
+/* ---------- День: warm paper for a bright room; signals darker, all AA ---------- */
+[data-theme="day"] {
   color-scheme: light;
-  --color-paper: oklch(96.5% 0.012 85); --color-paper-2: oklch(99% 0.005 85); --color-paper-3: oklch(91.5% 0.014 85);
-  --color-ink: oklch(21% 0.015 60); --color-ink-2: oklch(35% 0.015 60); --color-muted: oklch(48% 0.014 60);
-  --color-rule: oklch(86% 0.014 80); --color-shade: oklch(90% 0.014 85);
-  /* Hover washes and inset highlights mix with this: on paper they darken instead of lighten. */
-  --color-light: oklch(20% 0.02 60);
-  /* Terracotta: the other side and work in progress. Ochre: a question owed. Both pass AA on paper. */
-  --color-accent: oklch(49% 0.13 40); --color-accent-ink: oklch(98% 0.01 85); --color-accent-hi: oklch(44% 0.13 40);
-  --color-focus: oklch(49% 0.13 40); --color-accent-2: oklch(50% 0.12 70);
-  --color-error: oklch(50% 0.17 25); --color-success: oklch(46% 0.09 155);
-  --color-primary: var(--color-ink); --color-primary-ink: var(--color-paper); --color-primary-hi: oklch(32% 0.015 60);
-  --glass: var(--color-paper-2); --glass-hi: inset 0 0 0 1px var(--color-rule); --shadow-card: 0 1px 2px oklch(40% 0.02 60 / 0.08);
-  --font-display: Georgia, Cambria, "Times New Roman", serif; --display-weight: 400; --tracking-display: 0;
-  --radius-card: 10px; --radius-inner: 6px; --radius-pill: 6px;
+  --bg: #f6f5f1; --bg-2: #ffffff; --bg-3: #eceae4; --line: #dedbd3;
+  --ink: #16161a; --ink-2: #4b4a46; --ink-3: #686661;
+  --them: #a3570c; --attn: #c2361a; --ok: #2f7a4c;
+  --sel: #e8e6df; --shade: #e2dfd7;
+  /* Hover washes mix with this: on paper they darken instead of lighten. */
+  --wash: oklch(20% 0.01 80);
 }
-:root[data-theme="paper"] .title { font-style: italic; font-weight: 400; }
-:root[data-theme="paper"] .full li::marker { color: var(--color-accent); }
-:root[data-theme="paper"] .btn { box-shadow: none; }
-:root[data-theme="panel"] .chip { flex: none; }
+
+/* ---------- Контраст: bright sun and weak eyes; everything AAA, 2px rules ---------- */
+[data-theme="contrast"] {
+  color-scheme: dark;
+  --bg: #000000; --bg-2: #000000; --bg-3: #1a1a1a; --line: #ffffff;
+  --ink: #ffffff; --ink-2: #ffffff; --ink-3: #d0d0d0;
+  --them: #ffd43b; --attn: #ff7474; --ok: #6bff9e;
+  --sel: #333333; --shade: #000000;
+  --rule-hair: 2px;
+}

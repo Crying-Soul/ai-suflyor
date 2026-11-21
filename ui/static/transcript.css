@@ -1,8 +1,3 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: Dusk (by request) · redesign: full
- * nav: kept (a drag bar per window) · signature: the apricot strip for a question nobody asked about yet · states: empty, live, recognizing, partial, question owed, answered, error, core down · dusk: fog/periwinkle-apricot/glass
- * axes: dark/grotesk-sans/cool · posture: committed · contrast: pass · v2.0.0 */
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 · weakest: V, the same Dusk system as the last run by request; rows became a ledger with round initials and status words */
-/* Hallmark · finish-review: subagent · 6 findings · 5 resolved 1 partial (thin scrollbar keeps Chromium arrows on Windows) · gap: error and core-down states not captured */
 /* Transcript window: a ledger of utterances, newest at the foot; the owed question closes it. */
 @import url("./overlay.css");
 
@@ -29,7 +24,7 @@ body.through .through-note { display: inline; }
 .src { display: grid; grid-template-columns: auto 6rem minmax(0, 1fr) auto; align-items: center; gap: var(--space-sm); min-height: 28px; font-size: var(--text-xs); }
 .src + .src { border-top: var(--rule-hair) solid var(--color-rule); }
 .lbl { color: var(--color-muted); font-weight: 500; transition: color var(--dur-micro) var(--ease-out); }
-.lbl.speaking { color: var(--color-accent); }
+.lbl.speaking { color: var(--color-ink); }
 .meter { height: 4px; border-radius: var(--radius-pill); background: var(--color-paper-3); overflow: hidden; }
 .meter > div { height: 100%; background: var(--color-ink-2); transform-origin: left center; transform: scaleX(0); transition: transform var(--dur-micro) linear; }
 .spacer { flex: 1; }
@@ -51,9 +46,9 @@ body.through .through-note { display: inline; }
 .block + .block { margin-top: var(--space-2xs); }
 .bh { display: flex; align-items: baseline; gap: var(--space-xs); min-height: 20px; color: var(--color-muted); font-size: var(--text-xs); }
 .bh .who { font-weight: 500; }
-.bh .time { opacity: 0.8; }
+.bh .time { font-family: var(--font-code); font-size: 11px; }
 .text { margin: 0; min-width: 0; overflow-wrap: break-word; line-height: 1.55; }
-/* The other side is what the user reads: brighter, larger, with a periwinkle edge. The user's own words step back. */
+/* The other side is what the user reads: brighter, larger, with an edge in its colour. The user's own words step back. */
 .them { position: relative; }
 .them::before { content: ""; position: absolute; left: 0; top: var(--space-sm); bottom: var(--space-sm); width: 2px; border-radius: var(--radius-pill); background: color-mix(in oklab, var(--color-accent) 70%, transparent); }
 .them .bh .who { color: var(--color-accent); }
@@ -66,10 +61,10 @@ body.through .through-note { display: inline; }
 .tr > span + span::before { content: " "; }
 /* Words that may still change stay muted until the final text replaces them in place. */
 .seg.partial .tail { color: var(--color-muted); transition: color var(--dur-short) var(--ease-out); }
-/* A caught question: an apricot wash on its words; once asked, periwinkle with a check. */
+/* A caught question: a wash of the other side's colour on its words; once asked, a neutral wash with a check. */
 .seg.q { padding: 1px 3px; margin: 0 -3px; border-radius: 4px; background: color-mix(in oklab, var(--color-accent-2) 16%, transparent); box-decoration-break: clone; -webkit-box-decoration-break: clone; transition: background-color var(--motion-state) var(--ease-out); }
-.seg.q[data-asked] { background: color-mix(in oklab, var(--color-accent) 14%, transparent); }
-.seg .icon { display: inline-block; margin-left: var(--space-2xs); vertical-align: -0.1em; color: var(--color-accent); }
+.seg.q[data-asked] { background: var(--sel); }
+.seg .icon { display: inline-block; margin-left: var(--space-2xs); vertical-align: -0.1em; color: var(--color-ink-2); }
 
 /* Ask about this block: in its header, shown on hover or keyboard focus. */
 .bh .ask { margin-left: auto; min-height: 28px; opacity: 0; pointer-events: none; transition: opacity var(--motion-state) var(--ease-out); }
@@ -79,36 +74,35 @@ body.through .through-note { display: inline; }
 /* Who is talking now: a fixed slot under the list, so the list itself never jumps. */
 #live { display: flex; align-items: center; gap: var(--space-xs); min-height: 20px; margin: calc(-1 * var(--space-2xs)) 0; color: var(--color-muted); font-size: var(--text-xs); opacity: 0; transition: opacity var(--dur-short) var(--ease-out); }
 #live.on { opacity: 1; }
-#live .mark { flex: none; width: 6px; height: 6px; border-radius: var(--radius-pill); background: var(--color-muted); animation: breathe 1.6s var(--ease-in-out) infinite; }
+#live .mark { flex: none; width: 2px; height: 11px; border-radius: 1px; background: var(--color-muted); }
 #live[data-who="them"] .mark { background: var(--color-accent); }
 
 .pill {
   position: absolute; left: 50%; bottom: var(--space-sm); transform: translateX(-50%);
-  min-height: 28px; padding: 0 var(--space-md); border: 0; border-radius: var(--radius-pill);
-  background: var(--glass); color: var(--color-ink); font: 500 var(--text-xs)/1 var(--font-body); cursor: pointer;
-  box-shadow: var(--glass-hi), var(--shadow-card);
+  min-height: 28px; padding: 0 var(--space-sm); border: 0; border-radius: var(--radius-inner);
+  background: var(--color-paper-2); color: var(--color-ink); font: 500 var(--text-xs)/1 var(--font-body); cursor: pointer;
+  box-shadow: inset 0 0 0 var(--rule-hair) var(--color-rule);
   transition: background-color var(--dur-micro) var(--ease-out);
 }
 .pill:hover { background: var(--color-paper-3); }
-.pill:active { transform: translateX(-50%) translateY(1px); }
 .pill:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; transition: none; }
 
-/* The owed question: the open item that closes the list, in apricot, with its one action. */
+/* The owed question: the open item that closes the list, marked in the other side's colour, with its one action. */
 .owed {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-sm); align-items: center;
-  padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-inner);
-  background: color-mix(in oklab, var(--color-accent-2) 10%, var(--color-paper)); box-shadow: inset 0 0 0 var(--rule-hair) color-mix(in oklab, var(--color-accent-2) 35%, transparent);
+  padding: var(--space-xs) var(--space-sm); border-radius: 0;
+  background: var(--color-paper-2); box-shadow: inset 2px 0 0 var(--color-accent-2);
 }
 .owed[hidden] { display: none; }
 .owed p { margin: 0; min-width: 0; display: grid; gap: var(--space-3xs); }
-.owed-label { color: var(--color-accent-2); font-size: var(--text-xs); font-weight: 500; }
+.owed-label { color: var(--color-accent-2); font: 500 10px/1.6 var(--font-code); letter-spacing: 0.06em; text-transform: uppercase; }
 /* The row above holds the full question; the strip quotes one muted line so the label and action lead. */
 .owed-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-ink-2); }
 .owed .btn-ghost { color: var(--color-accent-2); box-shadow: inset 0 0 0 var(--rule-hair) color-mix(in oklab, var(--color-accent-2) 45%, transparent); }
 
 
-/* The open call: its title in the bar, a click opens «Звонки». Apricot while one is live. */
-.call-chip { -webkit-app-region: no-drag; flex: none; min-width: 0; max-width: 38%; min-height: 28px; padding: 0 var(--space-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: var(--radius-pill); background: color-mix(in oklab, var(--color-light) 4%, transparent); box-shadow: inset 0 0 0 1px var(--color-rule); color: var(--color-muted); font: 500 var(--text-xs)/1 var(--font-body); cursor: pointer; transition: color var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out); }
+/* The open call: its title in the bar, a click opens its menu. The other side's colour while one is live. */
+.call-chip { -webkit-app-region: no-drag; flex: none; min-width: 0; max-width: 38%; min-height: 28px; padding: 0 var(--space-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: var(--radius-inner); background: transparent; box-shadow: inset 0 0 0 var(--rule-hair) var(--color-rule); color: var(--color-muted); font: 500 var(--text-xs)/1 var(--font-body); cursor: pointer; transition: color var(--dur-micro) var(--ease-out), background-color var(--dur-micro) var(--ease-out); }
 .call-chip:hover { background: color-mix(in oklab, var(--color-light) 8%, transparent); color: var(--color-ink); }
 .call-chip:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .call-chip.live { color: var(--color-accent-2); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-accent-2) 45%, transparent); }

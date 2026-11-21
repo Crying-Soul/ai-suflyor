@@ -229,10 +229,14 @@ export type HotkeyAction =
 export type Hotkeys = Record<HotkeyAction, string>;
 
 /** UI themes: `data-theme` on <html> (static/themes.css). Stored by main in windows.json. */
-export const THEMES = ["prompter", "panel", "paper", "dusk"] as const;
+export const THEMES = ["graphite", "night", "day", "contrast"] as const;
 export type ThemeId = (typeof THEMES)[number];
-export const DEFAULT_THEME: ThemeId = "prompter";
+export const DEFAULT_THEME: ThemeId = "graphite";
 export const isTheme = (v: unknown): v is ThemeId => THEMES.includes(v as ThemeId);
+/** Themes of earlier versions, kept in windows.json, and what they became. */
+const RENAMED: Record<string, ThemeId> = { prompter: "night", paper: "day", panel: "graphite", dusk: "graphite" };
+/** A stored theme id, old ones mapped to their successor; anything else falls back to the default. */
+export const toTheme = (v: unknown): ThemeId => (isTheme(v) ? v : Object.hasOwn(RENAMED, String(v)) ? RENAMED[String(v)] : DEFAULT_THEME);
 
 /** Main -> overlay messages that are not core events: window mode and hotkey actions. */
 export type UiMessage =

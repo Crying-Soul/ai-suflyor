@@ -378,6 +378,8 @@ function renderLatency(): void {
   const secs = (ms: number) => `${(ms / 1000).toFixed(1).replace(".", ",")}\u00a0с`;
   const fromQuestion = min("question_to_first_token");
   const first = min("answer_first_token");
+  // The wait line under the state runs to the last measured first word (CSS default 1.2 s until one is known).
+  if (Number.isFinite(first)) document.body.style.setProperty("--wait", `${Math.round(first)}ms`);
   latencyEl.textContent = Number.isFinite(fromQuestion)
     ? `От конца вопроса до первого слова ${secs(fromQuestion)}`
     : Number.isFinite(first)

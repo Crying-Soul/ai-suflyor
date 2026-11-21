@@ -3,7 +3,7 @@ import { app, BrowserWindow, screen, type Rectangle } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import type { ThemeId, UiMessage } from "../shared/protocol";
-import { DEFAULT_THEME, isTheme } from "../shared/protocol";
+import { toTheme } from "../shared/protocol";
 import { markImage } from "./tray";
 
 export type OverlayName = "transcript" | "hints";
@@ -19,10 +19,10 @@ const overlays = wins.overlays;
 
 /** Per theme: the window background before the page paints and the native caption buttons (each theme's paper and ink in sRGB). */
 const CHROME: Record<ThemeId, { paper: string; symbol: string }> = {
-  prompter: { paper: "#0c0b0a", symbol: "#f6f3ee" },
-  panel: { paper: "#131416", symbol: "#eceef1" },
-  paper: { paper: "#f8f4ea", symbol: "#2a241f" },
-  dusk: { paper: "#13151b", symbol: "#e8e5df" },
+  graphite: { paper: "#161618", symbol: "#f2f1ee" },
+  night: { paper: "#000000", symbol: "#e9e8e4" },
+  day: { paper: "#f6f5f1", symbol: "#16161a" },
+  contrast: { paper: "#000000", symbol: "#ffffff" },
 };
 const paper = () => CHROME[win.theme].paper;
 const titleBar = () => ({ color: paper(), symbolColor: CHROME[win.theme].symbol, height: 40 });
@@ -56,7 +56,7 @@ function loadState(): WinState {
   } catch {}
   // The first version stored {transcript, hints} only: that is the normal preset.
   const normal = (raw.normal ?? { transcript: raw.transcript, hints: raw.hints }) as WinState["normal"];
-  return { preset: raw.preset === "camera" ? "camera" : "normal", normal, camera: (raw.camera ?? {}) as WinState["camera"], zoom: Number(raw.zoom) || 1, theme: isTheme(raw.theme) ? raw.theme : DEFAULT_THEME };
+  return { preset: raw.preset === "camera" ? "camera" : "normal", normal, camera: (raw.camera ?? {}) as WinState["camera"], zoom: Number(raw.zoom) || 1, theme: toTheme(raw.theme) };
 }
 
 const win = loadState();

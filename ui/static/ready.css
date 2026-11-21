@@ -14,7 +14,7 @@ main h2 { font-size: var(--text-xl); }
 .items { margin: var(--space-sm) 0 0; padding: 0; list-style: none; display: grid; gap: var(--space-sm); }
 .item { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: var(--space-2xs) var(--space-sm); padding: var(--space-md); border-radius: var(--radius-inner); background: var(--color-paper-2); box-shadow: inset 0 0 0 1px var(--color-rule); }
 .item.missing.required { box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-accent-2) 55%, var(--color-rule)); }
-.mark { grid-row: span 3; display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-pill); font-size: var(--text-sm); font-weight: 600; background: var(--color-paper-3); color: var(--color-muted); }
+.item .mark { grid-row: span 3; display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-pill); font-size: var(--text-sm); font-weight: 600; background: var(--color-paper-3); color: var(--color-muted); }
 .item.ok .mark { background: color-mix(in oklab, var(--color-success) 20%, transparent); color: var(--color-success); }
 .item.missing.required .mark { background: color-mix(in oklab, var(--color-accent-2) 22%, transparent); color: var(--color-accent-2); }
 .item-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2xs) var(--space-xs); }
@@ -31,7 +31,7 @@ main h2 { font-size: var(--text-xl); }
 /* Claude: two ways in, as tabs. */
 .tabs { display: inline-flex; gap: var(--space-3xs); padding: var(--space-3xs); border-radius: var(--radius-pill); background: var(--color-paper-3); justify-self: start; }
 .tabs button { min-height: 30px; padding: 0 var(--space-sm); border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--color-ink-2); font-size: var(--text-sm); cursor: pointer; }
-.tabs button[aria-selected="true"] { background: var(--color-paper); color: var(--color-ink); box-shadow: var(--glass-hi); }
+.tabs button[aria-selected="true"] { background: var(--color-paper); color: var(--color-ink); box-shadow: inset 0 0 0 var(--rule-hair) var(--color-rule); }
 .key { flex: 1; min-width: 12rem; }
 .cmd { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-2xs) var(--space-2xs) var(--space-2xs) var(--space-sm); border-radius: var(--radius-inner); background: var(--color-paper); font: var(--text-sm)/1.4 var(--font-code); }
 .cmd code { flex: 1; min-width: 0; overflow-wrap: anywhere; }

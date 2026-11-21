@@ -1,44 +1,36 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: Dusk (by request) · redesign: full
- * nav: kept (overlay top bar, settings section list) · signature: the answer card in smoked glass · states: hover, active, focus, disabled, checked · dusk: fog/periwinkle-apricot/glass
- * axes: dark/grotesk-sans/cool · posture: committed · contrast: pass · v2.0.0 */
-/* Hallmark · pre-emit critique: P2 H2 E3 S3 R2 V3 · weakest: R, shared controls only; each screen composes them */
-/* Hallmark · dismissed F4 · settings section list marks the current section by a 6px dot, never a filled button */
 /* Controls shared by the overlay and the settings window. */
 
 .btn, .btn-ghost, .icon-btn, .switch {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-xs);
-  min-height: 36px; padding: 0 var(--space-md); border: 0; border-radius: var(--radius-pill);
+  min-height: 32px; padding: 0 var(--space-sm); border: 0; border-radius: var(--radius-inner);
   font: 500 var(--text-sm)/1 var(--font-body); white-space: nowrap; cursor: pointer;
-  transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out), transform var(--dur-micro) var(--ease-out);
+  transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out), box-shadow var(--dur-micro) var(--ease-out);
 }
-.btn {
-  background: var(--color-primary); color: var(--color-primary-ink); font-weight: 600;
-  box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-light) 35%, transparent);
-}
-.btn:hover { background: var(--color-primary-hi); box-shadow: inset 0 1px 0 color-mix(in oklab, var(--color-light) 35%, transparent), 0 0 0 4px color-mix(in oklab, var(--color-primary) 18%, transparent); }
-.btn-ghost, .switch { background: color-mix(in oklab, var(--color-light) 4%, transparent); color: var(--color-ink-2); box-shadow: inset 0 0 0 1px var(--color-rule); }
+/* One filled button per view: ink on paper. Everything else is a hairline or plain text. */
+.btn { background: var(--color-primary); color: var(--color-primary-ink); font-weight: 600; }
+.btn:hover { background: color-mix(in oklab, var(--color-primary) 88%, var(--color-paper)); }
+.btn-ghost, .switch { background: transparent; color: var(--color-ink-2); box-shadow: inset 0 0 0 var(--rule-hair) var(--color-rule); }
 .btn-ghost:hover, .switch:hover { background: color-mix(in oklab, var(--color-light) 8%, transparent); color: var(--color-ink); }
 .icon-btn { min-height: 32px; width: 32px; padding: 0; background: transparent; color: var(--color-muted); }
 .icon-btn:hover { background: color-mix(in oklab, var(--color-light) 7%, transparent); color: var(--color-ink); }
 .icon-btn svg, .btn svg, .btn-ghost svg { flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.btn:active, .btn-ghost:active, .icon-btn:active, .switch:active { transform: translateY(1px); }
 .btn:focus-visible, .btn-ghost:focus-visible, .icon-btn:focus-visible, .switch:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; transition: none; }
 .btn:disabled, .btn-ghost:disabled, .icon-btn:disabled, .switch:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
-/* A switch: the track and knob sit before the label; periwinkle when on. */
+/* A switch: the track and knob sit before the label; ink when on. */
 .switch { position: relative; justify-content: flex-start; padding-left: var(--space-sm); }
 .switch::before {
-  content: ""; flex: none; width: 28px; height: 16px; border-radius: var(--radius-pill);
+  content: ""; flex: none; width: 28px; height: 16px; border-radius: 4px;
   background: var(--color-paper-3); box-shadow: inset 0 0 0 1px var(--color-rule);
   transition: background-color var(--dur-short) var(--ease-out);
 }
 .switch::after {
-  content: ""; position: absolute; left: calc(var(--space-sm) + var(--space-2xs)); width: 8px; height: 8px; border-radius: var(--radius-pill);
+  content: ""; position: absolute; left: calc(var(--space-sm) + var(--space-2xs)); width: 8px; height: 8px; border-radius: 2px;
   background: var(--color-muted); transition: transform var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
 }
 .switch[aria-checked="true"] { color: var(--color-ink); }
-.switch[aria-checked="true"]::before { background: var(--color-accent); box-shadow: none; }
-.switch[aria-checked="true"]::after { transform: translateX(12px); background: var(--color-accent-ink); }
+.switch[aria-checked="true"]::before { background: var(--color-ink); box-shadow: none; }
+.switch[aria-checked="true"]::after { transform: translateX(12px); background: var(--color-paper); }
 
 /* Fields */
 .input, .select, .textarea {
@@ -56,12 +48,12 @@
 .select option { background: var(--color-paper-2); color: var(--color-ink); }
 
 /* In-page tooltip (native ones are separate windows a screen share may catch). */
-.tip { position: fixed; z-index: var(--z-tooltip); max-width: 18rem; padding: var(--space-2xs) var(--space-xs); border-radius: 6px; background: var(--color-paper-3); box-shadow: 0 0 0 1px var(--color-rule), 0 8px 24px -8px var(--color-shade); color: var(--color-ink-2); font: 400 var(--text-xs)/1.4 var(--font-body); white-space: pre-line; pointer-events: none; }
+.tip { position: fixed; z-index: var(--z-tooltip); max-width: 18rem; padding: var(--space-2xs) var(--space-xs); border-radius: 6px; background: var(--color-paper-3); box-shadow: 0 0 0 1px var(--color-rule); color: var(--color-ink-2); font: 400 var(--text-xs)/1.4 var(--font-body); white-space: pre-line; pointer-events: none; }
 
 /* In-page confirm, for the same reason. */
-dialog.confirm { width: min(26rem, calc(100vw - 2 * var(--space-lg))); padding: var(--space-lg); border: 0; border-radius: var(--radius-card); background: var(--color-paper-2); color: var(--color-ink); box-shadow: var(--shadow-card), var(--glass-hi); }
+dialog.confirm { width: min(26rem, calc(100vw - 2 * var(--space-lg))); padding: var(--space-lg); border: 0; border-radius: var(--radius-card); background: var(--color-paper-2); color: var(--color-ink); box-shadow: inset 0 0 0 var(--rule-hair) var(--color-rule); }
 dialog.confirm[open] { display: grid; gap: var(--space-md); }
-dialog.confirm::backdrop { background: oklch(10% 0.022 268 / 0.6); }
+dialog.confirm::backdrop { background: oklch(0% 0 0 / 0.55); }
 /* Opens over --motion-enter, leaves over --motion-exit (askConfirm waits that long before removing it). */
 dialog.confirm[open] { animation: dialog-in var(--motion-enter) var(--ease-out); }
 dialog.confirm[open]::backdrop { animation: fade-in var(--motion-enter) var(--ease-out); }

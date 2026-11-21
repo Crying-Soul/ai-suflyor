@@ -1,7 +1,3 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: Dusk (by request) · redesign: full
- * nav: a ruled tree (profile, folders, their calls), the chosen node marked by a periwinkle dot · signature: the live call tagged in apricot in the tree · states: loading, unsaved, saving, saved, error, live call, empty record, drop target · dusk: fog/periwinkle-apricot/glass
- * axes: dark/grotesk-sans/cool · posture: committed · contrast: pass · v2.0.0 */
-/* Hallmark · pre-emit critique: P3 H2 E3 S3 R3 V3 · weakest: H, a work window; the node title carries the scale */
 @import url("./tokens.css");
 @import url("./base.css");
 @import url("./fonts.css");
@@ -12,7 +8,7 @@ html, body { height: 100%; }
 body { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 
 /* The native window buttons sit over the right 140px of this bar (--space-4xl is 144px). */
-.window-head { display: flex; align-items: baseline; gap: var(--space-sm); min-height: 40px; padding: var(--space-xs) var(--space-4xl) 0 var(--space-lg); -webkit-app-region: drag; user-select: none; }
+.window-head { display: flex; align-items: center; gap: var(--space-sm); min-height: 40px; padding: 0 var(--space-4xl) 0 var(--space-lg); -webkit-app-region: drag; user-select: none; }
 .window-head h1 { font-size: var(--text-md); max-width: none; }
 .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-muted); font-size: var(--text-xs); }
 .link { -webkit-app-region: no-drag; padding: 0; border: 0; background: none; cursor: pointer; text-decoration: underline; text-decoration-color: var(--color-rule); text-underline-offset: 0.2em; }
@@ -38,12 +34,12 @@ nav button[data-dir] {
   font: 400 var(--text-sm)/1.25 var(--font-body); text-align: left; cursor: pointer;
   transition: background-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
 }
-nav button[data-dir]::before { content: ""; grid-row: 1 / span 2; width: 6px; height: 6px; border-radius: var(--radius-pill); background: transparent; }
+nav button[data-dir]::before { content: ""; grid-row: 1 / span 2; width: 2px; height: 12px; border-radius: 1px; background: transparent; }
 nav button[data-dir]:hover { background: color-mix(in oklab, var(--color-light) 5%, transparent); color: var(--color-ink); }
 nav button[data-dir]:active { background: color-mix(in oklab, var(--color-light) 8%, transparent); }
 nav button[data-dir]:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -2px; transition: none; }
 nav button[aria-current="true"] { color: var(--color-ink); font-weight: 500; }
-nav button[aria-current="true"]::before { background: var(--color-accent); }
+nav button[aria-current="true"]::before { background: var(--color-ink); }
 .folder > button .label { font-weight: 500; }
 .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sub { grid-column: 2; color: var(--color-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
@@ -69,7 +65,7 @@ main { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
 .textarea.notes { min-height: 12rem; font-family: var(--font-body); }
 
 .files { display: grid; gap: var(--space-xs); padding: var(--space-xs); margin: calc(-1 * var(--space-xs)); border-radius: var(--radius-inner); transition: box-shadow var(--dur-micro) var(--ease-out); }
-.files.drop { box-shadow: inset 0 0 0 1px var(--color-accent); background: color-mix(in oklab, var(--color-accent) 6%, transparent); }
+.files.drop { box-shadow: inset 0 0 0 1px var(--color-ink-2); background: var(--sel); }
 .files > .btn-ghost { justify-self: start; }
 .file-list { margin: 0; padding: 0; list-style: none; }
 .file-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: var(--space-xs); padding: var(--space-2xs) 0; }
