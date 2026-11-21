@@ -47,6 +47,12 @@ pub enum AskKind {
     Continue,
     /// The next part of the answer just given.
     More,
+    /// The answer just given, said shorter.
+    Shorter,
+    /// The answer just given, in simpler words.
+    Simpler,
+    /// A concrete example for the answer just given.
+    Example,
 }
 
 #[derive(Debug, Clone, Deserialize, TS)]
@@ -198,6 +204,12 @@ pub enum Trigger {
     Continue,
     /// «Продолжить ответ».
     More,
+    /// «Короче».
+    Shorter,
+    /// «Проще».
+    Simpler,
+    /// «Пример».
+    Example,
 }
 
 /// Why an answer ended without text, or what kind of failure an error is.
@@ -379,6 +391,8 @@ mod tests {
         assert!(matches!(c, Command::Feedback { turn: 3, value: None }));
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"more"}"#).unwrap();
         assert!(matches!(c, Command::Ask { kind: AskKind::More, .. }));
+        let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"shorter"}"#).unwrap();
+        assert!(matches!(c, Command::Ask { kind: AskKind::Shorter, .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"set","translate":true}"#).unwrap();
         assert!(matches!(c, Command::Set { translate: Some(true), .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"set","mute_them":true}"#).unwrap();

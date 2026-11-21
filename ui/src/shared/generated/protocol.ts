@@ -8,7 +8,7 @@ export type AnswerMode = "confirmed" | "speculative";
 /**
  * What an ask is for.
  */
-export type AskKind = "answer" | "questions" | "continue" | "more";
+export type AskKind = "answer" | "questions" | "continue" | "more" | "shorter" | "simpler" | "example";
 
 export type CaptureState = "starting" | "running" | "error";
 
@@ -93,4 +93,4 @@ export type Tier = "quick" | "full" | "summary" | "brief" | "translate";
 /**
  * What started an answer.
  */
-export type Trigger = "auto" | "early" | "hotkey" | "picked" | "screen" | "questions" | "continue" | "more";
+export type Trigger = "auto" | "early" | "hotkey" | "picked" | "screen" | "questions" | "continue" | "more" | "shorter" | "simpler" | "example";

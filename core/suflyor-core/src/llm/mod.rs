@@ -349,6 +349,23 @@ pub const MORE: &str = "Continue your previous answer to the last question: the 
 going deeper or adding an example (from the user's experience only if the question is about it). \
 Do not repeat what the previous answer said. Same format and languages: the spoken paragraph first, then at most 2 short bullets.";
 
+/// The "question" of «Короче»: the answer just given, cut to what the user can say in a few seconds.
+pub const SHORTER: &str = "Say your previous answer to the last question again, much shorter: \
+at most 2 short sentences the user can say aloud right now, the main point first, keeping the key fact or number. \
+Same languages as before. No bullets, no preamble.";
+
+/// The "question" of «Проще»: the answer just given, in plain words.
+pub const SIMPLER: &str = "Say your previous answer to the last question again in simpler words: \
+3 or 4 short spoken sentences, little jargon, each term the user must use explained in a few words. \
+Keep the same facts; add nothing about the user's experience that is not in the context. \
+Same languages as before, then at most 1 short bullet.";
+
+/// The "question" of «Пример»: one concrete example for the answer just given.
+pub const EXAMPLE: &str = "Give one concrete example for your previous answer to the last question, for the user to say aloud: \
+if the question is about the user's experience, a short story from the context with its real numbers (never invent experience or numbers); \
+otherwise a short practical example, or a few lines of code if the topic is code. \
+Same languages as before: the spoken part first, code in a code block after it. No preamble.";
+
 /// The "question" of «Что сказать»: how the user goes on with their own reply. Only the user's side:
 /// after an "A:" line the natural next turn is the other side's, and the model used to write that.
 pub const CONTINUE: &str = "The user is mid-reply and needs words to keep talking. \

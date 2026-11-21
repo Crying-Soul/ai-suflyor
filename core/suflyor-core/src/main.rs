@@ -386,15 +386,6 @@ fn reload_llm(cfg: &mut Config, path: Option<&std::path::Path>, key: Option<Stri
 
 fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::Answerer) {
     match cmd {
-        Command::Ask { kind: AskKind::Questions, .. } => {
-            answerer.ask(shared, Trigger::Questions, Some((llm::MY_QUESTIONS.to_string(), None)), None);
-        }
-        Command::Ask { kind: AskKind::Continue, .. } => {
-            answerer.ask(shared, Trigger::Continue, Some((llm::CONTINUE.to_string(), None)), None);
-        }
-        Command::Ask { kind: AskKind::More, .. } => {
-            answerer.ask(shared, Trigger::More, Some((llm::MORE.to_string(), None)), None);
-        }
         Command::Ask { kind: AskKind::Answer, screenshot, question } => {
             let picked = question.filter(|q| !q.trim().is_empty()).map(|q| (q, None));
             if !screenshot {
@@ -420,6 +411,17 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
                 };
                 answerer.ask(&shared, Trigger::Screen, picked, shot);
             });
+        }
+        Command::Ask { kind, .. } => {
+            let (trigger, text) = match kind {
+                AskKind::Questions => (Trigger::Questions, llm::MY_QUESTIONS),
+                AskKind::Continue => (Trigger::Continue, llm::CONTINUE),
+                AskKind::More => (Trigger::More, llm::MORE),
+                AskKind::Shorter => (Trigger::Shorter, llm::SHORTER),
+                AskKind::Simpler => (Trigger::Simpler, llm::SIMPLER),
+                _ => (Trigger::Example, llm::EXAMPLE),
+            };
+            answerer.ask(shared, trigger, Some((text.to_string(), None)), None);
         }
         Command::Set { auto, model, answer_mode, translate, mute_me, mute_them } => shared.update_status(|s| {
             if let Some(t) = translate {

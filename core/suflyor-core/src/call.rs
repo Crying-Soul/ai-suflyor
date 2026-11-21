@@ -254,7 +254,9 @@ pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBu
         info!("call {} replaced: writing its summary", prev.display());
         summarize(cfg, shared, answerer, prev);
     }
-    let segs: Vec<FinalSegment> = read_jsonl(&dir.join(TRANSCRIPT));
+    let was_open = shared.call.lock().unwrap().is_some();
+    let unsaved = if was_open { Vec::new() } else { shared.transcript.lock().unwrap().clone() };
+    let segs = adopt(&dir, unsaved);
     let answers = read_answers(&dir);
     let _ = std::fs::remove_file(dir.join(SUMMARY_PENDING)); // it is open again: it ends the normal way
     *shared.call.lock().unwrap() = Some(dir.clone());
@@ -269,6 +271,20 @@ pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBu
     }
     replay(shared, answerer, answers);
     Ok(())
+}
+
+/// The transcript a call opens with. A new call started mid-conversation keeps what was said
+/// before it (`unsaved`: the transcript in memory while no call was open), written into its file.
+fn adopt(dir: &Path, unsaved: Vec<FinalSegment>) -> Vec<FinalSegment> {
+    let saved: Vec<FinalSegment> = read_jsonl(&dir.join(TRANSCRIPT));
+    if !saved.is_empty() || unsaved.is_empty() {
+        return saved;
+    }
+    info!("call {}: keeping {} segments said before it started", dir.display(), unsaved.len());
+    for s in &unsaved {
+        append(&dir.join(TRANSCRIPT), s);
+    }
+    unsaved
 }
 
 /// Saved answers as answer events, under fresh ids, turns kept together. A saved turn id comes back
@@ -412,6 +428,19 @@ mod tests {
         set_feedback(&shared, 1, None);
         assert!(read_answers(dir.path())[1..].iter().all(|r| r.feedback.is_none()));
         assert!(std::fs::read_to_string(dir.path().join(ANSWERS)).unwrap().contains("{torn"), "a broken line is kept");
+    }
+
+    #[test]
+    fn a_new_call_keeps_what_was_said_before_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = |t: u64, text: &str| FinalSegment { speaker: Speaker::Them, t_ms: t, end_ms: t + 1, text: text.into() };
+        assert!(adopt(dir.path(), Vec::new()).is_empty());
+        let got = adopt(dir.path(), vec![seg(1, "Привет"), seg(5, "Расскажите о себе")]);
+        assert_eq!(got.len(), 2);
+        assert_eq!(read_jsonl::<FinalSegment>(&dir.path().join(TRANSCRIPT)).len(), 2, "written to the call");
+        // A call that already has a transcript (resumed) keeps its own, unmixed.
+        let got = adopt(dir.path(), vec![seg(9, "Чужое")]);
+        assert_eq!(got.iter().map(|s| s.t_ms).collect::<Vec<_>>(), vec![1, 5]);
     }
 
     #[test]
