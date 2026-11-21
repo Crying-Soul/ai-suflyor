@@ -36,3 +36,12 @@ lto = "fat"
 codegen-units = 1
 debug = false
 strip = true
+
+# On top of clippy's defaults (CI denies warnings). Picked from pedantic/nursery for what they catch here:
+# a lock held over an `if let` body, async fns that never await, `&mut` that is never written.
+[workspace.lints.clippy]
+significant_drop_in_scrutinee = "warn"
+unused_async = "warn"
+needless_pass_by_ref_mut = "warn"
+redundant_clone = "warn"
+redundant_closure_for_method_calls = "warn"

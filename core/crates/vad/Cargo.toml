@@ -7,3 +7,6 @@ version.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 ort = { version = "2.0.0-rc.15" }
+
+[lints]
+workspace = true

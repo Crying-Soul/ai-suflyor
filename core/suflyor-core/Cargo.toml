@@ -29,3 +29,6 @@ windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"
+
+[lints]
+workspace = true

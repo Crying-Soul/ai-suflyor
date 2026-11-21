@@ -14,3 +14,6 @@ windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Th
 
 [dev-dependencies]
 hound.workspace = true
+
+[lints]
+workspace = true

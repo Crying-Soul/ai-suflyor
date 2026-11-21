@@ -1,0 +1,14 @@
+# cargo deny --manifest-path core/Cargo.toml check advisories bans sources
+# Licenses are not checked: the app is not redistributed as a library.
+
+[advisories]
+# Known vulnerabilities fail the check; unmaintained crates only when they affect our own crates.
+unmaintained = "workspace"
+
+[bans]
+# Duplicate versions come from upstream crates (windows, rustls); they cost size, not correctness.
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

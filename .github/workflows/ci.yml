@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
+          components: clippy, rustfmt, llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
@@ -20,8 +20,16 @@ jobs:
         run: cargo fmt --manifest-path core/Cargo.toml --all --check
       - name: Core lints
         run: cargo clippy --manifest-path core/Cargo.toml --all-targets -- -D warnings
-      - name: Core tests
-        run: cargo test --manifest-path core/Cargo.toml
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,cargo-machete,cargo-deny
+      - name: Unused dependencies
+        run: cargo machete core
+      - name: Dependency advisories and sources
+        run: cargo deny --manifest-path core/Cargo.toml check advisories bans sources
+      # Runs `cargo test` instrumented; fails if line coverage drops under the floor.
+      - name: Core tests and coverage
+        run: cargo llvm-cov --manifest-path core/Cargo.toml --workspace --summary-only --fail-under-lines 60
       # `cargo test` regenerates the UI's protocol types (ts-rs); a diff means they were not committed.
       - name: Protocol types are up to date
         run: git diff --exit-code -- ui/src/shared/generated
@@ -36,5 +44,6 @@ jobs:
           npm ci
           npm run typecheck
           npm run lint
-          npm test
+          npm run coverage
+          npm audit --omit=dev --audit-level=high
           npm run build
