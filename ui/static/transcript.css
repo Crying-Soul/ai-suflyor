@@ -115,5 +115,11 @@ body.through .through-note { display: inline; }
 .call-chip.warn::after { content: " !"; color: var(--color-error); }
 /* No call open: nothing is saved, and the chip is the one place that says so. */
 .call-chip.unsaved { max-width: 62%; color: var(--color-accent-2); }
-/* «Очистить» armed by its first press: the second one clears. */
-#btn-clear.armed { color: var(--color-error); background: color-mix(in oklab, var(--color-error) 14%, transparent); }
+/* The chip's menu: start a call in a recent folder, end the open one, open «Звонки», clear the windows. */
+.call-menu { position: absolute; top: 44px; left: var(--space-md); z-index: 10; display: grid; min-width: 15rem; max-width: calc(100% - 2 * var(--space-md)); padding: var(--space-3xs); border-radius: var(--radius-inner); background: var(--color-paper); box-shadow: inset 0 0 0 1px var(--color-rule), var(--shadow-card); -webkit-app-region: no-drag; }
+.call-menu[hidden] { display: none; }
+.call-menu button { min-height: 32px; padding: 0 var(--space-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: calc(var(--radius-inner) - 4px); background: none; color: var(--color-ink-2); font: var(--text-sm)/1.2 var(--font-body); text-align: left; cursor: pointer; }
+.call-menu button:hover, .call-menu button:focus-visible { background: color-mix(in oklab, var(--color-light) 8%, transparent); color: var(--color-ink); outline: none; }
+.call-menu .menu-note { margin: 0; padding: var(--space-3xs) var(--space-sm) var(--space-xs); color: var(--color-muted); font-size: var(--text-xs); }
+.call-menu .menu-sep { height: var(--rule-hair); margin: var(--space-3xs) 0; background: var(--color-rule); }
+.call-menu .danger { color: var(--color-error); }

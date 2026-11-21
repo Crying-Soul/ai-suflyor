@@ -466,6 +466,8 @@ viewer.addEventListener("click", (e) => e.target === viewer && viewer.close());
 
 api.onEvent((e) => {
   if (e.ev === "call") {
+    // A call ended elsewhere (the transcript chip, another call opened) is being summarized too.
+    if (live?.dir && live.dir !== e.dir) summarizing.add(live.dir);
     live = e.dir ? e : null;
     loadTree().catch(fail);
     // The live state changes the buttons; unsaved notes must survive that re-render.

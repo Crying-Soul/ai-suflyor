@@ -1,4 +1,4 @@
-import type { CoreEvent, ErrorKind, ReadyItem, Status } from "../shared/protocol";
+import type { AskKind, CoreEvent, ErrorKind, ReadyItem, Status } from "../shared/protocol";
 import { $, api, bindActions, coreDownText, el, humanError, icon, keyLabel, modelLabel, overlayUi, replayGuard, sttLabel } from "./common";
 import { render } from "./md";
 
@@ -92,8 +92,32 @@ const HISTORY_LIMIT = 50;
 let moreTip = "Ещё 2–3 предложения к этой подсказке";
 
 /** How the card names its ask: a fixed title for the suggestion kinds, else the question itself. */
-const KIND_TITLE: Record<string, string> = { questions: "Что спросить у собеседника", continue: "Как продолжить ваш ответ", more: "Продолжение ответа" };
-const TRIGGER_LABEL: Record<string, string> = { auto: "авто", early: "авто", picked: "выбрано", screen: "экран", questions: "вопросы", continue: "что сказать", more: "продолжение" };
+const KIND_TITLE: Record<string, string> = {
+  questions: "Что спросить у собеседника",
+  continue: "Как продолжить ваш ответ",
+  more: "Продолжение ответа",
+  shorter: "Прошлый ответ короче",
+  simpler: "Прошлый ответ проще",
+  example: "Пример к прошлому ответу",
+};
+const TRIGGER_LABEL: Record<string, string> = {
+  auto: "авто",
+  early: "авто",
+  picked: "выбрано",
+  screen: "экран",
+  questions: "вопросы",
+  continue: "что сказать",
+  more: "продолжение",
+  shorter: "короче",
+  simpler: "проще",
+  example: "пример",
+};
+/** Ways to redo the answer on show, under its card. */
+const REFINE: [AskKind, string, string][] = [
+  ["shorter", "Короче", "Тот же ответ в 1–2 фразы"],
+  ["simpler", "Проще", "Тот же ответ простыми словами"],
+  ["example", "Пример", "Конкретный пример: из вашего опыта или код"],
+];
 
 function newTurn(id: number, question: string, trigger: string): Turn {
   const prev = turns.get(current);
@@ -126,15 +150,28 @@ function newTurn(id: number, question: string, trigger: string): Turn {
   }
   card.append(quick, full);
   if (trigger !== "questions" && trigger !== "continue") {
-    // The next part of this answer: shown on the current card once it is done (CSS).
-    const more = el("button", "more btn-ghost small", "Продолжить ответ");
+    // Redo or continue this answer: shown on the current card once it is done (CSS).
+    const row = el("div", "refine");
+    for (const [kind, text, tip] of REFINE) {
+      const b = el("button", "btn-ghost small", text);
+      b.type = "button";
+      b.title = tip;
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setPhase("asking");
+        api.send({ cmd: "ask", screenshot: false, kind });
+      });
+      row.append(b);
+    }
+    const more = el("button", "more btn-ghost small", "Продолжить");
     more.type = "button";
     more.title = moreTip;
     more.addEventListener("click", (e) => {
       e.stopPropagation();
       api.action("moreAnswer");
     });
-    card.append(more);
+    row.append(more);
+    card.append(row);
   }
   card.tabIndex = 0;
   card.addEventListener("keydown", (e) => {

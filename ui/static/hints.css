@@ -110,6 +110,6 @@ footer .btn, footer .btn-ghost { gap: 6px; padding-inline: var(--space-xs); }
 }
 
 /* «Продолжить ответ»: on the current answer only, once it is done. */
-.turn .more { display: none; justify-self: start; }
-.turn.current[data-state="done"] .more { display: inline-flex; }
-body.mini .turn .more { display: none; }
+.turn .refine { display: none; flex-wrap: wrap; gap: var(--space-2xs); justify-self: start; }
+.turn.current[data-state="done"] .refine { display: flex; }
+body.mini .turn .refine { display: none; }

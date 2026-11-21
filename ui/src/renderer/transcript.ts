@@ -1,4 +1,5 @@
 import type { CaptureStatus, CoreEvent, ReadyItem, Speaker, Status } from "../shared/protocol";
+import { recentFolders } from "../shared/recent";
 import { addTurn, emptyUsage, type Usage } from "../shared/usage";
 import { $, api, bindActions, coreDownText, el, follow, humanError, icon, keyLabel, overlayUi, replayGuard, sttLabel } from "./common";
 
@@ -349,6 +350,7 @@ api.onEvent((e: CoreEvent) => {
       renderUsage();
       break;
     case "call": {
+      liveCall = e.dir ? e.title : null;
       const chip = $("btn-call");
       // Without a call nothing is saved: the chip says so in words, not only by its colour.
       chip.textContent = e.dir ? e.title : "Без звонка · не сохраняю";
@@ -358,7 +360,7 @@ api.onEvent((e: CoreEvent) => {
       const where = e.dir
         ? `${e.folder ? `${e.folder}: ` : ""}${e.title}\n`
         : "Звонок не открыт: транскрипт, подсказки и итог не сохраняются.\n";
-      chip.title = [`${where}Контекст ≈${e.tokens.toLocaleString("ru-RU")} токенов. Открыть «Звонки»`, ...e.warnings].join("\n");
+      chip.title = [`${where}Контекст ≈${e.tokens.toLocaleString("ru-RU")} токенов. Щелчок: начать, завершить, «Звонки»`, ...e.warnings].join("\n");
       break;
     }
     case "error":
@@ -396,28 +398,81 @@ void api.ready.list().then(renderSetup);
 mutes.me.onclick = () => api.send({ cmd: "set", mute_me: !(status?.mute_me ?? false) });
 mutes.them.onclick = () => api.send({ cmd: "set", mute_them: !(status?.mute_them ?? false) });
 $("btn-help").onclick = () => api.openSettings("guide");
-// «Очистить» empties both windows: the first press arms it, a second one within CLEAR_ARMED_MS clears.
-const clearBtn = $<HTMLButtonElement>("btn-clear");
-const CLEAR_ARMED_MS = 3000;
-let clearTimer = 0;
-clearBtn.onclick = () => {
-  if (clearBtn.classList.contains("armed")) {
-    clearTimeout(clearTimer);
-    clearBtn.classList.remove("armed");
-    statusEl.textContent = "окна очищены";
-    api.send({ cmd: "clear" });
-    return;
-  }
-  clearBtn.classList.add("armed");
-  const before = statusEl.textContent;
-  statusEl.textContent = "Нажмите ещё раз, чтобы очистить окна";
-  clearTimer = window.setTimeout(() => {
-    clearBtn.classList.remove("armed");
-    if (statusEl.textContent === "Нажмите ещё раз, чтобы очистить окна") statusEl.textContent = before;
-  }, CLEAR_ARMED_MS);
-};
 $("btn-settings").onclick = () => api.openSettings();
-$("btn-call").onclick = () => api.openCalls();
+// ---------- the call chip's menu: start or end a call without opening «Звонки» ----------
+
+/** Title of the open call, from the core's last `call` event; null: nothing is saved. */
+let liveCall: string | null = null;
+const chipBtn = $<HTMLButtonElement>("btn-call");
+const menu = $("call-menu");
+
+function closeMenu(): void {
+  menu.hidden = true;
+  chipBtn.setAttribute("aria-expanded", "false");
+}
+
+function item(text: string, run: () => unknown, cls = ""): HTMLButtonElement {
+  const b = el("button", cls, text);
+  b.type = "button";
+  b.setAttribute("role", "menuitem");
+  b.onclick = (e) => {
+    e.stopPropagation();
+    closeMenu();
+    Promise.resolve(run()).catch((err) => {
+      statusEl.textContent = `Не вышло: ${err instanceof Error ? err.message : err}`;
+      statusEl.classList.add("error");
+    });
+  };
+  return b;
+}
+
+async function openMenu(): Promise<void> {
+  const items: HTMLElement[] = [];
+  if (liveCall) {
+    items.push(
+      el("p", "menu-note", `Идёт «${liveCall}»: транскрипт и ответы сохраняются`),
+      item("Завершить звонок и написать итог", () => {
+        api.send({ cmd: "close_call" });
+        statusEl.textContent = "Звонок завершён. Пишу итог…";
+      }),
+    );
+  } else {
+    const folders = recentFolders(await api.calls.tree(), 3);
+    items.push(el("p", "menu-note", folders.length ? "Начать звонок. Уже сказанное тоже сохранится" : "Папок пока нет: создайте её в «Звонках»"));
+    for (const f of folders) {
+      items.push(
+        item(`Новый звонок в «${f.title}»`, async () => {
+          const title = `Звонок ${new Date().toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`;
+          api.send({ cmd: "open_call", dir: await api.calls.createCall(f.dir, title) });
+        }),
+      );
+    }
+  }
+  items.push(
+    item("Открыть «Звонки»", () => api.openCalls()),
+    el("div", "menu-sep"),
+    item("Очистить окна", () => {
+      api.send({ cmd: "clear" });
+      statusEl.textContent = "окна очищены";
+    }, "danger"),
+  );
+  items.at(-1)!.title = "Запись звонка и итог не меняются";
+  menu.replaceChildren(...items);
+  menu.hidden = false;
+  chipBtn.setAttribute("aria-expanded", "true");
+}
+
+chipBtn.onclick = (e) => {
+  e.stopPropagation();
+  if (!menu.hidden) return closeMenu();
+  openMenu().catch(() => api.openCalls());
+};
+document.addEventListener("click", (e) => {
+  if (!menu.hidden && !menu.contains(e.target as Node)) closeMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeMenu();
+});
 // Footer buttons run through main, like their hotkeys; tooltips show the keys in effect.
 const refreshKeys = bindActions();
 const renderThroughNote = () =>

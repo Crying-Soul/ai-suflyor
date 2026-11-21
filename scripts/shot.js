@@ -103,6 +103,10 @@ app.whenReady().then(async () => {
   send([tr, hi], [{ ev: "vad", speaker: "them", active: true, t: T + 15000 }, { ev: "final", speaker: "them", t: T + 15000, text: "А как вы бы спроектировали rate limiter?", question: true }]);
   await wait(1800);
   await shot(tr, "transcript-owed.png");
+  // The call chip's menu: end the call, open «Звонки», clear.
+  await tr.webContents.executeJavaScript(`document.querySelector("#btn-call").click()`);
+  await shot(tr, "transcript-menu.png");
+  await tr.webContents.executeJavaScript(`document.body.click()`);
   // «Что сказать»: three phrases in the call's language with a gloss.
   send([hi], [
     { ev: "answer_start", id: 7, turn: 6, trigger: "continue", question: "", tier: "full" },
@@ -110,6 +114,16 @@ app.whenReady().then(async () => {
     { ev: "answer_end", id: 7 },
   ]);
   await shot(hi, "hints-continue.png");
+  // A finished answer: «Короче», «Проще», «Пример», «Продолжить» under the current card.
+  send([hi], [
+    { ev: "answer_start", id: 8, turn: 7, trigger: "hotkey", question: "А как вы бы спроектировали rate limiter?", tier: "quick" },
+    { ev: "answer_delta", id: 8, text: "Token bucket в Redis на ключ клиента, лимиты в конфиге." },
+    { ev: "answer_end", id: 8 },
+    { ev: "answer_start", id: 9, turn: 7, trigger: "hotkey", question: "А как вы бы спроектировали rate limiter?", tier: "full" },
+    { ev: "answer_delta", id: 9, text: "Я бы взял token bucket: счётчик на клиента в Redis, атомарно через Lua.\n- Распределённо → общий Redis или локальные ведра с синхронизацией" },
+    { ev: "answer_end", id: 9 },
+  ]);
+  await shot(hi, "hints-refine.png");
   // «У камеры»: the hints as a strip; then click-through on the transcript.
   hi.setSize(640, 168);
   hi.webContents.send("ui", { kind: "mode", mini: true, clickThrough: false });
