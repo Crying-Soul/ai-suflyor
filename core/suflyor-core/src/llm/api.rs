@@ -56,11 +56,13 @@ pub struct ApiSession {
     max_tokens: u32,
     messages: Vec<Value>,
     fresh: bool,
+    /// `MESSAGES_URL`; tests point it at a local server.
+    url: String,
 }
 
 impl ApiSession {
     pub fn new(key: String, system: String, effort: String, max_tokens: u32) -> ApiSession {
-        ApiSession { key, system, effort, max_tokens, messages: Vec::new(), fresh: true }
+        ApiSession { key, system, effort, max_tokens, messages: Vec::new(), fresh: true, url: MESSAGES_URL.into() }
     }
 
     pub fn prepare(&mut self) -> bool {
@@ -123,7 +125,7 @@ impl ApiSession {
     async fn send(&self, model: &str, body: &Value) -> Result<reqwest::Response> {
         let mut attempt = 0u32;
         loop {
-            let mut req = CLIENT.post(MESSAGES_URL).header("x-api-key", &self.key).header("anthropic-version", "2023-06-01").json(body);
+            let mut req = CLIENT.post(&self.url).header("x-api-key", &self.key).header("anthropic-version", "2023-06-01").json(body);
             if fallback_supported(model) {
                 req = req.header("anthropic-beta", "server-side-fallback-2026-07-01");
             }
@@ -294,5 +296,105 @@ mod tests {
         assert_eq!(b["thinking"]["type"], "disabled");
         assert!(b.get("fallbacks").is_none());
         assert_eq!((b["max_tokens"].as_u64(), b["stream"].as_bool()), (Some(1), Some(false)));
+    }
+
+    /// A local HTTP/1.1 server: answers the n-th request with `replies[n]` (status, extra header lines,
+    /// body) and closes the connection. Returns its URL and the number of requests it got.
+    async fn server(replies: Vec<(u16, &'static str, String)>) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/messages", listener.local_addr().unwrap());
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = hits.clone();
+        tokio::spawn(async move {
+            for (status, headers, body) in replies {
+                let (mut sock, _) = listener.accept().await.unwrap();
+                // The whole request first: headers, then content-length bytes of JSON.
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let n = sock.read(&mut chunk).await.unwrap();
+                    buf.extend_from_slice(&chunk[..n]);
+                    let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                    let head = String::from_utf8_lossy(&buf[..end]).to_lowercase();
+                    let len = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                    if n == 0 || buf.len() >= end + 4 + len {
+                        break;
+                    }
+                }
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let kind = if status == 200 { "text/event-stream" } else { "application/json" };
+                let reply =
+                    format!("HTTP/1.1 {status} X\r\ncontent-type: {kind}\r\ncontent-length: {}\r\nconnection: close\r\n{headers}\r\n{body}", body.len());
+                sock.write_all(reply.as_bytes()).await.unwrap();
+                let _ = sock.shutdown().await;
+            }
+        });
+        (url, hits)
+    }
+
+    fn error(kind: &str, message: &str) -> String {
+        json!({"type": "error", "error": {"type": kind, "message": message}}).to_string()
+    }
+
+    fn session(url: String) -> ApiSession {
+        let mut s = ApiSession::new("k".into(), "sys".into(), "low".into(), 100);
+        s.url = url;
+        s
+    }
+
+    const ANSWER: &str =
+        "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n";
+
+    #[tokio::test]
+    async fn rate_limit_and_overload_are_retried() {
+        let (url, hits) = server(vec![
+            (429, "retry-after: 0\r\n", error("rate_limit_error", "slow down")),
+            (529, "retry-after: 0\r\n", error("overloaded_error", "busy")),
+            (200, "", ANSWER.into()),
+        ])
+        .await;
+        let mut s = session(url);
+        let mut text = String::new();
+        s.ask("claude-haiku-5-5", &Turn::text("q"), &mut |c| {
+            if let Chunk::Text(t) = c {
+                text.push_str(&t);
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!((text.as_str(), hits.load(std::sync::atomic::Ordering::SeqCst)), ("ok", 3));
+        assert_eq!(s.messages.len(), 2, "the question and the answer stay in history");
+    }
+
+    #[tokio::test]
+    async fn three_failures_give_up_with_the_kind_of_the_last() {
+        let busy = || (500, "retry-after: 0\r\n", error("api_error", "internal"));
+        let (url, hits) = server(vec![busy(), busy(), busy()]).await;
+        let e = session(url).ask("claude-haiku-5-5", &Turn::text("q"), &mut |_| {}).await.unwrap_err();
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(super::super::error_kind(&e), ErrorKind::Overloaded);
+        assert_eq!(e.to_string(), "HTTP 500: internal", "the API's message, not its JSON");
+    }
+
+    #[tokio::test]
+    async fn client_errors_and_long_waits_are_not_retried() {
+        let (url, hits) = server(vec![(401, "", error("authentication_error", "invalid x-api-key"))]).await;
+        let e = session(url).ask("claude-haiku-5-5", &Turn::text("q"), &mut |_| {}).await.unwrap_err();
+        assert_eq!((super::super::error_kind(&e), hits.load(std::sync::atomic::Ordering::SeqCst)), (ErrorKind::Auth, 1));
+
+        // A minute's wait is worth nothing in a live call: fail now.
+        let (url, hits) = server(vec![(429, "retry-after: 60\r\n", error("rate_limit_error", "slow down"))]).await;
+        let e = session(url).ask("claude-haiku-5-5", &Turn::text("q"), &mut |_| {}).await.unwrap_err();
+        assert_eq!((super::super::error_kind(&e), hits.load(std::sync::atomic::Ordering::SeqCst)), (ErrorKind::RateLimit, 1));
+    }
+
+    #[tokio::test]
+    async fn no_key_fails_without_a_request() {
+        let mut s = session("http://127.0.0.1:9/unused".into());
+        s.key.clear();
+        let e = s.ask("m", &Turn::text("q"), &mut |_| {}).await.unwrap_err();
+        assert_eq!(super::super::error_kind(&e), ErrorKind::Auth);
+        assert!(s.messages.is_empty());
     }
 }

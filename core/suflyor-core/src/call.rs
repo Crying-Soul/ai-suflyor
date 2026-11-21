@@ -462,4 +462,81 @@ mod tests {
         assert_eq!(pending_summaries(&cfg), vec![call]);
         assert!(shared.call.lock().unwrap().is_none());
     }
+
+    /// Events until the `Summary` of `dir` (the summary runs in the background).
+    async fn until_summary(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Event>, dir: &Path) -> (Vec<Event>, bool, String) {
+        let mut seen = vec![];
+        loop {
+            let ev = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv()).await.expect("no summary").unwrap();
+            if let Event::Summary { dir: d, ok, error } = &ev
+                && *d == dir.display().to_string()
+            {
+                return (seen, *ok, error.clone().unwrap_or_default());
+            }
+            seen.push(ev);
+        }
+    }
+
+    #[tokio::test]
+    async fn open_replays_the_call_and_switching_or_closing_summarizes_it() {
+        let data = tempfile::tempdir().unwrap();
+        let calls = data.path().join("folders").join("acme").join("calls");
+        let (c1, c2) = (calls.join("c1"), calls.join("c2"));
+        std::fs::create_dir_all(&c1).unwrap();
+        std::fs::create_dir_all(&c2).unwrap();
+        let seg = |t: u64, text: &str| FinalSegment { speaker: Speaker::Them, t_ms: t, end_ms: t + 1, text: text.into() };
+        append(&c1.join(TRANSCRIPT), &seg(1, "Привет"));
+        append(&c1.join(TRANSCRIPT), &seg(5, "Что такое горутина?"));
+        let rec = |tier: Tier, text: &str| AnswerRecord {
+            id: format!("{text}-id"),
+            turn: 5,
+            tier,
+            trigger: Trigger::Auto,
+            question: "Что такое горутина?".into(),
+            q_t: Some(5),
+            model: "m".into(),
+            text: text.into(),
+            shot: None,
+            feedback: None,
+        };
+        // Turn 5 of one session (quick and full), then turn 5 of a later session: two turns on screen.
+        for (tier, text) in [(Tier::Quick, "a"), (Tier::Full, "b"), (Tier::Quick, "c")] {
+            append(&c1.join(ANSWERS), &rec(tier, text));
+        }
+        std::fs::write(c1.join(SUMMARY_PENDING), "").unwrap();
+
+        // No Claude to summarize with: the summary fails, and says so.
+        let mut cfg = Config { data_dir: data.path().display().to_string(), ..Config::default() };
+        cfg.llm.backend = crate::config::Backend::ClaudeCode;
+        cfg.claude_code.command = vec!["suflyor-test-no-such-claude".into()];
+        let (shared, mut rx) = Shared::for_test();
+        shared.transcript.lock().unwrap().push(seg(0, "сказано до звонка"));
+        let a = Answerer::start(&cfg, shared.clone(), "");
+
+        open(&cfg, &shared, &a, c1.clone()).unwrap();
+        assert!(!c1.join(SUMMARY_PENDING).exists(), "open again: it ends the normal way");
+        assert_eq!(shared.transcript.lock().unwrap().iter().map(|s| s.t_ms).collect::<Vec<_>>(), vec![1, 5], "the call's own transcript");
+        let mut evs = vec![];
+        while let Ok(e) = rx.try_recv() {
+            evs.push(e);
+        }
+        assert!(matches!(&evs[0], Event::Call { dir: Some(d), .. } if *d == c1.display().to_string()), "the call event goes first");
+        assert_eq!(evs.iter().filter(|e| matches!(e, Event::Final { .. })).count(), 2);
+        let turns: Vec<u64> = evs.iter().filter_map(|e| if let Event::AnswerStart { turn, .. } = e { Some(*turn) } else { None }).collect();
+        assert_eq!(turns.len(), 3);
+        assert!(turns[0] == turns[1] && turns[1] != turns[2], "quick and full share a turn, a repeated tier starts one: {turns:?}");
+
+        // Another call replaces this one: its summary is written, the new one starts empty.
+        open(&cfg, &shared, &a, c2.clone()).unwrap();
+        let (_, ok, error) = until_summary(&mut rx, &c1).await;
+        assert!(!ok && error.contains("suflyor-test-no-such-claude"), "{error}");
+        assert!(shared.transcript.lock().unwrap().is_empty(), "the old call's transcript does not carry over");
+
+        close(&cfg, &shared, &a);
+        let (seen, ok, error) = until_summary(&mut rx, &c2).await;
+        assert!(seen.iter().any(|e| matches!(e, Event::Call { dir: None, .. })), "back to the profile context");
+        assert!(!ok && error.contains("пуст"), "{error}");
+        assert!(shared.call.lock().unwrap().is_none());
+        a.stop();
+    }
 }

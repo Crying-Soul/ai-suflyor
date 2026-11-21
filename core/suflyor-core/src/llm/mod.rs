@@ -501,3 +501,27 @@ mod tests {
         assert_eq!(Turn::text("x").content().as_array().unwrap().len(), 1);
     }
 }
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+    use anyhow::Context as _;
+
+    #[test]
+    fn error_kind_looks_through_context() {
+        let http = |status| -> anyhow::Error { api::HttpError { status, message: "m".into() }.into() };
+        let wrapped = |e: anyhow::Error| Err::<(), _>(e).context("ask").unwrap_err();
+        assert_eq!(error_kind(&wrapped(http(401))), ErrorKind::Auth);
+        assert_eq!(error_kind(&wrapped(http(403))), ErrorKind::Auth);
+        assert_eq!(error_kind(&wrapped(http(429))), ErrorKind::RateLimit);
+        assert_eq!(error_kind(&wrapped(http(529))), ErrorKind::Overloaded);
+        assert_eq!(error_kind(&wrapped(http(400))), ErrorKind::Other);
+        assert_eq!(error_kind(&wrapped(fail(ErrorKind::Refused, "no"))), ErrorKind::Refused);
+        assert_eq!(error_kind(&anyhow::anyhow!("plain")), ErrorKind::Other);
+        let body = |kind: &str| ErrorBody { kind: kind.into(), message: String::new() }.error_kind();
+        assert_eq!(
+            [body("overloaded_error"), body("api_error"), body("rate_limit_error"), body("permission_error"), body("invalid_request_error")],
+            [ErrorKind::Overloaded, ErrorKind::Overloaded, ErrorKind::RateLimit, ErrorKind::Auth, ErrorKind::Other]
+        );
+    }
+}

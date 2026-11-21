@@ -964,4 +964,81 @@ mod tests {
         overdue(&got, first, total).await;
         assert!(t.elapsed() >= total, "first token seen: waits for the total deadline");
     }
+
+    /// Auto-detect running on `answerer`'s mock tier, as the STT worker drives it.
+    fn auto() -> (mpsc::UnboundedSender<Auto>, tokio::task::JoinHandle<()>, Arc<Shared>, mpsc::UnboundedReceiver<Event>) {
+        let (a, shared, rx) = answerer(Duration::ZERO);
+        let (tx, auto_rx) = mpsc::unbounded_channel();
+        let task = tokio::spawn(auto_detect(a, shared.clone(), auto_rx));
+        (tx, task, shared, rx)
+    }
+
+    /// Longer than `AUTO_SETTLE_MS` plus a mock answer.
+    async fn settle() {
+        tokio::time::sleep(Duration::from_millis(AUTO_SETTLE_MS + 200)).await;
+    }
+
+    #[tokio::test]
+    async fn confirmed_mode_answers_a_question_once_after_the_final() {
+        let (tx, _task, shared, mut rx) = auto();
+        shared.transcript.lock().unwrap().push(them(0, "Что такое горутина?"));
+        tx.send(Auto::Early(them(0, "Что такое горутина?"))).unwrap();
+        settle().await;
+        assert_eq!(drain(&mut rx).0, Vec::<String>::new(), "confirmed mode does not answer at a pause");
+        tx.send(Auto::Final).unwrap();
+        settle().await;
+        assert_eq!(drain(&mut rx).0, vec!["1 Auto".to_string()]);
+        tx.send(Auto::Final).unwrap();
+        settle().await;
+        assert!(drain(&mut rx).0.is_empty(), "the same question is not answered twice");
+        shared.transcript.lock().unwrap().push(them(5000, "А что такое канал?"));
+        tx.send(Auto::Final).unwrap();
+        settle().await;
+        assert_eq!(drain(&mut rx).0, vec!["3 Auto".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn no_answer_while_auto_is_off_they_still_talk_or_no_question() {
+        let (tx, _task, shared, mut rx) = auto();
+        shared.transcript.lock().unwrap().push(them(0, "Спасибо, это всё."));
+        tx.send(Auto::Final).unwrap();
+        settle().await;
+        assert!(drain(&mut rx).0.is_empty(), "not a question");
+        shared.transcript.lock().unwrap().push(them(2000, "Что такое горутина?"));
+        shared.status.lock().unwrap().auto = false;
+        tx.send(Auto::Final).unwrap();
+        settle().await;
+        assert!(drain(&mut rx).0.is_empty(), "auto-detect is off");
+        shared.status.lock().unwrap().auto = true;
+        shared.them_speaking.store(true, Ordering::Relaxed);
+        tx.send(Auto::Final).unwrap();
+        settle().await;
+        assert!(drain(&mut rx).0.is_empty(), "they are still talking");
+        shared.them_speaking.store(false, Ordering::Relaxed);
+        tx.send(Auto::Final).unwrap();
+        settle().await;
+        assert_eq!(drain(&mut rx).0, vec!["1 Auto".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn finals_within_the_settle_time_make_one_answer() {
+        let (tx, _task, shared, mut rx) = auto();
+        shared.transcript.lock().unwrap().push(them(0, "Что такое горутина?"));
+        tx.send(Auto::Final).unwrap();
+        shared.transcript.lock().unwrap().push(them(1500, "И чем она отличается от потока?"));
+        tx.send(Auto::Final).unwrap();
+        settle().await;
+        assert_eq!(drain(&mut rx).0, vec!["1 Auto".to_string()], "one answer to the whole turn");
+    }
+
+    #[tokio::test]
+    async fn speculative_mode_answers_at_the_pause_and_stop_ends_it() {
+        let (tx, task, shared, mut rx) = auto();
+        shared.status.lock().unwrap().answer_mode = protocol::AnswerMode::Speculative;
+        tx.send(Auto::Early(them(0, "Что такое горутина?"))).unwrap();
+        settle().await;
+        assert_eq!(drain(&mut rx).0, vec!["1 Early".to_string()]);
+        tx.send(Auto::Stop).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), task).await.expect("auto-detect stops").unwrap();
+    }
 }

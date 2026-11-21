@@ -250,3 +250,67 @@ impl Config {
         bundled.filter(|b| b.exists()).unwrap_or(here)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_keys_take_defaults_and_paths_resolve_against_the_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.json");
+        std::fs::write(&file, r#"{"model": "m", "vad": {"minSilenceMs": 700}, "dataDir": "data", "unknownKey": 1}"#).unwrap();
+        let (cfg, from) = Config::load(Some(&file)).unwrap();
+        assert_eq!(from.as_deref(), Some(file.as_path()));
+        assert_eq!((cfg.model.as_str(), cfg.vad.min_silence_ms), ("m", 700));
+        assert_eq!(cfg.vad.threshold, VadConfig::default().threshold, "the rest of a section keeps its defaults");
+        assert_eq!(cfg.quick_model, Config::default().quick_model);
+        assert_eq!(cfg.profile_dir(), dir.path().join("data").join("profile"));
+        let abs = dir.path().join("abs");
+        assert_eq!(cfg.path(&abs.display().to_string()), abs);
+
+        std::fs::write(&file, "{ not json").unwrap();
+        assert!(Config::load(Some(&file)).is_err(), "a broken config is an error, not silent defaults");
+        assert!(Config::load(Some(&dir.path().join("none.json"))).unwrap().1.is_none(), "no file: defaults");
+        assert!(!Config::load(Some(&dir.path().join("none.json"))).unwrap().0.data_dir.is_empty(), "dataDir gets its default");
+    }
+
+    /// Whether `key` ("vad.minSilenceMs") names a field of `v`.
+    fn has(v: &serde_json::Value, key: &str) -> bool {
+        key.split('.').try_fold(v, |v, k| v.get(k)).is_some()
+    }
+
+    /// Form fields the core does not read: hotkeys (main only), the theme (windows.json), and
+    /// rows that are tools, not settings (the capture check, the log folder).
+    fn ui_only(key: &str) -> bool {
+        key.starts_with("hotkeys.") || ["theme", "privacy", "logs"].contains(&key)
+    }
+
+    /// serde fills in defaults for unknown keys without a word: a key the UI writes under another
+    /// name than the core reads would silently do nothing.
+    #[test]
+    fn ui_settings_and_the_example_config_use_core_keys() {
+        let core = serde_json::to_value(Config::default()).unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let settings = std::fs::read_to_string(root.join("ui/src/renderer/settings.ts")).unwrap();
+        let keys: Vec<&str> = settings.split("key: \"").skip(1).filter_map(|s| s.split('"').next()).filter(|k| !ui_only(k)).collect();
+        assert!(keys.len() > 20, "the settings form changed shape: {keys:?}");
+        for k in keys {
+            assert!(has(&core, k), "the settings form writes `{k}`, the core does not read it");
+        }
+        let example: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(root.join("config.example.json")).unwrap()).unwrap();
+        fn walk(v: &serde_json::Value, prefix: &str, out: &mut Vec<String>) {
+            if let Some(m) = v.as_object() {
+                for (k, v) in m {
+                    let key = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+                    if v.is_object() { walk(v, &key, out) } else { out.push(key) }
+                }
+            }
+        }
+        let mut keys = vec![];
+        walk(&example, "", &mut keys);
+        for k in keys.iter().filter(|k| !ui_only(k)) {
+            assert!(has(&core, k), "config.example.json has `{k}`, the core does not read it");
+        }
+    }
+}

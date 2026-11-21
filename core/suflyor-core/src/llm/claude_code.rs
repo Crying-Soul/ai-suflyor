@@ -215,3 +215,85 @@ impl Drop for CodeSession {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stand-in for `claude -p` in stream-json mode. It echoes "<model>|<system.txt>|<text>" as two
+    /// deltas; "fail" ends the turn with an error result, "exit" quits, "hang" never answers.
+    const FAKE: &str = r#"
+const fs = require("fs");
+const out = (v) => process.stdout.write(JSON.stringify(v) + "\n");
+const model = process.argv[process.argv.indexOf("--model") + 1];
+out({ type: "system", subtype: "init", model, tools: [] });
+require("readline").createInterface({ input: process.stdin }).on("line", (l) => {
+  const m = JSON.parse(l);
+  if (m.type === "control_request") return out({ type: "result", subtype: "error_during_execution", is_error: true, usage: {} });
+  const text = m.message.content.map((b) => b.text || "").join("");
+  if (text === "exit") process.exit(0);
+  if (text === "hang") return;
+  if (text === "fail") return out({ type: "result", subtype: "error", is_error: true, result: "boom", usage: {} });
+  console.log("not json");
+  const delta = (t) => out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: t } } });
+  delta(model + "|");
+  delta(fs.readFileSync("system.txt", "utf8") + "|" + text);
+  out({ type: "result", subtype: "success", is_error: false, usage: { input_tokens: 3, output_tokens: 2 } });
+});
+"#;
+
+    /// None when node is not installed: the test is skipped.
+    fn fake() -> Option<CodeSession> {
+        if std::process::Command::new("node").arg("--version").output().is_err() {
+            eprintln!("node not found: skipped");
+            return None;
+        }
+        // `--` keeps the session's own flags (-p, --model...) away from node.
+        let command = ["node", "-e", FAKE, "--"].map(String::from).to_vec();
+        Some(CodeSession::new(command, "SYS".into(), "low".into(), "test"))
+    }
+
+    async fn ask(s: &mut CodeSession, text: &str) -> Result<(String, Vec<u64>)> {
+        let (mut answer, mut usage) = (String::new(), vec![]);
+        s.ask(&Turn::text(text), &mut |c| match c {
+            Chunk::Text(t) => answer.push_str(&t),
+            Chunk::Usage { input, output, .. } => usage.extend([input, output]),
+        })
+        .await?;
+        Ok((answer, usage))
+    }
+
+    #[tokio::test]
+    async fn streams_the_answer_and_restarts_for_another_model() {
+        let Some(mut s) = fake() else { return };
+        assert!(s.prepare("m1").unwrap(), "a new process has no history");
+        assert_eq!(ask(&mut s, "hi").await.unwrap(), ("m1|SYS|hi".to_string(), vec![3, 2]));
+        assert!(!s.prepare("m1").unwrap(), "the same process keeps the conversation");
+        s.set_system("NEW".into());
+        assert!(s.prepare("m2").unwrap(), "another model: a new process");
+        assert_eq!(ask(&mut s, "hi").await.unwrap().0, "m2|NEW|hi", "the new system prompt is written for it");
+    }
+
+    #[tokio::test]
+    async fn an_error_result_fails_the_turn_and_an_exit_restarts_the_process() {
+        let Some(mut s) = fake() else { return };
+        s.prepare("m").unwrap();
+        let e = ask(&mut s, "fail").await.unwrap_err();
+        assert!(e.to_string().contains("boom"), "{e}");
+        assert_eq!(ask(&mut s, "again").await.unwrap().0, "m|SYS|again", "the process is still usable");
+        let e = ask(&mut s, "exit").await.unwrap_err();
+        assert_eq!(super::super::error_kind(&e), ErrorKind::Auth, "an exit points at the login");
+        assert!(s.prepare("m").unwrap(), "the next turn starts a new process");
+        assert_eq!(ask(&mut s, "back").await.unwrap().0, "m|SYS|back");
+    }
+
+    #[tokio::test]
+    async fn interrupt_drains_the_cancelled_turn() {
+        let Some(mut s) = fake() else { return };
+        s.prepare("m").unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(300), ask(&mut s, "hang")).await.is_err());
+        s.interrupt().await;
+        assert!(!s.prepare("m").unwrap(), "interrupted in time: the process stays");
+        assert_eq!(ask(&mut s, "next").await.unwrap().0, "m|SYS|next", "no leftovers of the cancelled turn");
+    }
+}

@@ -373,4 +373,32 @@ mod tests {
         assert!(!q.pop().unwrap().partial);
         assert!(q.pop().unwrap().partial);
     }
+
+    #[test]
+    fn whisper_prompt_joins_glossary_and_the_last_words() {
+        assert_eq!(whisper_prompt("", ""), None);
+        assert_eq!(whisper_prompt("Go, gRPC", "").as_deref(), Some("Go, gRPC."));
+        assert_eq!(whisper_prompt("", "привет").as_deref(), Some("привет"));
+        assert_eq!(whisper_prompt("Go", "привет").as_deref(), Some("Go. привет"));
+        let long = "я".repeat(250);
+        assert_eq!(whisper_prompt("", &long).unwrap().chars().count(), 200, "only the tail, cut on a char boundary");
+    }
+
+    #[test]
+    fn echo_of_their_recent_speech_or_live_partial() {
+        let (shared, _rx) = Shared::for_test();
+        let them = |t_ms: u64, text: &str| crate::FinalSegment { speaker: Speaker::Them, t_ms, end_ms: t_ms + 1000, text: text.into() };
+        shared.transcript.lock().unwrap().push(them(10_000, "Расскажите про свой последний проект"));
+        assert!(is_echo(&shared, 12_000, "Расскажите про свой последний проект", ""));
+        assert!(!is_echo(&shared, 40_000, "Расскажите про свой последний проект", ""), "older than 20 s: the user may repeat it");
+        assert!(!is_echo(&shared, 12_000, "Я делал платёжный шлюз на Go", ""));
+        assert!(is_echo(&shared, 40_000, "какой у вас опыт с кафкой", "Какой у вас опыт с Кафкой"), "their partial, not yet final");
+
+        assert_eq!(live_partial("x", Some(Instant::now())), "x");
+        assert_eq!(live_partial("x", None), "");
+        let old = Instant::now().checked_sub(std::time::Duration::from_millis(PARTIAL_ECHO_MS as u64 + 1));
+        if old.is_some() {
+            assert_eq!(live_partial("x", old), "", "a stale partial is no longer echoed");
+        }
+    }
 }
