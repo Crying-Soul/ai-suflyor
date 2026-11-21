@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ModelInfo } from "../shared/protocol";
-import { fetchPart, type Job } from "./models";
+import { fetchPart, type Job } from "./models.ts"; // .ts: node --test runs this file unbundled
 
 export interface PackSpec {
   info: Pick<ModelInfo, "id" | "label" | "sizeMb" | "note">;

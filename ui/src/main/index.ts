@@ -2,7 +2,7 @@ import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, shell } from "e
 import { execFile } from "node:child_process";
 import path from "node:path";
 import type { CallInfo, Command, ConfigSnapshot, CoreEvent, SaveResult, Status, HotkeyAction } from "../shared/protocol";
-import { appliesLive, isTheme } from "../shared/protocol";
+import { applyPlan, isTheme } from "../shared/protocol";
 import { DEFAULT_HOTKEYS } from "../shared/hotkeys";
 import * as update from "./update";
 import { createTray } from "./tray";
@@ -134,17 +134,17 @@ async function loadConfig(): Promise<ConfigSnapshot> {
 }
 
 function saveConfig(patch: Record<string, unknown>): SaveResult {
-  const keys = Object.keys(patch);
+  const plan = applyPlan(Object.keys(patch), core.running());
   const { anthropicApiKey, ...rest } = patch;
   const res = writeConfig("anthropicApiKey" in patch ? { ...rest, ...keyPatch(String(anthropicApiKey ?? "").trim()) } : patch);
   if (!res.ok) return res;
   registerHotkeys();
   // Hotkeys live in main only: changing them must not restart the core and cut off an answer.
-  if (keys.every((k) => k.startsWith("hotkeys."))) return res;
+  if (plan === "hotkeys") return res;
   forgetClaudeCodeCheck();
   refreshReady();
   // Claude settings apply in place: audio and speech recognition go on, the open call stays.
-  if (core.running() && keys.every((k) => k.startsWith("hotkeys.") || appliesLive(k))) {
+  if (plan === "live") {
     core.send({ cmd: "reload_llm", anthropic_api_key: apiKey() || null });
     return { ...res, live: true };
   }

@@ -20,6 +20,14 @@ export type CoreEvent =
 const LIVE_KEYS = ["anthropicApiKey", "model", "altModel", "quickModel", "effort", "twoTier", "answerMode", "autoDetect", "translate", "userLanguage"];
 export const appliesLive = (key: string): boolean => LIVE_KEYS.includes(key) || key.startsWith("llm.") || key.startsWith("claudeCode.");
 
+/** How saved keys take effect: hotkeys alone only re-register (an answer in progress goes on), Claude
+ * settings reload in a running core (`reload_llm`), anything else restarts it. */
+export function applyPlan(keys: string[], coreRunning: boolean): "hotkeys" | "live" | "restart" {
+  const hotkey = (k: string) => k.startsWith("hotkeys.");
+  if (keys.every(hotkey)) return "hotkeys";
+  return coreRunning && keys.every((k) => hotkey(k) || appliesLive(k)) ? "live" : "restart";
+}
+
 /** config.json as stored (`raw`) and with the core's defaults filled in (`effective`). */
 export interface ConfigSnapshot {
   path: string;
