@@ -36,7 +36,7 @@ impl MockSession {
         self.fresh = true;
     }
 
-    pub async fn ask(&mut self, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
+    pub async fn ask(&self, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
         let n = {
             let mut seen = self.seen.lock().unwrap();
             seen.push((turn.text.clone(), turn.image.is_some()));

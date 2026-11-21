@@ -146,7 +146,7 @@ impl Segmenter {
             if p >= self.cfg.threshold {
                 self.in_speech = true;
                 self.cur.clear();
-                let pre: usize = self.pre_roll.iter().map(|w| w.len()).sum();
+                let pre: usize = self.pre_roll.iter().map(Vec::len).sum();
                 self.cur_start = self.pos - pre as u64;
                 for pw in self.pre_roll.drain(..) {
                     self.cur.extend_from_slice(&pw);

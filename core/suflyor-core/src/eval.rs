@@ -187,7 +187,7 @@ fn segments(case: &Case) -> Vec<FinalSegment> {
 
 async fn one_turn(cfg: &Config, tier: Tier, system: String, model: &str, text: String) -> Result<String> {
     let mut s: Session = answer::session(cfg, tier, system);
-    s.prepare(model).await?;
+    s.prepare(model)?;
     let mut out = String::new();
     s.ask(model, &llm::Turn { text, image: None }, &mut |c| {
         if let Chunk::Text(t) = c {

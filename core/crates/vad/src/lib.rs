@@ -50,7 +50,7 @@ impl Silero {
             .map_err(e)?
             .commit_from_file(model)
             .with_context(|| format!("load VAD model {}", model.display()))?;
-        let names: Vec<&str> = session.inputs().iter().map(|o| o.name()).collect();
+        let names: Vec<&str> = session.inputs().iter().map(ort::value::Outlet::name).collect();
         info!("silero inputs: {names:?}");
         Ok(Silero { session, state: vec![0.0; STATE_LEN], context: [0.0; CONTEXT], input: Vec::with_capacity(CONTEXT + WINDOW) })
     }

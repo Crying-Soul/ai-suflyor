@@ -101,7 +101,7 @@ impl ApiSession {
 
     /// Opens the pooled connection ahead of the first question; with `cache`, also writes the system
     /// prompt to the prompt cache (a one-token turn), so the first answer of a call reads it instead.
-    pub async fn warm(&mut self, model: &str, cache: bool, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
+    pub async fn warm(&self, model: &str, cache: bool, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
         if self.key.is_empty() {
             return Ok(());
         }

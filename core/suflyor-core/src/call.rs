@@ -151,7 +151,8 @@ pub fn set_feedback(shared: &Shared, turn: u64, value: Option<i8>) {
 /// whole context.
 pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Option<&Path>) {
     // A brief still being made is for the context this call replaces: stop paying for it.
-    if let Some(old) = BRIEF_TASK.lock().unwrap().take() {
+    let old = BRIEF_TASK.lock().unwrap().take();
+    if let Some(old) = old {
         old.abort();
     }
     let a = context::assemble(&cfg.profile_dir(), dir, &cfg.user_context, &cfg.glossary);
@@ -346,7 +347,9 @@ pub fn summarize(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: P
 /// At quit: the open call gets its summary at the next start (`pending_summaries`) instead of
 /// holding up the quit for the full model.
 pub fn defer_summary(shared: &Shared) {
-    if let Some(dir) = shared.call.lock().unwrap().take().filter(|d| !lines(&d.join(TRANSCRIPT)).is_empty()) {
+    // Taken before the file is read: the lock is not held over disk I/O.
+    let dir = shared.call.lock().unwrap().take();
+    if let Some(dir) = dir.filter(|d| !lines(&d.join(TRANSCRIPT)).is_empty()) {
         match std::fs::write(dir.join(SUMMARY_PENDING), "") {
             Ok(()) => info!("call {} left open: summary at the next start", dir.display()),
             Err(e) => warn!("{}: {e}", dir.join(SUMMARY_PENDING).display()),

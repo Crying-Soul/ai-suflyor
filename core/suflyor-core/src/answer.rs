@@ -207,7 +207,7 @@ impl Answerer {
     async fn notes(&self, prev: &str, segs: &[FinalSegment]) -> anyhow::Result<String> {
         let mut s = session(&self.cfg, Tier::Summary, NOTES_SYSTEM.to_string());
         let model = &self.cfg.quick_model;
-        s.prepare(model).await?;
+        s.prepare(model)?;
         let mut out = String::new();
         let prev = if prev.is_empty() { String::new() } else { format!("<earlier_notes>\n{prev}\n</earlier_notes>\n") };
         let text = format!("{prev}<transcript>\n{}\n</transcript>\nWrite the notes.", llm::render(segs));
@@ -336,7 +336,7 @@ impl Answerer {
         let mut s = session(&self.cfg, Tier::Summary, llm::summary_system(context));
         // The full model: nobody waits for a summary, and the review is worth its quality.
         let model = &self.cfg.model;
-        s.prepare(model).await?;
+        s.prepare(model)?;
         let mut out = String::new();
         let text = format!("<transcript>\n{}\n</transcript>\n{}Summarize this call.", llm::render(segs), hints_block(hints));
         self.one_off(&mut s, Tier::Summary, model, &llm::Turn { text, image: None }, &mut out).await?;
@@ -348,7 +348,7 @@ impl Answerer {
 /// Also run outside a call by `--brief` («Подготовить» in «Звонки»).
 pub async fn make_brief(cfg: &Config, context: &str, usage: &mut (dyn FnMut(bool, Chunk) + Send)) -> anyhow::Result<String> {
     let mut s = session(cfg, Tier::Brief, crate::brief::SYSTEM.replace("{user_language}", &cfg.user_language));
-    s.prepare(&cfg.model).await?;
+    s.prepare(&cfg.model)?;
     let api = s.is_api();
     let mut out = String::new();
     let turn = llm::Turn { text: format!("{context}\n\nWrite the brief."), image: None };
@@ -545,15 +545,15 @@ impl TierActor {
             };
             match msg {
                 Msg::Ask(req) => self.answer(req).await,
-                Msg::Clear => self.reset().await,
+                Msg::Clear => self.reset(),
                 Msg::Reconfigure { system, warm_cache } => {
                     self.session.set_system(system);
-                    self.reset().await;
+                    self.reset();
                     self.warm_quietly(warm_cache).await;
                 }
                 Msg::Cancel { .. } => {} // that turn is over already
                 Msg::Compact => {
-                    self.reset().await;
+                    self.reset();
                     self.warm_quietly(false).await;
                 }
                 Msg::Stop => break,
@@ -584,8 +584,8 @@ impl TierActor {
     }
 
     /// A new session: the next ask sends the transcript again.
-    async fn reset(&mut self) {
-        self.session.reset().await;
+    fn reset(&mut self) {
+        self.session.reset();
         self.sent = 0;
         self.last_screen = None;
     }
@@ -624,7 +624,7 @@ impl TierActor {
                 warn!("[{}] answer failed: {error:#}", tier.as_str());
                 if stuck {
                     // The backend's state is unknown: start a new session (claude-code restarts).
-                    self.reset().await;
+                    self.reset();
                 }
                 (Some(format!("{error:#}")), Some(llm::error_kind(&error)))
             }
@@ -640,7 +640,7 @@ impl TierActor {
             if self.pending.is_none() {
                 self.pending = Some(Msg::Compact); // reset and warm while idle
             } else {
-                self.reset().await; // a newer ask waits: no time to warm
+                self.reset(); // a newer ask waits: no time to warm
             }
         }
         if tier == Tier::Full && !matches!(self.pending, Some(Msg::Ask(_))) {
@@ -651,7 +651,7 @@ impl TierActor {
     /// Sends the turn and streams the reply into `answer` and the UI, until it ends, fails, times out
     /// or a newer message cuts it off. `compact`: a `Compact` arrived meanwhile.
     async fn turn(&mut self, req: &Req, answer: &mut String, started: Instant, compact: &mut bool) -> Outcome {
-        let fresh = match self.session.prepare(&req.model).await {
+        let fresh = match self.session.prepare(&req.model) {
             Ok(f) => f,
             Err(error) => return Outcome::Failed { error, stuck: false },
         };

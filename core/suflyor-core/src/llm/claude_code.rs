@@ -73,7 +73,7 @@ impl CodeSession {
         CodeSession { command, system, effort, dir, proc: None, fresh: true, next_request: 1 }
     }
 
-    async fn spawn(&mut self, model: &str) -> Result<()> {
+    fn spawn(&mut self, model: &str) -> Result<()> {
         self.proc = None; // kill_on_drop ends the old process
         let (exe, prefix) = self.command.split_first().context("claudeCode.command is empty")?;
         std::fs::create_dir_all(&self.dir)?;
@@ -107,16 +107,16 @@ impl CodeSession {
     }
 
     /// Starts the process if needed (or restarts it for another model). True if its history is empty.
-    pub async fn prepare(&mut self, model: &str) -> Result<bool> {
+    pub fn prepare(&mut self, model: &str) -> Result<bool> {
         if self.proc.as_ref().is_none_or(|p| p.model != model) {
-            self.spawn(model).await?;
+            self.spawn(model)?;
         }
         Ok(std::mem::take(&mut self.fresh))
     }
 
     /// The first turn of a fresh process takes several seconds (sign-in check); pay it up front.
     pub async fn warm(&mut self, model: &str, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
-        let fresh = self.prepare(model).await?;
+        let fresh = self.prepare(model)?;
         let t = std::time::Instant::now();
         self.ask(&Turn::text("Reply with OK."), &mut |c| {
             if matches!(c, Chunk::Usage { .. }) {
@@ -203,7 +203,7 @@ impl CodeSession {
         self.system = system;
     }
 
-    pub async fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.proc = None;
         self.fresh = true;
     }

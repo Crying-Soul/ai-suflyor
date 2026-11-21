@@ -99,7 +99,7 @@ async fn run(mut session: Session, model: String, shared: Arc<Shared>, mut rx: m
         let (t, text) = match m {
             Msg::Line(t, text) => (t, text),
             Msg::Clear => {
-                session.reset().await;
+                session.reset();
                 asked = 0;
                 continue;
             }
@@ -111,12 +111,12 @@ async fn run(mut session: Session, model: String, shared: Arc<Shared>, mut rx: m
             }
         };
         let Some(lines) = drain((t, text), &mut rx) else {
-            session.reset().await;
+            session.reset();
             asked = 0;
             continue;
         };
         if asked >= RESET_EVERY {
-            session.reset().await;
+            session.reset();
             asked = 0;
         }
         let ts: Vec<u64> = lines.iter().map(|(t, _)| *t).collect();
@@ -125,7 +125,7 @@ async fn run(mut session: Session, model: String, shared: Arc<Shared>, mut rx: m
         let mut out = String::new();
         let api = session.is_api();
         let r = async {
-            session.prepare(&model).await?;
+            session.prepare(&model)?;
             session
                 .ask(&model, &Turn::text(&text), &mut |c| match c {
                     Chunk::Text(t) => out.push_str(&t),

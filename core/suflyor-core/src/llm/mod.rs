@@ -210,10 +210,10 @@ pub enum Session {
 impl Session {
     /// Readies the session for `model`. Returns true when its history is empty (new session),
     /// so the caller must resend the whole transcript.
-    pub async fn prepare(&mut self, model: &str) -> Result<bool> {
+    pub fn prepare(&mut self, model: &str) -> Result<bool> {
         match self {
             Session::Api(s) => Ok(s.prepare()),
-            Session::Code(s) => s.prepare(model).await,
+            Session::Code(s) => s.prepare(model),
             #[cfg(test)]
             Session::Mock(s) => Ok(s.prepare()),
         }
@@ -261,10 +261,10 @@ impl Session {
         matches!(self, Session::Api(_))
     }
 
-    pub async fn reset(&mut self) {
+    pub fn reset(&mut self) {
         match self {
             Session::Api(s) => s.reset(),
-            Session::Code(s) => s.reset().await,
+            Session::Code(s) => s.reset(),
             #[cfg(test)]
             Session::Mock(s) => s.reset(),
         }

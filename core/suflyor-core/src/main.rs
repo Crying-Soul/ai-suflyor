@@ -13,7 +13,7 @@ mod streams;
 mod stt_worker;
 mod translate;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -219,7 +219,7 @@ fn main() -> Result<()> {
     let (cfg, loaded_from) = Config::load(args.config.as_deref())?;
     if args.print_config {
         // The key stays out of other processes' pipes and logs; the UI keeps its own copy.
-        let mut shown = cfg.clone();
+        let mut shown = cfg;
         if !shown.anthropic_api_key.is_empty() {
             shown.anthropic_api_key = "set".into();
         }
@@ -291,7 +291,7 @@ async fn run(mut cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
     });
 
     let record_dir = cfg.debug.record_wav.then(|| {
-        let base = config_path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
+        let base = config_path.as_ref().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
         base.join(&cfg.debug.record_dir)
     });
     let shared = Arc::new(Shared::new(initial_status(&cfg, record_dir.as_ref().map(|d| d.display().to_string())), tx.clone()));

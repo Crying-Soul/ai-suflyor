@@ -141,7 +141,7 @@ impl Whisper {
         let dll_w = wide(&dll);
         let mut err = [0 as c_char; 256];
         let rc = unsafe {
-            ws_load(dll_w.as_ptr(), cuda.as_ref().map_or(std::ptr::null(), |c| c.as_ptr()), opts.verbose as c_int, err.as_mut_ptr(), err.len() as c_int)
+            ws_load(dll_w.as_ptr(), cuda.as_ref().map_or(std::ptr::null(), Vec::as_ptr), opts.verbose as c_int, err.as_mut_ptr(), err.len() as c_int)
         };
         if rc != 0 {
             let msg = unsafe { CStr::from_ptr(err.as_ptr()) }.to_string_lossy().into_owned();
