@@ -7,6 +7,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p .",
+    "lint": "biome lint",
     "icon": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/icon.ts",
     "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/renderer/md.test.ts src/main/calls.test.ts src/main/log.test.ts src/main/readiness.test.ts src/main/core.test.ts src/main/models.test.ts src/shared/usage.test.ts src/shared/hotkeys.test.ts src/shared/mark.test.ts",
     "core": "cargo build --profile dist --manifest-path ../core/Cargo.toml",
@@ -15,8 +16,9 @@
     "release": "npm run core && node scripts/build.mjs --dist && electron-builder --win nsis --publish always"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.6.8",
     "@types/node": "^26.6.6",
-    "electron": "^45.2.2",
+    "electron": "^45.4.1",
     "electron-builder": "^26.18.0",
     "electron-updater": "^6.8.11",
     "esbuild": "^0.28.2",
