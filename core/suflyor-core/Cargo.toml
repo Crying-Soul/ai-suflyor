@@ -23,7 +23,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "webp"
 eventsource-stream = "0.2"
 clap = { version = "4", features = ["derive"] }
 dirs = "7"
-base64 = "0.22"
+base64 = "0.23"
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi"] }
 
 [dev-dependencies]
