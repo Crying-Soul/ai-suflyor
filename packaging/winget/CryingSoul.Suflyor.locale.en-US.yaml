@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: CryingSoul.Suflyor
+PackageVersion: 0.4.0
+PackageLocale: en-US
+Publisher: Crying-Soul
+PublisherUrl: https://github.com/Crying-Soul
+PublisherSupportUrl: https://github.com/Crying-Soul/ai-suflyor/issues
+PackageName: Suflyor
+PackageUrl: https://github.com/Crying-Soul/ai-suflyor
+License: MIT
+LicenseUrl: https://github.com/Crying-Soul/ai-suflyor/blob/main/LICENSE
+ShortDescription: Open-source AI interview copilot with local Whisper transcription, invisible to screen sharing.
+Description: |-
+  Suflyor listens to a call, transcribes both sides on your PC with whisper.cpp and answers the other side's
+  questions with Claude, GPT, DeepSeek, GigaChat or a local Ollama model. Its windows are excluded from screen capture.
+Moniker: suflyor
+Tags:
+- interview
+- interview-assistant
+- copilot
+- whisper
+- speech-to-text
+- transcription
+- llm
+- claude
+- ollama
+ReleaseNotesUrl: https://github.com/Crying-Soul/ai-suflyor/releases/tag/v0.4.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

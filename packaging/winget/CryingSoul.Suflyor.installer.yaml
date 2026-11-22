@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+PackageIdentifier: CryingSoul.Suflyor
+PackageVersion: 0.4.0
+InstallerType: nullsoft
+Scope: user
+InstallModes:
+- silent
+- silentWithProgress
+UpgradeBehavior: install
+ReleaseDate: 2026-11-21
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/Crying-Soul/ai-suflyor/releases/download/v0.4.0/Suflyor-Setup-0.4.0.exe
+  InstallerSha256: 274F9BE13955E8D161F2EE5F84A4A5373D9DF6091464C179C11A222F46F9B842
+ManifestType: installer
+ManifestVersion: 1.6.0
