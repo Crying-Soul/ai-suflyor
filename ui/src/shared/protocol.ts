@@ -15,7 +15,7 @@ export type CoreEvent =
   /** A window sent "clear": every window drops its transcript and answers. */
   | { ev: "cleared" };
 
-/** Config keys the core applies without a restart (`reload_llm`): the Claude side only. Others
+/** Config keys the core applies without a restart (`reload_llm`): the LLM side only. Others
  * (audio, speech recognition, paths) restart the core. */
 const LIVE_KEYS = ["anthropicApiKey", "model", "altModel", "quickModel", "effort", "twoTier", "answerMode", "autoDetect", "translate", "userLanguage"];
 export const appliesLive = (key: string): boolean => LIVE_KEYS.includes(key) || key.startsWith("llm.") || key.startsWith("claudeCode.");
@@ -160,7 +160,7 @@ export interface ReadyItem {
   /** whisper: the catalog id to offer. */
   model?: string;
   /** claude: the backend in config. */
-  backend?: "api" | "claude-code";
+  backend?: "api" | "claude-code" | "openai";
 }
 
 export interface ReadyApi {

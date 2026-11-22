@@ -72,22 +72,25 @@ export function sttLabel(stt: SttState): string {
   }
 }
 
-/** A Claude failure in words, by its kind (the raw cause goes to a tooltip or a fold, never in front). */
+/** A model failure in words, by its kind (the raw cause goes to a tooltip or a fold, never in front).
+ * Neutral wording: the model may be Claude, GPT, GigaChat or a local one. */
 export function humanError(kind: ErrorKind | undefined): string {
   switch (kind) {
     case "timeout":
-      return "Claude не ответил вовремя";
+      return "Модель не ответила вовремя";
     case "auth":
-      return "Claude не подключён: проверьте ключ или вход";
+      return "Модель не подключена: проверьте ключ или вход";
     case "rate_limit":
     case "overloaded":
-      return "Claude перегружен, повторите через минуту";
+      return "Модель перегружена, повторите через минуту";
+    case "quota":
+      return "На счёте провайдера закончились деньги или лимит";
     case "network":
-      return "Нет связи с Claude";
+      return "Нет связи с моделью";
     case "refused":
-      return "Claude отказался отвечать на этот вопрос";
+      return "Модель отказалась отвечать на этот вопрос";
     default:
-      return "Claude недоступен";
+      return "Модель недоступна";
   }
 }
 

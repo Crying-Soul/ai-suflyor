@@ -288,10 +288,11 @@ function renderUsage(): void {
   const usd = usage.usd > 0 ? ` · $${usage.usd < 0.01 ? usage.usd.toFixed(3) : usage.usd.toFixed(2)}` : "";
   usageEl.textContent = `${k(total)} ток.${usd}`;
   usageEl.title = [
-    "Расход Claude в этом звонке:",
+    "Расход модели в этом звонке:",
     `вход ${usage.input.toLocaleString("ru-RU")}, из кэша ${usage.cacheRead.toLocaleString("ru-RU")}, в кэш ${usage.cacheWrite.toLocaleString("ru-RU")}, ответ ${usage.output.toLocaleString("ru-RU")}`,
     usage.usd > 0 ? `≈$${usage.usd.toFixed(4)} по ценам API (запись в кэш по верхней цене)` : "",
-    usage.subscription ? "Ответы через Claude Code идут по подписке, без оплаты за токены." : "",
+    usage.unpriced ? "Цена части ответов неизвестна: модели нет в таблице цен. Смотрите счёт у провайдера." : "",
+    usage.subscription ? "Часть ответов без оплаты за токены: подписка Claude Code или локальная модель." : "",
   ].filter(Boolean).join("\n");
 }
 

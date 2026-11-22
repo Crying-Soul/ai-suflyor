@@ -8,7 +8,7 @@ import * as update from "./update";
 import { createTray } from "./tray";
 import { startLogs } from "./log";
 import { CoreProcess, resolveCoreExe } from "./core";
-import { apiKey, coreEnv, encryptStoredKey, keyPatch } from "./api-key";
+import { apiKey, coreEnv, encryptStoredKey, llmKey, secretPatch } from "./api-key";
 import { configPath, coreArgs, loadHotkeys, newConfigPath, readRaw, rootDir, writeConfig } from "./config";
 import { migrateContext, registerCallsIpc } from "./calls-ipc";
 import { markStarted } from "./calls";
@@ -130,13 +130,13 @@ async function loadConfig(): Promise<ConfigSnapshot> {
   effective.hotkeys = { ...DEFAULT_HOTKEYS, ...(raw.hotkeys as object | undefined) };
   // The core prints only whether a key is set; the form shows the key itself.
   effective.anthropicApiKey = apiKey();
+  effective.llm = { ...(effective.llm as object | undefined), apiKey: llmKey() };
   return { path: configPath() ?? newConfigPath(), raw, effective };
 }
 
 function saveConfig(patch: Record<string, unknown>): SaveResult {
   const plan = applyPlan(Object.keys(patch), core.running());
-  const { anthropicApiKey, ...rest } = patch;
-  const res = writeConfig("anthropicApiKey" in patch ? { ...rest, ...keyPatch(String(anthropicApiKey ?? "").trim()) } : patch);
+  const res = writeConfig(secretPatch(patch));
   if (!res.ok) return res;
   registerHotkeys();
   // Hotkeys live in main only: changing them must not restart the core and cut off an answer.
@@ -145,7 +145,7 @@ function saveConfig(patch: Record<string, unknown>): SaveResult {
   refreshReady();
   // Claude settings apply in place: audio and speech recognition go on, the open call stays.
   if (plan === "live") {
-    core.send({ cmd: "reload_llm", anthropic_api_key: apiKey() || null });
+    core.send({ cmd: "reload_llm", anthropic_api_key: apiKey() || null, llm_api_key: llmKey() || null });
     return { ...res, live: true };
   }
   core.restart();

@@ -43,7 +43,11 @@ function command(text: string): HTMLElement {
 function claude(item: ReadyItem): HTMLElement {
   const box = el("div", { className: "act" });
   const tabs = el("div", { className: "tabs", role: "tablist" });
-  const panes = { api: el("div", { className: "pane", role: "tabpanel" }), code: el("div", { className: "pane", role: "tabpanel" }) };
+  const panes = {
+    api: el("div", { className: "pane", role: "tabpanel" }),
+    code: el("div", { className: "pane", role: "tabpanel" }),
+    other: el("div", { className: "pane", role: "tabpanel" }),
+  };
   const select = (k: keyof typeof panes) => {
     for (const [name, pane] of Object.entries(panes)) pane.hidden = name !== k;
     // Roving tabindex: Tab enters the selected tab only, arrows move between tabs.
@@ -59,7 +63,7 @@ function claude(item: ReadyItem): HTMLElement {
     next.focus();
     next.click();
   });
-  for (const [k, label] of [["api", "Ключ API"], ["code", "Claude Code"]] as const) {
+  for (const [k, label] of [["api", "Ключ Anthropic"], ["code", "Claude Code"], ["other", "Другие модели"]] as const) {
     const b = el("button", { type: "button", role: "tab", textContent: label });
     b.dataset.k = k;
     b.onclick = () => select(k);
@@ -90,8 +94,12 @@ function claude(item: ReadyItem): HTMLElement {
     }, "btn small")),
     codeRes,
   );
-  select(item.backend === "claude-code" ? "code" : "api");
-  box.append(tabs, panes.api, panes.code);
+  panes.other.append(
+    el("p", { className: "hint", textContent: "GPT, Gemini, DeepSeek, Qwen, Kimi, GLM, GigaChat, YandexGPT, OpenRouter или локальная модель в Ollama и LM Studio. Выберите провайдера, вставьте его ключ и модель." }),
+    el("div", { className: "row" }, small("Открыть настройки ответов", () => api.openSettings("answers"), "btn small")),
+  );
+  select(item.backend === "claude-code" ? "code" : item.backend === "openai" ? "other" : "api");
+  box.append(tabs, panes.api, panes.code, panes.other);
   return box;
 }
 

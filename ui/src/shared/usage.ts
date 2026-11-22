@@ -7,11 +7,13 @@ export interface Usage {
   output: number;
   /** Dollars of the turns billed per token; Claude Code turns add none. */
   usd: number;
-  /** Some turns went through a Claude Code subscription (no per-token price). */
+  /** Some turns had no per-token price: a Claude Code subscription or a local model. */
   subscription: boolean;
+  /** Some billed turns used a model without a known price: `usd` is less than the real bill. */
+  unpriced: boolean;
 }
 
-export const emptyUsage = (): Usage => ({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0, usd: 0, subscription: false });
+export const emptyUsage = (): Usage => ({ input: 0, cacheRead: 0, cacheWrite: 0, output: 0, usd: 0, subscription: false, unpriced: false });
 
 /** [input, output, cache read] per MTok, by model id prefix (longest first wins). */
 const PRICES: [prefix: string, input: number, output: number, cacheRead: number][] = [
@@ -36,14 +38,17 @@ export function turnCost(model: string, t: { input: number; cacheRead: number; c
 }
 
 /** Adds one turn's `usage` event to the running total. */
-export function addTurn(u: Usage, e: { model: string; api: boolean; input: number; cache_read: number; cache_write: number; output: number }): Usage {
+export function addTurn(u: Usage, e: { model: string; api: boolean; input: number; cache_read: number; cache_write: number; output: number; usd?: number }): Usage {
   const t = { input: e.input, cacheRead: e.cache_read, cacheWrite: e.cache_write, output: e.output };
+  // The provider's own price (OpenRouter) beats the table.
+  const cost = e.api ? (e.usd ?? turnCost(e.model, t)) : 0;
   return {
     input: u.input + t.input,
     cacheRead: u.cacheRead + t.cacheRead,
     cacheWrite: u.cacheWrite + t.cacheWrite,
     output: u.output + t.output,
-    usd: u.usd + (e.api ? (turnCost(e.model, t) ?? 0) : 0),
+    usd: u.usd + (cost ?? 0),
     subscription: u.subscription || !e.api,
+    unpriced: u.unpriced || cost === null,
   };
 }

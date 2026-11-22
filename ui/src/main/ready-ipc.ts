@@ -4,7 +4,8 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import { promisify } from "node:util";
 import type { ReadyItem, SaveResult, Status } from "../shared/protocol";
-import { apiKey } from "./api-key";
+import { PROVIDERS } from "../shared/providers";
+import { apiKey, llmKey } from "./api-key";
 import { readRaw } from "./config";
 import type { CoreProcess } from "./core";
 import { cuda } from "./cuda";
@@ -48,12 +49,15 @@ const nvidia: Promise<boolean> = app
 
 export async function readyItems(): Promise<ReadyItem[]> {
   const raw = readRaw();
-  const backend = (raw.llm as { backend?: string } | undefined)?.backend === "claude-code" ? "claude-code" : "api";
+  const llm = (raw.llm ?? {}) as { backend?: string; provider?: string };
+  const backend = llm.backend === "claude-code" || llm.backend === "openai" ? llm.backend : "api";
+  const local = PROVIDERS.some((p) => p.id === llm.provider && p.local);
   return readiness.check({
     coreError: d.coreError(),
     modelExists: fs.existsSync(activeModel()),
     backend,
     apiKey: Boolean(apiKey() || process.env.ANTHROPIC_API_KEY),
+    llmReady: local || Boolean(llmKey() || process.env.SUFLYOR_LLM_API_KEY),
     claudeCodeOk: backend === "claude-code" && (await checkClaudeCode()),
     nvidia: await nvidia,
     cudaInstalled: cuda.status(cudaDir()).state === "installed",

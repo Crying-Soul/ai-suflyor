@@ -2,10 +2,11 @@ import type { ConfigSnapshot, ModelInfo, PackId, SaveResult, ThemeId, UpdateStat
 import { appliesLive, THEMES } from "../shared/protocol";
 import type { HotkeyAction } from "../shared/protocol";
 import { accelerator, DEFAULT_HOTKEYS, duplicates } from "../shared/hotkeys";
+import { CLAUDE_MODELS, defaultModels, modelChoices, PROVIDERS, provider } from "../shared/providers";
 import { $, api, askConfirm, guardPopups, keyLabel } from "./common";
 import { el, packOps, renderModels, small, WHISPER } from "./model-row";
 
-type Kind = "hotkey" | "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs" | "theme";
+type Kind = "hotkey" | "model" | "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs" | "theme";
 
 interface Field {
   /** Dotted config.json key. */
@@ -19,6 +20,8 @@ interface Field {
   step?: number;
   /** kind "pack": which download the row manages. */
   pack?: PackId;
+  /** The row is shown only while the select `key` holds one of `is`. */
+  show?: { key: string; is: string[] };
 }
 
 interface Section {
@@ -29,11 +32,10 @@ interface Section {
   fields: Field[];
 }
 
-const MODELS: [string, string][] = [
-  ["claude-sonnet-5-5", "Sonnet 5.5"],
-  ["claude-opus-5-5", "Opus 5.5"],
-  ["claude-haiku-5-5", "Haiku 5.5"],
-];
+const BACKEND = "llm.backend";
+const PROVIDER = "llm.provider";
+const MODEL_KEYS = ["model", "altModel", "quickModel"];
+const onlyOpenai = { key: BACKEND, is: ["openai"] };
 
 const THEME_TEXT: Record<ThemeId, [name: string, note: string]> = {
   graphite: ["Графит", "Нейтральный тёмный. Спокойный фон для долгого звонка."],
@@ -52,10 +54,13 @@ const SECTIONS: Section[] = [
         key: "llm.backend",
         label: "Подключение",
         kind: "select",
-        options: [["api", "API-ключ"], ["claude-code", "Вход Claude Code"]],
-        hint: "Claude Code использует подписку claude.ai и её лимиты. Один раз выполните claude login.",
+        options: [["api", "Claude: API-ключ Anthropic"], ["claude-code", "Claude: вход Claude Code"], ["openai", "Другой провайдер: GPT, DeepSeek, Qwen, GigaChat, YandexGPT, Ollama…"]],
+        hint: "Claude Code использует подписку claude.ai и её лимиты. Один раз выполните claude login. Другие провайдеры подключаются по ключу их API или локально.",
       },
-      { key: "anthropicApiKey", label: "API-ключ Anthropic", kind: "secret", hint: "Только для подключения по API-ключу." },
+      { key: "anthropicApiKey", label: "API-ключ Anthropic", kind: "secret", show: { key: BACKEND, is: ["api"] } },
+      { key: PROVIDER, label: "Провайдер", kind: "select", options: PROVIDERS.map((p): [string, string] => [p.id, p.label]), hint: " ", show: onlyOpenai },
+      { key: "llm.apiKey", label: "Ключ API провайдера", kind: "secret", show: onlyOpenai },
+      { key: "llm.baseUrl", label: "Адрес API", kind: "text", hint: "Пусто: адрес провайдера. Свой сервер, прокси или регион: адрес до /v1, без /chat/completions.", show: onlyOpenai },
       {
         key: "userLanguage",
         label: "Ваш язык",
@@ -69,12 +74,13 @@ const SECTIONS: Section[] = [
         label: "Команда Claude Code",
         kind: "list",
         hint: "Один аргумент на строку. По умолчанию: claude. Из WSL: wsl.exe, -e, затем путь к claude.",
+        show: { key: BACKEND, is: ["claude-code"] },
       },
-      { key: "model", label: "Модель", kind: "select", options: MODELS },
-      { key: "altModel", label: "Вторая модель", kind: "select", options: MODELS, hint: "Кнопка модели в окне подсказок переключает на неё." },
-      { key: "quickModel", label: "Модель быстрой подсказки", kind: "select", options: MODELS },
+      { key: "model", label: "Модель", kind: "model", hint: "Выберите из списка или впишите название модели у провайдера." },
+      { key: "altModel", label: "Вторая модель", kind: "model", hint: "Кнопка модели в окне подсказок переключает на неё." },
+      { key: "quickModel", label: "Модель быстрой подсказки", kind: "model", hint: "Самая быстрая модель: от неё зависит, как скоро придёт первая строка." },
       { key: "twoTier", label: "Сначала быстрая подсказка", kind: "bool", hint: "Сначала приходит одна строка, затем полный ответ." },
-      { key: "effort", label: "Усилие", kind: "select", options: [["low", "Низкое"], ["medium", "Среднее"], ["high", "Высокое"]] },
+      { key: "effort", label: "Усилие", kind: "select", options: [["low", "Низкое"], ["medium", "Среднее"], ["high", "Высокое"]], hint: "Глубина рассуждений у моделей, которые это умеют. Выше значит дольше." },
       { key: "autoDetect", label: "Отвечать автоматически", kind: "bool", hint: "Отвечать, когда собеседник задаёт вопрос." },
       {
         key: "answerMode",
@@ -188,6 +194,10 @@ let snapshot: ConfigSnapshot;
 /** Value of each field as loaded, to send only what changed. */
 const initial = new Map<string, unknown>();
 const readers = new Map<string, () => unknown>();
+/** Each field's row, to show or hide it with `show`. */
+const rows = new Map<string, { field: Field; row: HTMLElement }>();
+/** Model ids offered under the model fields for the current connection. */
+const modelList = el("datalist", { id: "model-choices" });
 
 function get(obj: Record<string, unknown>, key: string): unknown {
   return key.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), obj);
@@ -220,6 +230,14 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       const text = f.kind === "list" ? ((value as string[] | undefined) ?? []).join("\n") : String(value ?? "");
       const t = el("textarea", { className: "textarea", id, name: f.key, value: text, rows: f.kind === "list" ? 6 : 4 });
       return [t, () => (f.kind === "list" ? t.value.split("\n").map((s) => s.trim()).filter(Boolean) : t.value)];
+    }
+    case "model": {
+      const i = el("input", { type: "text", className: "input", id, name: f.key, value: String(value ?? "") });
+      i.setAttribute("list", modelList.id);
+      i.autocomplete = "off";
+      i.spellcheck = false;
+      i.required = true;
+      return [i, () => i.value.trim()];
     }
     case "select":
     case "mic": {
@@ -456,13 +474,47 @@ function render(mics: string[]): void {
       initial.set(f.key, JSON.stringify(read()));
       const label = el("label", { htmlFor: id, textContent: f.label });
       const body = el("div", { className: "control" }, ctl);
-      if (f.hint) body.append(el("p", { className: "hint", textContent: f.hint }));
-      fs.append(el("div", { className: "field" }, label, body));
+      if (f.hint) body.append(el("p", { className: "hint", id: `${id}-hint`, textContent: f.hint }));
+      const row = el("div", { className: "field" }, label, body);
+      rows.set(f.key, { field: f, row });
+      fs.append(row);
     }
     form.append(fs);
   }
+  form.append(modelList);
+  syncLlm(false);
+  for (const key of [BACKEND, PROVIDER]) input(key)?.addEventListener("change", () => syncLlm(true));
   const asked = location.hash.slice(1);
   showSection(asked === GUIDE || SECTIONS.some((s) => s.id === asked) ? asked : SECTIONS[0].id);
+}
+
+const input = (key: string) => document.getElementById(`f-${key.replace(/\./g, "-")}`) as HTMLInputElement | HTMLSelectElement | null;
+
+/** Fits the answer fields to the connection: which rows show, the model suggestions, the provider's note.
+ * `switched`: the user just changed the connection, so models the new one does not offer get its defaults. */
+function syncLlm(switched: boolean): void {
+  const backend = input(BACKEND)?.value ?? "api";
+  const prov = input(PROVIDER)?.value ?? "openai";
+  for (const { field, row } of rows.values()) {
+    if (field.show) row.hidden = !field.show.is.includes(input(field.show.key)?.value ?? "");
+  }
+  const choices = modelChoices(backend, prov);
+  const names = new Map(CLAUDE_MODELS);
+  modelList.replaceChildren(...choices.map((m) => el("option", { value: m, textContent: names.get(m) ?? "" })));
+  const hint = document.getElementById(`f-${PROVIDER.replace(/\./g, "-")}-hint`);
+  if (hint) {
+    const p = provider(prov);
+    hint.textContent = p.keyUrl ? `${p.hint} Ключ: ${p.keyUrl}` : p.hint;
+  }
+  const key = rows.get("llm.apiKey")?.row;
+  if (key) key.hidden = backend !== "openai" || Boolean(provider(prov).local);
+  if (!switched) return;
+  const defaults = defaultModels(backend, prov);
+  MODEL_KEYS.forEach((k, n) => {
+    const i = input(k);
+    if (i && !choices.includes(i.value)) i.value = defaults[n];
+  });
+  markDirty();
 }
 
 function changes(): Record<string, unknown> {

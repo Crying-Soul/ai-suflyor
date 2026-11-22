@@ -20,3 +20,14 @@ test("a Claude Code turn adds tokens, not dollars", () => {
   assert.ok(Math.abs(u.usd - 0.003) < 1e-12);
   assert.ok(u.subscription);
 });
+
+test("the provider's own price wins; an unknown model is flagged, not counted as free", () => {
+  const turn = { api: true, input: 1000, cache_read: 0, cache_write: 0, output: 100 };
+  let u = addTurn(emptyUsage(), { ...turn, model: "openai/gpt-5", usd: 0.25 });
+  assert.equal(u.usd, 0.25);
+  assert.equal(u.unpriced, false);
+  u = addTurn(u, { ...turn, model: "deepseek-chat" });
+  assert.equal(u.usd, 0.25);
+  assert.ok(u.unpriced);
+  assert.equal(addTurn(emptyUsage(), { ...turn, api: false, model: "qwen3:14b" }).unpriced, false, "a local model costs nothing");
+});

@@ -5,8 +5,10 @@ import type { ReadyItem, Status } from "../shared/protocol";
 export interface Facts {
   coreError: string | null;
   modelExists: boolean;
-  backend: "api" | "claude-code";
+  backend: "api" | "claude-code" | "openai";
   apiKey: boolean;
+  /** openai backend: a key is set, or the provider runs locally and needs none. */
+  llmReady: boolean;
   claudeCodeOk: boolean;
   nvidia: boolean;
   cudaInstalled: boolean;
@@ -38,14 +40,15 @@ export function check(f: Facts): ReadyItem[] {
       why: "Текст появляется в несколько раз быстрее. Без него Whisper работает на процессоре.",
     });
   }
-  const claudeOk = f.backend === "api" ? f.apiKey : f.claudeCodeOk;
+  const claudeOk = { api: f.apiKey, "claude-code": f.claudeCodeOk, openai: f.llmReady }[f.backend];
+  const problem = { api: "Ключ API не задан.", "claude-code": "Команда claude не найдена или не вошли в аккаунт.", openai: "Ключ API провайдера не задан." }[f.backend];
   items.push({
     id: "claude",
     level: "required",
     ok: claudeOk,
-    title: "Подключение к Claude",
-    why: "Claude пишет подсказки. Нужен ключ API Anthropic или установленный Claude Code с подпиской.",
-    problem: claudeOk ? undefined : f.backend === "api" ? "Ключ API не задан." : "Команда claude не найдена или не вошли в аккаунт.",
+    title: "Подключение к модели",
+    why: "Языковая модель пишет подсказки. Подойдёт Claude (ключ API или подписка через Claude Code), GPT, DeepSeek, Qwen, GigaChat, YandexGPT или локальная модель в Ollama.",
+    problem: claudeOk ? undefined : problem,
     backend: f.backend,
   });
   const failed = (["me", "them"] as const).filter((s) => f.status?.[s].state === "error");

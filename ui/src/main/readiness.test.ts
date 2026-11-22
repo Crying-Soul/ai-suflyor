@@ -7,6 +7,7 @@ const base: Facts = {
   modelExists: true,
   backend: "api",
   apiKey: true,
+  llmReady: false,
   claudeCodeOk: false,
   nvidia: false,
   cudaInstalled: false,
@@ -26,6 +27,11 @@ test("CUDA is offered on NVIDIA only, and never blocks", () => {
   assert.equal(items.find((i) => i.id === "cuda")?.level, "recommended");
   assert.equal(items.find((i) => i.id === "whisper")?.model, "large-v3-turbo-q8_0");
   assert.equal(blocking(items), undefined);
+});
+
+test("another provider counts by its own key, not the Anthropic one", () => {
+  assert.equal(check({ ...base, backend: "openai" }).find((i) => i.id === "claude")?.problem, "Ключ API провайдера не задан.");
+  assert.equal(check({ ...base, backend: "openai", apiKey: false, llmReady: true }).find((i) => i.id === "claude")?.ok, true);
 });
 
 test("Claude Code counts only when the command answered", () => {
