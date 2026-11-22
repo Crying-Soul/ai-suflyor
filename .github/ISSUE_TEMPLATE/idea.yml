@@ -1,0 +1,15 @@
+name: Идея
+description: Чего не хватает в Суфлёре
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу это решит
+      description: Ситуация на звонке или при подготовке, где сейчас неудобно.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Как это могло бы работать
