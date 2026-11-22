@@ -113,6 +113,12 @@ impl Default for SttConfig {
 #[serde(rename_all = "camelCase", default)]
 pub struct LlmConfig {
     pub backend: Backend,
+    /// `backend` = `openai`: a preset of `llm::openai::PROVIDERS` ("openai", "deepseek", "ollama"...).
+    pub provider: String,
+    /// Overrides the provider's endpoint (a regional host, a proxy, "custom"). Up to `/v1`, without `/chat/completions`.
+    pub base_url: String,
+    /// The provider's key. The UI keeps it encrypted (`llmApiKeyEnc`) and passes it as `SUFLYOR_LLM_API_KEY`.
+    pub api_key: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
@@ -123,6 +129,8 @@ pub enum Backend {
     Api,
     /// Local `claude -p` with the user's own login.
     ClaudeCode,
+    /// Any OpenAI-compatible Chat Completions endpoint: GPT, DeepSeek, Qwen, GigaChat, Ollama...
+    Openai,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

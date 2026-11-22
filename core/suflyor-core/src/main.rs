@@ -220,8 +220,10 @@ fn main() -> Result<()> {
     if args.print_config {
         // The key stays out of other processes' pipes and logs; the UI keeps its own copy.
         let mut shown = cfg;
-        if !shown.anthropic_api_key.is_empty() {
-            shown.anthropic_api_key = "set".into();
+        for k in [&mut shown.anthropic_api_key, &mut shown.llm.api_key] {
+            if !k.is_empty() {
+                *k = "set".into();
+            }
         }
         println!("{}", serde_json::to_string(&shown)?);
         return Ok(());
@@ -320,7 +322,7 @@ async fn run(mut cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
                 if line.trim().is_empty() { continue; }
                 match serde_json::from_str::<Command>(&line) {
                     Ok(Command::Shutdown) => break,
-                    Ok(Command::ReloadLlm { anthropic_api_key }) => match reload_llm(&mut cfg, config_path.as_deref(), anthropic_api_key, &shared, &answerer) {
+                    Ok(Command::ReloadLlm { anthropic_api_key, llm_api_key }) => match reload_llm(&mut cfg, config_path.as_deref(), (anthropic_api_key, llm_api_key), &shared, &answerer) {
                         Ok(a) => answerer = a,
                         Err(e) => { let _ = tx.send(Event::Error { message: format!("настройки не применились: {e:#}"), kind: None }); }
                     },
@@ -362,10 +364,19 @@ fn start_llm(cfg: &Config, shared: &Arc<Shared>, context: &str) -> answer::Answe
 /// `reload_llm`: re-reads the config and replaces the Claude side; audio and speech recognition go on.
 /// Status switches the new config changed (auto, model, mode, translation) follow it; the others
 /// keep what the user set with hotkeys.
-fn reload_llm(cfg: &mut Config, path: Option<&std::path::Path>, key: Option<String>, shared: &Arc<Shared>, old: &answer::Answerer) -> Result<answer::Answerer> {
+fn reload_llm(
+    cfg: &mut Config,
+    path: Option<&std::path::Path>,
+    (key, llm_key): (Option<String>, Option<String>),
+    shared: &Arc<Shared>,
+    old: &answer::Answerer,
+) -> Result<answer::Answerer> {
     let (mut new, _) = Config::load(path)?;
     if let Some(k) = key.filter(|_| new.anthropic_api_key.is_empty()) {
         new.anthropic_api_key = k;
+    }
+    if let Some(k) = llm_key.filter(|_| new.llm.api_key.is_empty()) {
+        new.llm.api_key = k;
     }
     old.stop();
     shared.update_status(|s| {
@@ -387,7 +398,7 @@ fn reload_llm(cfg: &mut Config, path: Option<&std::path::Path>, key: Option<Stri
     let answerer = start_llm(cfg, shared, &profile.text);
     // The open call's context (or the profile) goes to the new tiers; the transcript stays.
     call::reload(cfg, shared, &answerer);
-    info!("Claude settings reloaded: model {}, quick {}, backend {:?}", cfg.model, cfg.quick_model, cfg.llm.backend);
+    info!("LLM settings reloaded: model {}, quick {}, backend {:?} {}", cfg.model, cfg.quick_model, cfg.llm.backend, cfg.llm.provider);
     Ok(answerer)
 }
 

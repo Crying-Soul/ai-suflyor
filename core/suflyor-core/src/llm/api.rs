@@ -8,7 +8,6 @@ use anyhow::Result;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use protocol::ErrorKind;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use tracing::{info, warn};
 
@@ -19,7 +18,7 @@ const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 /// One client for every session: quick, full, translation and one-off turns share its pooled HTTP/2
 /// connection. Keep-alive pings hold it open while idle, so a question after a quiet minute does not
 /// pay for a new TCP and TLS handshake.
-static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+pub(super) static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .pool_idle_timeout(None)
@@ -34,11 +33,13 @@ static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 /// Retries wait at most this long: in a live call a late answer is worth little.
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(2);
 
-/// A non-success HTTP answer of the API.
+/// A non-success HTTP answer of the API (Anthropic or OpenAI-compatible).
 #[derive(Debug)]
 pub struct HttpError {
     pub status: u16,
     pub message: String,
+    /// The account is out of money or quota (OpenAI sends it as a 429 with `insufficient_quota`).
+    pub quota: bool,
 }
 
 impl std::fmt::Display for HttpError {
@@ -121,36 +122,15 @@ impl ApiSession {
         Ok(())
     }
 
-    /// POST with up to two retries on 429, 5xx and connection failures, honouring a short `retry-after`.
     async fn send(&self, model: &str, body: &Value) -> Result<reqwest::Response> {
-        let mut attempt = 0u32;
-        loop {
-            let mut req = CLIENT.post(&self.url).header("x-api-key", &self.key).header("anthropic-version", "2023-06-01").json(body);
-            if fallback_supported(model) {
-                req = req.header("anthropic-beta", "server-side-fallback-2026-07-01");
-            }
-            attempt += 1;
-            let backoff = Duration::from_millis(400 * attempt as u64);
-            match req.send().await {
-                Ok(r) if r.status().is_success() => return Ok(r),
-                Ok(r) => {
-                    let status = r.status();
-                    let wait = retry_after(r.headers()).unwrap_or(backoff);
-                    let message = error_message(&r.text().await.unwrap_or_default());
-                    let retry = status.as_u16() == 429 || status.is_server_error();
-                    if !retry || attempt > 2 || wait > MAX_RETRY_WAIT {
-                        return Err(HttpError { status: status.as_u16(), message }.into());
-                    }
-                    warn!("claude api HTTP {status}, retrying in {} ms", wait.as_millis());
-                    tokio::time::sleep(wait).await;
-                }
-                Err(e) if attempt <= 2 && (e.is_connect() || e.is_timeout()) => {
-                    warn!("claude api: {e}, retrying");
-                    tokio::time::sleep(backoff).await;
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
+        post(
+            || {
+                let req = CLIENT.post(&self.url).header("x-api-key", &self.key).header("anthropic-version", "2023-06-01").json(body);
+                if fallback_supported(model) { req.header("anthropic-beta", "server-side-fallback-2026-07-01") } else { req }
+            },
+            "claude api",
+        )
+        .await
     }
 
     pub async fn ask(&mut self, model: &str, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
@@ -166,6 +146,35 @@ impl ApiSession {
             self.messages.push(json!({"role": "assistant", "content": [{"type": "text", "text": answer}]}));
         }
         Ok(())
+    }
+}
+
+/// POST with up to two retries on 429, 5xx and connection failures, honouring a short `retry-after`.
+/// `make` builds the request anew for each attempt. An exhausted quota is not retried.
+pub(super) async fn post(make: impl Fn() -> reqwest::RequestBuilder, who: &str) -> Result<reqwest::Response> {
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
+        let backoff = Duration::from_millis(400 * attempt as u64);
+        match make().send().await {
+            Ok(r) if r.status().is_success() => return Ok(r),
+            Ok(r) => {
+                let status = r.status();
+                let wait = retry_after(r.headers()).unwrap_or(backoff);
+                let e = http_error(status.as_u16(), &r.text().await.unwrap_or_default());
+                let retry = (status.as_u16() == 429 && !e.quota) || status.is_server_error();
+                if !retry || attempt > 2 || wait > MAX_RETRY_WAIT {
+                    return Err(e.into());
+                }
+                warn!("{who} HTTP {status}, retrying in {} ms", wait.as_millis());
+                tokio::time::sleep(wait).await;
+            }
+            Err(e) if attempt <= 2 && (e.is_connect() || e.is_timeout()) => {
+                warn!("{who}: {e}, retrying");
+                tokio::time::sleep(backoff).await;
+            }
+            Err(e) => return Err(e.into()),
+        }
     }
 }
 
@@ -224,12 +233,14 @@ fn fallback_supported(model: &str) -> bool {
     model.starts_with("claude-sonnet-5-5") || model.starts_with("claude-opus-5-5")
 }
 
-fn error_message(body: &str) -> String {
-    #[derive(Deserialize)]
-    struct Body {
-        error: super::ErrorBody,
-    }
-    serde_json::from_str::<Body>(body).map(|b| b.error.message).unwrap_or_else(|_| body.chars().take(300).collect())
+/// The error of a failed request: the provider's own message (`{"error": {"message"}}` for Anthropic and
+/// OpenAI-compatible APIs, `{"message"}` for some others), else the start of the body.
+pub(super) fn http_error(status: u16, body: &str) -> HttpError {
+    let v: Value = serde_json::from_str(body).unwrap_or_default();
+    let err = if v["error"].is_object() { &v["error"] } else { &v };
+    let message = err["message"].as_str().map(str::to_string).unwrap_or_else(|| body.chars().take(300).collect());
+    let quota = status == 402 || [&err["code"], &err["type"]].iter().any(|c| c.as_str() == Some("insufficient_quota"));
+    HttpError { status, message, quota }
 }
 
 #[cfg(test)]
@@ -267,7 +278,7 @@ mod tests {
         let chunks: Vec<std::result::Result<Vec<u8>, std::io::Error>> = [start, delta, stop].iter().map(|p| Ok(p.as_bytes().to_vec())).collect();
         let mut got = None;
         read_stream(futures_util::stream::iter(chunks), &mut |c| {
-            if let Chunk::Usage { input, cache_read, cache_write, output } = c {
+            if let Chunk::Usage { input, cache_read, cache_write, output, .. } = c {
                 got = Some((input, cache_read, cache_write, output));
             }
         })

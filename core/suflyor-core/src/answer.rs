@@ -347,7 +347,7 @@ impl Answerer {
 /// The brief of `context` with the full model; `usage` gets the turn's token count (and whether it is billed per token).
 /// Also run outside a call by `--brief` («Подготовить» in «Звонки»).
 pub async fn make_brief(cfg: &Config, context: &str, usage: &mut (dyn FnMut(bool, Chunk) + Send)) -> anyhow::Result<String> {
-    let mut s = session(cfg, Tier::Brief, crate::brief::SYSTEM.replace("{user_language}", &cfg.user_language));
+    let mut s = session(cfg, Tier::Brief, crate::brief::SYSTEM.replace("{user_language}", &llm::language_name(&cfg.user_language)));
     s.prepare(&cfg.model)?;
     let api = s.is_api();
     let mut out = String::new();
@@ -372,18 +372,25 @@ fn hints_block(answers: &[crate::call::AnswerRecord]) -> String {
 }
 
 pub(crate) fn session(cfg: &Config, tier: Tier, system: String) -> Session {
-    if cfg.llm.backend == Backend::ClaudeCode {
-        Session::Code(Box::new(llm::claude_code::CodeSession::new(cfg.claude_code.command.clone(), system, cfg.effort.clone(), tier.as_str())))
-    } else {
-        let key = Some(cfg.anthropic_api_key.clone()).filter(|k| !k.is_empty()).or_else(|| std::env::var("ANTHROPIC_API_KEY").ok()).unwrap_or_default();
-        let max_tokens = match tier {
-            Tier::Quick => 200,
-            Tier::Full => 2048,
-            Tier::Summary => 4000,
-            Tier::Brief => 6000,
-            Tier::Translate => 400,
-        };
-        Session::Api(llm::api::ApiSession::new(key, system, cfg.effort.clone(), max_tokens))
+    let max_tokens = match tier {
+        Tier::Quick => 200,
+        Tier::Full => 2048,
+        Tier::Summary => 4000,
+        Tier::Brief => 6000,
+        Tier::Translate => 400,
+    };
+    let key = |own: &str, env: &str| Some(own.to_string()).filter(|k| !k.is_empty()).or_else(|| std::env::var(env).ok()).unwrap_or_default();
+    match cfg.llm.backend {
+        Backend::ClaudeCode => {
+            Session::Code(Box::new(llm::claude_code::CodeSession::new(cfg.claude_code.command.clone(), system, cfg.effort.clone(), tier.as_str())))
+        }
+        Backend::Api => Session::Api(llm::api::ApiSession::new(key(&cfg.anthropic_api_key, "ANTHROPIC_API_KEY"), system, cfg.effort.clone(), max_tokens)),
+        Backend::Openai => {
+            // Reasoning models spend part of the budget thinking even at low effort: the short tiers get headroom.
+            let max_tokens = if matches!(tier, Tier::Quick | Tier::Translate) { max_tokens * 4 } else { max_tokens };
+            let api_key = key(&cfg.llm.api_key, "SUFLYOR_LLM_API_KEY");
+            Session::OpenAi(llm::openai::OpenAiSession::new(&cfg.llm.provider, &cfg.llm.base_url, api_key, system, cfg.effort.clone(), max_tokens))
+        }
     }
 }
 
@@ -702,7 +709,7 @@ impl TierActor {
                 answer.push_str(&t);
                 let _ = ev.send(Event::AnswerDelta { id: req.id, text: t });
             }
-            c @ Chunk::Usage { input, cache_read, cache_write, output } => {
+            c @ Chunk::Usage { input, cache_read, cache_write, output, .. } => {
                 info!("[{tier}] tokens: input {input}, cache read {cache_read}, cache write {cache_write}, output {output}");
                 if let Some(e) = llm::usage_event(self.tier, &req.model, api, &c) {
                     let _ = ev.send(e);

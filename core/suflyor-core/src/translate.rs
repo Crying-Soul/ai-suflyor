@@ -36,20 +36,9 @@ pub struct Translator {
 }
 
 /// The name the prompt uses for an ISO 639-1 code.
-fn language_name(code: &str) -> String {
-    match code {
-        "ru" => "Russian".into(),
-        "en" => "English".into(),
-        "de" => "German".into(),
-        "fr" => "French".into(),
-        "es" => "Spanish".into(),
-        _ => format!("the language with ISO 639-1 code \"{code}\""),
-    }
-}
-
 impl Translator {
     pub fn start(cfg: &Config, shared: Arc<Shared>) -> Translator {
-        let session = crate::answer::session(cfg, Tier::Translate, SYSTEM.replace("{lang}", &language_name(&cfg.user_language)));
+        let session = crate::answer::session(cfg, Tier::Translate, SYSTEM.replace("{lang}", &crate::llm::language_name(&cfg.user_language)));
         Translator::with(session, cfg.quick_model.clone(), cfg.user_language.clone(), shared)
     }
 

@@ -98,6 +98,9 @@ pub enum Command {
     ReloadLlm {
         #[serde(default)]
         anthropic_api_key: Option<String>,
+        /// The key of the OpenAI-compatible provider (`llm.backend` = `openai`).
+        #[serde(default)]
+        llm_api_key: Option<String>,
     },
     /// Rebuilds the context after its files changed; the transcript stays.
     ReloadContext,
@@ -233,6 +236,8 @@ pub enum ErrorKind {
     Network,
     /// Claude declined to answer.
     Refused,
+    /// No money or quota left on the provider's account (HTTP 402, `insufficient_quota`).
+    Quota,
     Other,
 }
 
@@ -323,7 +328,8 @@ pub enum Event {
         ms: f64,
     },
     /// Tokens of one finished Claude turn, for the per-call count in the UI.
-    /// `tier`: quick, full, summary, brief, translate. `api`: billed per token (false: Claude Code subscription).
+    /// `tier`: quick, full, summary, brief, translate. `api`: billed per token (false: Claude Code
+    /// subscription or a local model). `usd`: the price the provider reported (OpenRouter), if any.
     Usage {
         tier: Tier,
         model: String,
@@ -332,6 +338,8 @@ pub enum Event {
         cache_read: u64,
         cache_write: u64,
         output: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        usd: Option<f64>,
     },
     Error {
         message: String,
@@ -404,7 +412,7 @@ mod tests {
         let c: Command = serde_json::from_str(r#"{"cmd":"open_call","dir":"C:\\x"}"#).unwrap();
         assert!(matches!(c, Command::OpenCall { ref dir } if dir == "C:\\x"));
         let c: Command = serde_json::from_str(r#"{"cmd":"reload_llm"}"#).unwrap();
-        assert!(matches!(c, Command::ReloadLlm { anthropic_api_key: None }));
+        assert!(matches!(c, Command::ReloadLlm { anthropic_api_key: None, llm_api_key: None }));
         let c: Command = serde_json::from_str(r#"{"cmd":"close_call"}"#).unwrap();
         assert!(matches!(c, Command::CloseCall));
     }

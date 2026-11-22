@@ -12,7 +12,10 @@
   "answerMode": "confirmed",
   "twoTier": true,
   "llm": {
-    "backend": "api"
+    "backend": "api",
+    "provider": "openai",
+    "baseUrl": "",
+    "apiKey": ""
   },
   "claudeCode": {
     "command": [

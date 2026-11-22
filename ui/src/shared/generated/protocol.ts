@@ -30,7 +30,11 @@ translate?: boolean | null,
 /**
  * Mute a source: its audio is replaced by silence before VAD, so nothing is transcribed.
  */
-mute_me?: boolean | null, mute_them?: boolean | null, } | { "cmd": "clear" } | { "cmd": "open_call", dir: string, } | { "cmd": "reload_llm", anthropic_api_key?: string | null, } | { "cmd": "reload_context" } | { "cmd": "close_call" } | { "cmd": "summarize", dir: string, } | { "cmd": "feedback", turn: number, value?: number | null, } | { "cmd": "shutdown" };
+mute_me?: boolean | null, mute_them?: boolean | null, } | { "cmd": "clear" } | { "cmd": "open_call", dir: string, } | { "cmd": "reload_llm", anthropic_api_key?: string | null, 
+/**
+ * The key of the OpenAI-compatible provider (`llm.backend` = `openai`).
+ */
+llm_api_key?: string | null, } | { "cmd": "reload_context" } | { "cmd": "close_call" } | { "cmd": "summarize", dir: string, } | { "cmd": "feedback", turn: number, value?: number | null, } | { "cmd": "shutdown" };
 
 /**
  * One piece of the assembled context, for the UI's breakdown.
@@ -40,7 +44,7 @@ export type ContextPart = { name: string, tokens: number, truncated: boolean, };
 /**
  * Why an answer ended without text, or what kind of failure an error is.
  */
-export type ErrorKind = "cancelled" | "retracted" | "auth" | "rate_limit" | "overloaded" | "timeout" | "network" | "refused" | "other";
+export type ErrorKind = "cancelled" | "retracted" | "auth" | "rate_limit" | "overloaded" | "timeout" | "network" | "refused" | "quota" | "other";
 
 export type Event = { "ev": "ready", version: string, } | { "ev": "status" } & Status | { "ev": "level", speaker: Speaker, rms: number, peak: number, } | { "ev": "vad", speaker: Speaker, active: boolean, t: number, } | { "ev": "partial", speaker: Speaker, t: number, stable: string, tail: string, } | { "ev": "final", speaker: Speaker, t: number, text: string, 
 /**
@@ -70,7 +74,7 @@ kind?: ErrorKind,
 /**
  * The saved rating of a replayed answer (see `Command::Feedback`).
  */
-feedback?: number, } | { "ev": "metrics", name: string, ms: number, } | { "ev": "usage", tier: Tier, model: string, api: boolean, input: number, cache_read: number, cache_write: number, output: number, } | { "ev": "error", message: string, 
+feedback?: number, } | { "ev": "metrics", name: string, ms: number, } | { "ev": "usage", tier: Tier, model: string, api: boolean, input: number, cache_read: number, cache_write: number, output: number, usd?: number, } | { "ev": "error", message: string, 
 /**
  * A Claude failure: the UI words it by kind. None: `message` is already meant for the user.
  */

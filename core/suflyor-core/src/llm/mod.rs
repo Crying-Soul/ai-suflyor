@@ -1,10 +1,11 @@
-//! Claude client: two backends behind one session type.
+//! LLM client: Claude (API key or Claude Code) and any OpenAI-compatible provider behind one session type.
 //! A session keeps the conversation itself; each turn sends only the new transcript.
 
 pub mod api;
 pub mod claude_code;
 #[cfg(test)]
 pub mod mock;
+pub mod openai;
 
 use anyhow::Result;
 use protocol::{ErrorKind, Speaker};
@@ -20,6 +21,8 @@ pub enum Chunk {
         cache_read: u64,
         cache_write: u64,
         output: u64,
+        /// The price the provider reported for the turn (OpenRouter); None: the UI prices it by model.
+        usd: Option<f64>,
     },
 }
 
@@ -51,6 +54,7 @@ impl Usage {
             cache_read: self.cache_read(),
             cache_write: self.cache_write(),
             output: self.output_tokens.unwrap_or(0),
+            usd: None,
         }
     }
 }
@@ -131,8 +135,8 @@ impl ErrorBody {
 
 /// The `usage` event of a turn's `Chunk::Usage`; None for other chunks.
 pub fn usage_event(tier: protocol::Tier, model: &str, api: bool, c: &Chunk) -> Option<protocol::Event> {
-    let Chunk::Usage { input, cache_read, cache_write, output } = *c else { return None };
-    Some(protocol::Event::Usage { tier, model: model.into(), api, input, cache_read, cache_write, output })
+    let Chunk::Usage { input, cache_read, cache_write, output, usd } = *c else { return None };
+    Some(protocol::Event::Usage { tier, model: model.into(), api, input, cache_read, cache_write, output, usd })
 }
 
 /// A failure that already knows its kind (no key, a timeout, a refusal...).
@@ -161,6 +165,9 @@ pub fn error_kind(e: &anyhow::Error) -> ErrorKind {
             return f.kind;
         }
         if let Some(h) = cause.downcast_ref::<api::HttpError>() {
+            if h.quota {
+                return ErrorKind::Quota;
+            }
             return match h.status {
                 401 | 403 => ErrorKind::Auth,
                 429 => ErrorKind::RateLimit,
@@ -203,6 +210,7 @@ impl Turn {
 pub enum Session {
     Api(api::ApiSession),
     Code(Box<claude_code::CodeSession>),
+    OpenAi(openai::OpenAiSession),
     #[cfg(test)]
     Mock(mock::MockSession),
 }
@@ -214,6 +222,7 @@ impl Session {
         match self {
             Session::Api(s) => Ok(s.prepare()),
             Session::Code(s) => s.prepare(model),
+            Session::OpenAi(s) => Ok(s.prepare()),
             #[cfg(test)]
             Session::Mock(s) => Ok(s.prepare()),
         }
@@ -225,6 +234,7 @@ impl Session {
         match self {
             Session::Api(s) => s.warm(model, cache, out).await,
             Session::Code(s) => s.warm(model, out).await,
+            Session::OpenAi(s) => s.warm().await,
             #[cfg(test)]
             Session::Mock(_) => Ok(()),
         }
@@ -234,6 +244,7 @@ impl Session {
         match self {
             Session::Api(s) => s.ask(model, turn, out).await,
             Session::Code(s) => s.ask(turn, out).await,
+            Session::OpenAi(s) => s.ask(model, turn, out).await,
             #[cfg(test)]
             Session::Mock(s) => s.ask(turn, out).await,
         }
@@ -251,20 +262,26 @@ impl Session {
         match self {
             Session::Api(s) => s.set_system(system),
             Session::Code(s) => s.set_system(system),
+            Session::OpenAi(s) => s.set_system(system),
             #[cfg(test)]
             Session::Mock(_) => {}
         }
     }
 
-    /// Billed per token (the API), not by a Claude Code subscription.
+    /// Billed per token, not by a Claude Code subscription or a local model.
     pub fn is_api(&self) -> bool {
-        matches!(self, Session::Api(_))
+        match self {
+            Session::Api(_) => true,
+            Session::OpenAi(s) => s.is_api(),
+            _ => false,
+        }
     }
 
     pub fn reset(&mut self) {
         match self {
             Session::Api(s) => s.reset(),
             Session::Code(s) => s.reset(),
+            Session::OpenAi(s) => s.reset(),
             #[cfg(test)]
             Session::Mock(s) => s.reset(),
         }
@@ -278,7 +295,8 @@ Help the user answer the question in <question>.\n\n\
 Format: first, the answer the user says out loud: one paragraph of 3 to 5 short, simple sentences (about 50 to 90 words), complete enough to say as is. \
 Its first sentence is the key point, the one thing to say if there is time for nothing else. \
 Then at most 3 short bullets, each a likely follow-up question and its answer in one phrase: \"<follow-up> → <answer>\". \
-Write code only if the question asks for code. No preamble, no headings, do not restate the question.\n\n\
+Write code only if the question asks for code. No preamble, no headings, no tables, no bold text, do not restate the question; \
+never echo the input tags (<transcript>, <question>) and never show your reasoning: only the answer.\n\n\
 Decide what kind of question it is and shape the paragraph to it, without naming the kind:\n\
 - behavioral (\"tell me about a time\", conflicts, failures, a hard task): a STAR story in about 4 sentences (situation, task, what the user did, the result with a number), taken from the user's stories;\n\
 - theory, how something works: what it is, how it works, the trade-off, then where it is used in practice;\n\
@@ -311,7 +329,8 @@ It comes from speech recognition and may contain errors. \
 Reply with one line of at most 15 words: the key point the user should say first in answer to <question>. \
 It is the thesis itself, not a restatement of the question and not advice about how to answer. \
 For a story question: the project and its result with the number; for theory: the core idea; for salary: the figure from the user's facts. \
-No preamble, no markdown. Answer in the language of the question; the user's own language is {user_language}. \
+Output only that line: no preamble, no markdown, no reasoning, no quotes around it. \
+Answer in the language of the question; the user's own language is {user_language}. \
 Mention the user's experience from the context below only when the question is about it; never invent it or its numbers. \
 If the user lacks that experience, the line names the closest real one. \
 If <prepared_answers> or the brief has an answer to this question, the line is its key point. \
@@ -380,12 +399,24 @@ First line: the best one. Then a list of all three. No preamble.";
 /// Instructions, then the assembled context (`context::assemble`): the prefix stays the same
 /// for the whole call, so the prompt cache holds it. `user_language`: ISO code, e.g. "ru".
 pub fn system_prompt(quick: bool, context: &str, user_language: &str) -> String {
-    let base = if quick { QUICK_SYSTEM } else { FULL_SYSTEM }.replace("{user_language}", user_language);
+    let base = if quick { QUICK_SYSTEM } else { FULL_SYSTEM }.replace("{user_language}", &language_name(user_language));
     if context.trim().is_empty() { base } else { format!("{base}\n\n{}", context.trim()) }
 }
 
 pub fn summary_system(context: &str) -> String {
     if context.trim().is_empty() { SUMMARY_SYSTEM.to_string() } else { format!("{SUMMARY_SYSTEM}\n\n{}", context.trim()) }
+}
+
+/// A language's English name for prompts: smaller and non-Claude models follow "Russian" more reliably than "ru".
+pub fn language_name(code: &str) -> String {
+    match code {
+        "ru" => "Russian".into(),
+        "en" => "English".into(),
+        "de" => "German".into(),
+        "fr" => "French".into(),
+        "es" => "Spanish".into(),
+        _ => format!("the language with ISO 639-1 code \"{code}\""),
+    }
 }
 
 /// Segments ordered by start time (the transcript vec is in decode order).
@@ -492,6 +523,7 @@ mod tests {
         let gap = vec![seg(Speaker::Them, 0, "Первый?"), seg(Speaker::Them, 9_000, "Второй?")];
         assert_eq!(question(&gap), ("Второй?".into(), Some(9_000)));
         assert!(turn_text(&[], "", Screen::None).contains("No question yet"));
+        assert!(system_prompt(true, "", "ru").contains("the user's own language is Russian."));
         let t = turn_text(&[], "", Screen::Attached);
         assert!(t.contains("<screen>The attached") && t.contains("Look at the screen"));
         assert!(turn_text(&[], "Почему?", Screen::Unchanged).contains("Unchanged since"));
@@ -509,13 +541,18 @@ mod error_tests {
 
     #[test]
     fn error_kind_looks_through_context() {
-        let http = |status| -> anyhow::Error { api::HttpError { status, message: "m".into() }.into() };
+        let http = |status| -> anyhow::Error { api::HttpError { status, message: "m".into(), quota: status == 402 }.into() };
         let wrapped = |e: anyhow::Error| Err::<(), _>(e).context("ask").unwrap_err();
         assert_eq!(error_kind(&wrapped(http(401))), ErrorKind::Auth);
         assert_eq!(error_kind(&wrapped(http(403))), ErrorKind::Auth);
         assert_eq!(error_kind(&wrapped(http(429))), ErrorKind::RateLimit);
         assert_eq!(error_kind(&wrapped(http(529))), ErrorKind::Overloaded);
         assert_eq!(error_kind(&wrapped(http(400))), ErrorKind::Other);
+        assert_eq!(error_kind(&wrapped(http(402))), ErrorKind::Quota);
+        let quota = api::http_error(429, r#"{"error":{"message":"You exceeded your current quota","code":"insufficient_quota"}}"#);
+        assert_eq!((quota.quota, quota.message.as_str()), (true, "You exceeded your current quota"));
+        assert_eq!(api::http_error(400, r#"{"status":400,"message":"bad model"}"#).message, "bad model");
+        assert_eq!(api::http_error(502, "<html>gateway</html>").message, "<html>gateway</html>");
         assert_eq!(error_kind(&wrapped(fail(ErrorKind::Refused, "no"))), ErrorKind::Refused);
         assert_eq!(error_kind(&anyhow::anyhow!("plain")), ErrorKind::Other);
         let body = |kind: &str| ErrorBody { kind: kind.into(), message: String::new() }.error_kind();
