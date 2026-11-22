@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { blocking, check, type Facts } from "./readiness.ts";
+import { blocking, check, type Facts, ollamaModels } from "./readiness.ts";
 
 const base: Facts = {
   coreError: null,
@@ -37,4 +37,10 @@ test("another provider counts by its own key, not the Anthropic one", () => {
 test("Claude Code counts only when the command answered", () => {
   assert.equal(check({ ...base, backend: "claude-code" }).find((i) => i.id === "claude")?.ok, false);
   assert.equal(check({ ...base, backend: "claude-code", claudeCodeOk: true }).find((i) => i.id === "claude")?.ok, true);
+});
+
+test("Ollama: the suggested models first, else whatever is installed", () => {
+  assert.deepEqual(ollamaModels(["llama3.1:8b", "qwen3:4b", "qwen3:14b"]), ["qwen3:14b", "qwen3:4b"]);
+  assert.deepEqual(ollamaModels(["llama3.1:8b"]), ["llama3.1:8b", "llama3.1:8b"]);
+  assert.equal(ollamaModels([]), null);
 });

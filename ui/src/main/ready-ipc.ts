@@ -106,6 +106,16 @@ export function registerReadyIpc(deps: ReadyDeps): void {
     if (!res.ok) return res;
     return (await checkClaudeCode()) ? res : { ok: false, error: "Команда claude не ответила. Установите Claude Code и войдите в аккаунт." };
   });
+  ipcMain.handle("ready:ollama", async () => {
+    const tags = await fetch("http://localhost:11434/api/tags", { signal: AbortSignal.timeout(3_000) })
+      .then((r) => r.json() as Promise<{ models?: { name: string }[] }>)
+      .catch(() => null);
+    if (!tags) return { ok: false, error: "Ollama не отвечает. Установите её с ollama.com и запустите." };
+    const m = readiness.ollamaModels((tags.models ?? []).map((x) => x.name));
+    if (!m) return { ok: false, error: "В Ollama нет моделей. Скачайте: ollama pull qwen3:14b" };
+    const res = d.saveConfig({ "llm.backend": "openai", "llm.provider": "ollama", "llm.baseUrl": "", model: m[0], altModel: m[0], quickModel: m[1] });
+    return res.ok ? { ...res, note: `Подключена ${m[0]}, быстрая подсказка: ${m[1]}.` } : res;
+  });
   ipcMain.on("ready:model", (_e, id: string) => void getModel(id));
   ipcMain.on("ready:logs", () => shell.openPath(d.logDir));
 }

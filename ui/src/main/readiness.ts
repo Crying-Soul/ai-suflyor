@@ -66,4 +66,11 @@ export function check(f: Facts): ReadyItem[] {
 }
 
 /** The first required item that blocks work: what the transcript's strip names. */
+/** [model, quick model] for Ollama from what `ollama list` has: the suggested ones first, else the first installed. */
+export function ollamaModels(installed: string[]): [string, string] | null {
+  const has = (m: string) => installed.find((i) => i === m || i === `${m}:latest`);
+  const model = has("qwen3:14b") ?? has("gemma3:12b") ?? installed[0];
+  return model ? [model, has("qwen3:4b") ?? model] : null;
+}
+
 export const blocking = (items: ReadyItem[]) => items.find((i) => i.level === "required" && !i.ok);

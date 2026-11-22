@@ -170,6 +170,8 @@ export interface ReadyApi {
   useApiKey(key: string): Promise<SaveResult>;
   /** Switches to Claude Code and checks that `claude --version` answers. */
   useClaudeCode(): Promise<SaveResult>;
+  /** Switches to the local Ollama server with a model it already has. */
+  useOllama(): Promise<SaveResult>;
   /** Downloads and selects the whisper model. */
   getModel(id: string): void;
   openLogs(): void;

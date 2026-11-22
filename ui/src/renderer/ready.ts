@@ -63,7 +63,7 @@ function claude(item: ReadyItem): HTMLElement {
     next.focus();
     next.click();
   });
-  for (const [k, label] of [["api", "Ключ Anthropic"], ["code", "Claude Code"], ["other", "Другие модели"]] as const) {
+  for (const [k, label] of [["api", "Ключ Anthropic"], ["code", "Claude Code"], ["other", "Бесплатно и другие"]] as const) {
     const b = el("button", { type: "button", role: "tab", textContent: label });
     b.dataset.k = k;
     b.onclick = () => select(k);
@@ -94,8 +94,17 @@ function claude(item: ReadyItem): HTMLElement {
     }, "btn small")),
     codeRes,
   );
+  const [freeRes, freeSay] = result();
   panes.other.append(
-    el("p", { className: "hint", textContent: "GPT, Gemini, DeepSeek, Qwen, Kimi, GLM, GigaChat, YandexGPT, OpenRouter или локальная модель в Ollama и LM Studio. Выберите провайдера, вставьте его ключ и модель." }),
+    el("p", { className: "hint", textContent: "Бесплатно, без ключа: локальная модель в Ollama. Установите Ollama с ollama.com и скачайте модель (~9 ГБ, лучше с видеокартой от 12 ГБ; на слабой — qwen3:4b):" }),
+    command("ollama pull qwen3:14b"),
+    el("div", { className: "row" }, small("Подключить Ollama", async () => {
+      freeSay(true, "Проверяю…");
+      const r = await api.ready.useOllama();
+      freeSay(r.ok, r.ok ? (r.note ?? "Ollama подключена.") : (r.error ?? "Не удалось."));
+    }, "btn small")),
+    freeRes,
+    el("p", { className: "hint", textContent: "Бесплатный пакет токенов для физлиц есть у GigaChat (developers.sber.ru). Или GPT, Gemini, DeepSeek, Qwen, Kimi, GLM, GigaChat, YandexGPT, OpenRouter или локальная модель в Ollama и LM Studio. Выберите провайдера, вставьте его ключ и модель." }),
     el("div", { className: "row" }, small("Открыть настройки ответов", () => api.openSettings("answers"), "btn small")),
   );
   select(item.backend === "claude-code" ? "code" : item.backend === "openai" ? "other" : "api");

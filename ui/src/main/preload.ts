@@ -45,6 +45,7 @@ const api: RendererApi = {
     open: () => ipcRenderer.send("ready:open"),
     useApiKey: (key) => ipcRenderer.invoke("ready:apiKey", key),
     useClaudeCode: () => ipcRenderer.invoke("ready:claudeCode"),
+    useOllama: () => ipcRenderer.invoke("ready:ollama"),
     getModel: (id) => ipcRenderer.send("ready:model", id),
     openLogs: () => ipcRenderer.send("ready:logs"),
     restartCore: () => ipcRenderer.send("core:restart"),
