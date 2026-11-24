@@ -94,8 +94,6 @@ Ctrl+Alt+S отправляет модели снимок активного о�
 
 ### Бесплатно, без ключа
 
-Нет ключа API или карты для оплаты? Есть два бесплатных пути.
-
 - **Ollama, локально.** Установите [Ollama](https://ollama.com), затем выполните `ollama pull qwen3:14b`. Модель весит ~9 ГБ, ей нужна видеокарта от 12 ГБ. На слабом компьютере берите `qwen3:4b`. В «Подготовке к работе» откройте вкладку «Бесплатно и другие» и нажмите «Подключить Ollama». Наружу не уходит ничего.
 - **GigaChat.** У Сбера есть бесплатный пакет токенов для физлиц. Ключ берётся на [developers.sber.ru](https://developers.sber.ru/studio/), затем Настройки → Ответы → «Другой провайдер» → GigaChat.
 
@@ -153,7 +151,7 @@ Windows, Rust (stable), Node.js 24, видеокарта NVIDIA необязат
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\get-whisper.ps1 -Cuda   # DLL whisper.cpp и модель в .\whisper
-copy config.example.json config.json                                     # ключ, llm.backend: "api", "claude-code" или "openai"
+copy config.example.json config.json                                     # llm.backend: "api", "claude-code" или "openai"; ключ: ANTHROPIC_API_KEY или SUFLYOR_LLM_API_KEY
 cargo build --release --manifest-path core\Cargo.toml
 cd ui; npm install; npm start
 ```

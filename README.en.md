@@ -110,7 +110,7 @@ Windows, Rust (stable), Node.js 24. An NVIDIA GPU is optional.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\get-whisper.ps1 -Cuda   # whisper.cpp DLLs and a model in .\whisper
-copy config.example.json config.json                                     # key, llm.backend: "api", "claude-code" or "openai"
+copy config.example.json config.json                                     # llm.backend: "api", "claude-code" or "openai"; key: ANTHROPIC_API_KEY or SUFLYOR_LLM_API_KEY
 cargo build --release --manifest-path core\Cargo.toml
 cd ui; npm install; npm start
 ```
