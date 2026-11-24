@@ -180,44 +180,43 @@ pub fn apply(cfg: &Config, shared: &Arc<Shared>, dir: Option<&Path>) {
         add_part(&mut ev, PREPARED_PART, p);
     }
     let call_open = dir.is_some();
-    if !answerer.has_quick() || a.tokens() < brief::MIN_TOKENS {
-        answerer.reconfigure(&a.text, &full, &full, call_open);
-        let _ = shared.events.send(ev);
-        return;
+    // The quick tier reads the whole context while it is small, else its brief: a current one, or
+    // the whole context until a new one is built.
+    let small = !answerer.has_quick() || a.tokens() < brief::MIN_TOKENS;
+    let quick = if small { &full } else { cached.as_ref().unwrap_or(&a.text) };
+    answerer.reconfigure(&a.text, &full, quick, call_open);
+    if !small {
+        add_brief_part(&mut ev, cached.as_deref().unwrap_or(""), cached.is_none());
     }
-    if let Some(b) = cached {
-        answerer.reconfigure(&a.text, &full, &b, call_open);
-        add_brief_part(&mut ev, &b, false);
-        let _ = shared.events.send(ev);
-        return;
-    }
-    answerer.reconfigure(&a.text, &full, &a.text, call_open);
-    add_brief_part(&mut ev, "", true);
     let _ = shared.events.send(ev.clone());
+    if small || cached.is_some() {
+        return;
+    }
     info!("brief: building for {}", place.display());
-    let (task_shared, text) = (shared.clone(), a.text);
-    let task = tokio::spawn(async move {
-        let started = std::time::Instant::now();
-        match answerer.brief(&text).await {
-            Ok(b) if !b.is_empty() => {
-                if let Err(e) = brief::store(&place, &key, &b) {
-                    warn!("brief: cannot save in {}: {e}", place.display());
-                }
-                info!("brief: {} tokens in {} ms", context::tokens(&b), started.elapsed().as_millis());
-                if answerer.set_brief(&key, &b) {
-                    let mut ev = ev;
-                    add_brief_part(&mut ev, &b, false);
-                    let _ = task_shared.events.send(ev);
-                }
+    let task = tokio::spawn(build_brief(shared.clone(), answerer, place, key, a.text, ev));
+    *shared.brief_task.lock().unwrap() = Some(task.abort_handle());
+}
+
+/// Makes and saves the brief of `text`, then switches the quick tier to it (unless the context changed meanwhile).
+async fn build_brief(shared: Arc<Shared>, answerer: Answerer, place: PathBuf, key: String, text: String, mut ev: Event) {
+    let started = std::time::Instant::now();
+    match answerer.brief(&text).await {
+        Ok(b) if !b.is_empty() => {
+            if let Err(e) = brief::store(&place, &key, &b) {
+                warn!("brief: cannot save in {}: {e}", place.display());
             }
-            Ok(_) => warn!("brief: empty reply"),
-            Err(e) => {
-                warn!("brief: {e:#}");
-                let _ = task_shared.events.send(Event::Error { message: format!("досье: {e:#}"), kind: Some(crate::llm::error_kind(&e)) });
+            info!("brief: {} tokens in {} ms", context::tokens(&b), started.elapsed().as_millis());
+            if answerer.set_brief(&key, &b) {
+                add_brief_part(&mut ev, &b, false);
+                let _ = shared.events.send(ev);
             }
         }
-    });
-    *shared.brief_task.lock().unwrap() = Some(task.abort_handle());
+        Ok(_) => warn!("brief: empty reply"),
+        Err(e) => {
+            warn!("brief: {e:#}");
+            let _ = shared.events.send(Event::Error { message: format!("досье: {e:#}"), kind: Some(crate::llm::error_kind(&e)) });
+        }
+    }
 }
 
 /// The «Досье» row of the UI's context breakdown; `building` adds the note that it is on its way.
