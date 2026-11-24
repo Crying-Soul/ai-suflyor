@@ -25,7 +25,7 @@ body.mini .wait { display: none; }
 .talk { flex: none; color: var(--color-accent-2); }
 .icon-btn.rate[aria-pressed="true"] { color: var(--color-ink); background: var(--sel); }
 .state .icon-btn { min-height: 28px; width: 28px; }
-/* 👍 and 👎 mean opposite things: a gap, so a slip does not rate the other way. */
+/* Up and down mean opposite things: a gap, so a slip does not rate the other way. */
 #btn-down { margin-left: var(--space-2xs); }
 .nav { display: inline-flex; align-items: center; gap: var(--space-3xs); color: var(--color-muted); }
 .nav[hidden] { display: none; }
