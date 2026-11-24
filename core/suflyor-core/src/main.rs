@@ -65,6 +65,10 @@ pub struct Shared {
     pub notes: Mutex<answer::Notes>,
     /// The saved answer records of each live turn of the open call, for ratings.
     pub answer_ids: Mutex<call::AnswerIds>,
+    /// The brief being made in the background (`call::apply`), if any.
+    pub brief_task: Mutex<Option<tokio::task::AbortHandle>>,
+    /// `Status::mute_me` / `mute_them` by `Speaker::idx`, mirrored by `update_status`: the audio threads read them per chunk.
+    pub muted: [AtomicBool; 2],
 }
 
 impl Shared {
@@ -81,6 +85,8 @@ impl Shared {
             call: Default::default(),
             notes: Default::default(),
             answer_ids: Default::default(),
+            brief_task: Default::default(),
+            muted: Default::default(),
         }
     }
 
@@ -88,6 +94,8 @@ impl Shared {
         let snapshot = {
             let mut s = self.status.lock().unwrap();
             f(&mut s);
+            self.muted[Speaker::Me.idx()].store(s.mute_me, std::sync::atomic::Ordering::Relaxed);
+            self.muted[Speaker::Them.idx()].store(s.mute_them, std::sync::atomic::Ordering::Relaxed);
             s.clone()
         };
         let _ = self.events.send(Event::Status(snapshot));
@@ -389,12 +397,11 @@ fn reload_llm(cfg: &mut Config, path: Option<&std::path::Path>, (key, llm_key): 
 }
 
 fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>) {
-    let answerer = shared.answerer();
     match cmd {
         Command::Ask { kind: AskKind::Answer, screenshot, question } => {
             let picked = question.filter(|q| !q.trim().is_empty()).map(|q| (q, None));
             if !screenshot {
-                answerer.ask(shared, if picked.is_some() { Trigger::Picked } else { Trigger::Hotkey }, picked, None);
+                shared.answerer().ask(shared, if picked.is_some() { Trigger::Picked } else { Trigger::Hotkey }, picked, None);
                 return;
             }
             let shared = shared.clone();
@@ -414,7 +421,7 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>) {
                         None
                     }
                 };
-                answerer.ask(&shared, Trigger::Screen, picked, shot);
+                shared.answerer().ask(&shared, Trigger::Screen, picked, shot);
             });
         }
         Command::Ask { kind, .. } => {
@@ -424,11 +431,13 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>) {
                 AskKind::More => (Trigger::More, llm::MORE),
                 AskKind::Shorter => (Trigger::Shorter, llm::SHORTER),
                 AskKind::Simpler => (Trigger::Simpler, llm::SIMPLER),
-                _ => (Trigger::Example, llm::EXAMPLE),
+                AskKind::Example => (Trigger::Example, llm::EXAMPLE),
+                AskKind::Answer => unreachable!("matched above"),
             };
-            answerer.ask(shared, trigger, Some((text.to_string(), None)), None);
+            shared.answerer().ask(shared, trigger, Some((text.to_string(), None)), None);
         }
-        Command::Set { auto, model, answer_mode, translate, mute_me, mute_them } => shared.update_status(|s| {
+        Command::ToggleModel => shared.update_status(|s| s.model = if s.model == cfg.model { cfg.alt_model.clone() } else { cfg.model.clone() }),
+        Command::Set { auto, answer_mode, translate, mute_me, mute_them } => shared.update_status(|s| {
             if let Some(t) = translate {
                 if t && !s.translate
                     && let Some(tr) = shared.translator()
@@ -446,9 +455,6 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>) {
             if let Some(a) = auto {
                 s.auto = a;
             }
-            if let Some(m) = model {
-                s.model = if m == "toggle" { if s.model == cfg.model { cfg.alt_model.clone() } else { cfg.model.clone() } } else { m };
-            }
             if let Some(m) = answer_mode {
                 s.answer_mode = m;
             }
@@ -456,7 +462,7 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>) {
         Command::Clear => {
             shared.transcript.lock().unwrap().clear();
             answer::Answerer::forget_notes(shared);
-            answerer.clear();
+            shared.answerer().clear();
             if let Some(t) = shared.translator() {
                 t.clear();
             }
@@ -487,6 +493,18 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>) {
 #[cfg(test)]
 mod cli_tests {
     use super::*;
+
+    #[test]
+    fn status_mutes_reach_the_audio_threads_and_toggle_swaps_the_model() {
+        let (shared, _rx) = Shared::for_test();
+        shared.update_status(|s| s.mute_them = true);
+        let muted = |s: Speaker| shared.muted[s.idx()].load(std::sync::atomic::Ordering::Relaxed);
+        assert!(muted(Speaker::Them) && !muted(Speaker::Me));
+        let cfg = Config::default();
+        shared.status.lock().unwrap().model = cfg.model.clone();
+        handle(Command::ToggleModel, &cfg, &shared);
+        assert_eq!(shared.status.lock().unwrap().model, cfg.alt_model);
+    }
 
     #[test]
     fn rect_is_one_token_and_may_be_negative() {

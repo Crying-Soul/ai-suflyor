@@ -79,8 +79,6 @@ pub enum Command {
         #[serde(default)]
         auto: Option<bool>,
         #[serde(default)]
-        model: Option<String>,
-        #[serde(default)]
         answer_mode: Option<AnswerMode>,
         /// Translate the other side's speech into the user's language.
         #[serde(default)]
@@ -91,6 +89,8 @@ pub enum Command {
         #[serde(default)]
         mute_them: Option<bool>,
     },
+    /// Switches the full tier between `model` and `altModel`.
+    ToggleModel,
     Clear,
     /// Opens a call directory (`<dataDir>/folders/<folder>/calls/<call>`): its context goes into the
     /// prompt, its saved transcript and answers are replayed, new ones are appended to it.
@@ -396,6 +396,7 @@ mod tests {
         assert!(matches!(c, Command::Ask { kind: AskKind::Questions, .. }));
         let c: Command = serde_json::from_str(r#"{"cmd":"ask","kind":"continue"}"#).unwrap();
         assert!(matches!(c, Command::Ask { kind: AskKind::Continue, .. }));
+        assert!(matches!(serde_json::from_str(r#"{"cmd":"toggle_model"}"#).unwrap(), Command::ToggleModel));
         let c: Command = serde_json::from_str(r#"{"cmd":"summarize","dir":"d"}"#).unwrap();
         assert!(matches!(c, Command::Summarize { ref dir } if dir == "d"));
         let c: Command = serde_json::from_str(r#"{"cmd":"feedback","turn":3,"value":-1}"#).unwrap();

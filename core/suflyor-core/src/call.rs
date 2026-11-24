@@ -152,7 +152,7 @@ pub fn set_feedback(shared: &Shared, turn: u64, value: Option<i8>) {
 pub fn apply(cfg: &Config, shared: &Arc<Shared>, dir: Option<&Path>) {
     let answerer = shared.answerer();
     // A brief still being made is for the context this call replaces: stop paying for it.
-    let old = BRIEF_TASK.lock().unwrap().take();
+    let old = shared.brief_task.lock().unwrap().take();
     if let Some(old) = old {
         old.abort();
     }
@@ -195,7 +195,7 @@ pub fn apply(cfg: &Config, shared: &Arc<Shared>, dir: Option<&Path>) {
     add_brief_part(&mut ev, "", true);
     let _ = shared.events.send(ev.clone());
     info!("brief: building for {}", place.display());
-    let (shared, text) = (shared.clone(), a.text);
+    let (task_shared, text) = (shared.clone(), a.text);
     let task = tokio::spawn(async move {
         let started = std::time::Instant::now();
         match answerer.brief(&text).await {
@@ -207,21 +207,18 @@ pub fn apply(cfg: &Config, shared: &Arc<Shared>, dir: Option<&Path>) {
                 if answerer.set_brief(&key, &b) {
                     let mut ev = ev;
                     add_brief_part(&mut ev, &b, false);
-                    let _ = shared.events.send(ev);
+                    let _ = task_shared.events.send(ev);
                 }
             }
             Ok(_) => warn!("brief: empty reply"),
             Err(e) => {
                 warn!("brief: {e:#}");
-                let _ = shared.events.send(Event::Error { message: format!("досье: {e:#}"), kind: Some(crate::llm::error_kind(&e)) });
+                let _ = task_shared.events.send(Event::Error { message: format!("досье: {e:#}"), kind: Some(crate::llm::error_kind(&e)) });
             }
         }
     });
-    *BRIEF_TASK.lock().unwrap() = Some(task.abort_handle());
+    *shared.brief_task.lock().unwrap() = Some(task.abort_handle());
 }
-
-/// The brief being made in the background, if any.
-static BRIEF_TASK: std::sync::Mutex<Option<tokio::task::AbortHandle>> = std::sync::Mutex::new(None);
 
 /// The «Досье» row of the UI's context breakdown; `building` adds the note that it is on its way.
 fn add_brief_part(ev: &mut Event, brief: &str, building: bool) {

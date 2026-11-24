@@ -493,7 +493,7 @@ api.onEvent((e: CoreEvent) => {
 });
 
 $("btn-help").onclick = () => api.openSettings("guide");
-modelBtn.onclick = () => api.send({ cmd: "set", model: "toggle" });
+modelBtn.onclick = () => api.send({ cmd: "toggle_model" });
 setPhase("idle");
 renderNav();
 // Ask, screen, continue, questions and the answer arrows run through main, like their hotkeys.

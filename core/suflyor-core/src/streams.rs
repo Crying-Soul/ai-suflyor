@@ -186,10 +186,7 @@ fn drain(ctx: &Stream, mut capture: Capture, silero: Option<Silero>, mut writer:
             continue;
         }
         let Ok(chunk) = capture.consumer.read_chunk(n) else { continue };
-        let muted = {
-            let s = shared.status.lock().unwrap();
-            if speaker == Speaker::Me { s.mute_me } else { s.mute_them }
-        };
+        let muted = shared.muted[speaker.idx()].load(Ordering::Relaxed);
         // Muted: silence instead of skipping, so the sample timeline (utterance keys) stays true
         // and a phrase in progress ends the normal way.
         silence.clear();

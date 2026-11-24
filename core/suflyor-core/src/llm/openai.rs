@@ -72,7 +72,6 @@ pub struct OpenAiSession {
     effort: String,
     max_tokens: u32,
     history: Vec<Msg>,
-    fresh: bool,
     vision: bool,
 }
 
@@ -82,11 +81,12 @@ impl OpenAiSession {
         let provider = provider(provider_id).unwrap_or_else(|| provider("custom").expect("custom preset"));
         let base = if base_url.trim().is_empty() { provider.base_url } else { base_url.trim() };
         let url = format!("{}/chat/completions", base.trim_end_matches('/'));
-        OpenAiSession { provider, url, key, system, effort, max_tokens, history: Vec::new(), fresh: true, vision: provider.vision }
+        OpenAiSession { provider, url, key, system, effort, max_tokens, history: Vec::new(), vision: provider.vision }
     }
 
-    pub fn prepare(&mut self) -> bool {
-        std::mem::take(&mut self.fresh)
+    /// True when the history is empty: the caller sends the whole transcript.
+    pub fn prepare(&self) -> bool {
+        self.history.is_empty()
     }
 
     pub fn set_system(&mut self, system: String) {
@@ -95,7 +95,6 @@ impl OpenAiSession {
 
     pub fn reset(&mut self) {
         self.history.clear();
-        self.fresh = true;
     }
 
     /// Billed per token: everything but a local server.

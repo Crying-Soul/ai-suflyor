@@ -22,7 +22,7 @@ export type Command = { "cmd": "ask", screenshot?: boolean | null,
 /**
  * Ask about this text instead of the detected question (a transcript row the user picked).
  */
-question?: string | null, kind?: AskKind | null, } | { "cmd": "set", auto?: boolean | null, model?: string | null, answer_mode?: AnswerMode | null, 
+question?: string | null, kind?: AskKind | null, } | { "cmd": "set", auto?: boolean | null, answer_mode?: AnswerMode | null, 
 /**
  * Translate the other side's speech into the user's language.
  */
@@ -30,7 +30,7 @@ translate?: boolean | null,
 /**
  * Mute a source: its audio is replaced by silence before VAD, so nothing is transcribed.
  */
-mute_me?: boolean | null, mute_them?: boolean | null, } | { "cmd": "clear" } | { "cmd": "open_call", dir: string, } | { "cmd": "reload_llm", anthropic_api_key?: string | null, 
+mute_me?: boolean | null, mute_them?: boolean | null, } | { "cmd": "toggle_model" } | { "cmd": "clear" } | { "cmd": "open_call", dir: string, } | { "cmd": "reload_llm", anthropic_api_key?: string | null, 
 /**
  * The key of the OpenAI-compatible provider (`llm.backend` = `openai`).
  */

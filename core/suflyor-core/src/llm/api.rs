@@ -56,18 +56,18 @@ pub struct ApiSession {
     effort: String,
     max_tokens: u32,
     messages: Vec<Value>,
-    fresh: bool,
     /// `MESSAGES_URL`; tests point it at a local server.
     url: String,
 }
 
 impl ApiSession {
     pub fn new(key: String, system: String, effort: String, max_tokens: u32) -> ApiSession {
-        ApiSession { key, system, effort, max_tokens, messages: Vec::new(), fresh: true, url: MESSAGES_URL.into() }
+        ApiSession { key, system, effort, max_tokens, messages: Vec::new(), url: MESSAGES_URL.into() }
     }
 
-    pub fn prepare(&mut self) -> bool {
-        std::mem::take(&mut self.fresh)
+    /// True when the history is empty: the caller sends the whole transcript.
+    pub fn prepare(&self) -> bool {
+        self.messages.is_empty()
     }
 
     pub fn set_system(&mut self, system: String) {
@@ -76,7 +76,6 @@ impl ApiSession {
 
     pub fn reset(&mut self) {
         self.messages.clear();
-        self.fresh = true;
     }
 
     fn body(&self, model: &str, messages: &[Value], max_tokens: u32, stream: bool) -> Value {
