@@ -19,6 +19,11 @@ impl Speaker {
             Speaker::Them => "them",
         }
     }
+
+    /// Index into per-speaker arrays: me 0, them 1.
+    pub fn idx(self) -> usize {
+        self as usize
+    }
 }
 
 /// When the core starts an automatic answer.

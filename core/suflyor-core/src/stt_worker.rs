@@ -32,18 +32,25 @@ pub struct Job {
 /// Two-lane queue: "them" is served before "me" (the question matters more than our own speech).
 #[derive(Default)]
 pub struct SttQueue {
-    lanes: Mutex<(VecDeque<Job>, VecDeque<Job>, bool)>,
+    lanes: Mutex<Lanes>,
     cv: Condvar,
     /// Non-zero aborts the partial being decoded: a final (the question) must not wait up to 1 s for it.
     abort: AtomicI32,
+}
+
+#[derive(Default)]
+struct Lanes {
+    them: VecDeque<Job>,
+    me: VecDeque<Job>,
+    closed: bool,
 }
 
 impl SttQueue {
     pub fn push(&self, job: Job) {
         let mut l = self.lanes.lock().unwrap();
         let lane = match job.speaker {
-            Speaker::Them => &mut l.0,
-            Speaker::Me => &mut l.1,
+            Speaker::Them => &mut l.them,
+            Speaker::Me => &mut l.me,
         };
         // Only the newest partial matters; any real job supersedes pending speculative/partial ones.
         if job.partial {
@@ -59,7 +66,7 @@ impl SttQueue {
     }
 
     pub fn close(&self) {
-        self.lanes.lock().unwrap().2 = true;
+        self.lanes.lock().unwrap().closed = true;
         self.cv.notify_all();
     }
 
@@ -67,7 +74,7 @@ impl SttQueue {
         let mut l = self.lanes.lock().unwrap();
         loop {
             // Finals and speculative decodes first ("them" before "me"), partials only when idle.
-            let (them, me, _) = &mut *l;
+            let Lanes { them, me, closed } = &mut *l;
             for want_partial in [false, true] {
                 for lane in [&mut *them, &mut *me] {
                     if let Some(i) = lane.iter().position(|j| j.partial == want_partial) {
@@ -77,7 +84,7 @@ impl SttQueue {
                     }
                 }
             }
-            if l.2 {
+            if *closed {
                 return None;
             }
             l = self.cv.wait(l).unwrap();
@@ -97,150 +104,192 @@ pub fn spawn(cfg: &Config, shared: Arc<Shared>, queue: Arc<SttQueue>) -> std::io
     })
 }
 
+/// Milliseconds of `samples` at 16 kHz.
+fn ms_of(samples: u64) -> u64 {
+    samples * 1000 / u64::from(audio::SAMPLE_RATE)
+}
+
+fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
+    let mut w = Worker::load(cfg, shared)?;
+    while let Some(job) = queue.pop() {
+        w.handle(job, queue);
+    }
+    Ok(())
+}
+
 /// ((utterance t, len), text or None if dropped, decode ms) of a speculative decode.
 type Speculative = ((u64, usize), Option<String>, f64);
 
-fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
-    shared.update_status(|s| s.stt = SttState::Loading);
-    let t = Instant::now();
-    let dll = cfg.path(&cfg.stt.dll);
-    let model = Whisper::load(
-        &dll,
-        &cfg.path(&cfg.stt.model),
-        &ModelOptions {
-            cuda_dll: cuda_dll(cfg, &dll),
-            use_gpu: cfg.stt.use_gpu,
-            gpu_device: cfg.stt.gpu_device,
-            flash_attn: cfg.stt.flash_attn,
-            verbose: cfg.stt.verbose,
-        },
-    )?;
-    let mut states: [State; 2] = [model.new_state()?, model.new_state()?];
-    let base = DecodeOptions {
-        language: Some(cfg.language.clone()).filter(|l| !l.is_empty() && l != "auto"),
-        threads: cfg.stt.threads,
-        beam_size: cfg.stt.beam_size,
-        temperature_inc: cfg.stt.temperature_inc,
-        no_speech_thold: cfg.stt.no_speech_thold,
-        audio_ctx: cfg.stt.audio_ctx,
-        ..Default::default()
-    };
-    // Warm-up: first decode initializes CUDA kernels (~100+ ms extra).
-    for st in states.iter_mut() {
-        st.transcribe(&vec![0.0; 16_000], &base, None)?;
+/// The whisper states and what the worker keeps between jobs. Per-speaker arrays use `Speaker::idx`.
+struct Worker<'a> {
+    cfg: &'a Config,
+    shared: &'a Shared,
+    states: [State; 2],
+    base: DecodeOptions,
+    /// The text of each speaker's last final (whisper prompt context).
+    last_text: [String; 2],
+    /// (utterance t, text) of each speaker's last partial shown, for the stable/tail split.
+    last_partial: [(u64, String); 2],
+    /// When the last "them" partial was shown: an older one is not live speech the mic could echo.
+    them_partial_at: Option<Instant>,
+    /// Epoch ms up to which each speaker's audio is finalized; older partials are stale. Epoch ms, not
+    /// stream samples: a restarted capture counts samples from 0 again, epoch ms keep growing.
+    finalized_upto: [u64; 2],
+    /// Each speaker's last speculative decode.
+    spec: [Option<Speculative>; 2],
+    /// Language whisper detected on the last full decode. With `language: auto`, partials reuse it:
+    /// detection on < 1 s of audio guesses wrong (Russian speech came out as Japanese).
+    lang: Option<String>,
+}
+
+impl<'a> Worker<'a> {
+    fn load(cfg: &'a Config, shared: &'a Shared) -> anyhow::Result<Self> {
+        shared.update_status(|s| s.stt = SttState::Loading);
+        let t = Instant::now();
+        let dll = cfg.path(&cfg.stt.dll);
+        let model = Whisper::load(
+            &dll,
+            &cfg.path(&cfg.stt.model),
+            &ModelOptions {
+                cuda_dll: cuda_dll(cfg, &dll),
+                use_gpu: cfg.stt.use_gpu,
+                gpu_device: cfg.stt.gpu_device,
+                flash_attn: cfg.stt.flash_attn,
+                verbose: cfg.stt.verbose,
+            },
+        )?;
+        let mut states: [State; 2] = [model.new_state()?, model.new_state()?];
+        let base = DecodeOptions {
+            language: Some(cfg.language.clone()).filter(|l| !l.is_empty() && l != "auto"),
+            threads: cfg.stt.threads,
+            beam_size: cfg.stt.beam_size,
+            temperature_inc: cfg.stt.temperature_inc,
+            no_speech_thold: cfg.stt.no_speech_thold,
+            audio_ctx: cfg.stt.audio_ctx,
+            ..Default::default()
+        };
+        // Warm-up: first decode initializes CUDA kernels (~100+ ms extra).
+        for st in &mut states {
+            st.transcribe(&vec![0.0; 16_000], &base, None)?;
+        }
+        let load_ms = t.elapsed().as_secs_f64() * 1000.0;
+        info!("whisper ready in {load_ms:.0} ms");
+        let _ = shared.events.send(Event::Metrics { name: "stt_load".into(), ms: load_ms });
+        shared.update_status(|s| s.stt = SttState::Ready { gpu: cfg.stt.use_gpu });
+        Ok(Worker {
+            cfg,
+            shared,
+            states,
+            base,
+            last_text: Default::default(),
+            last_partial: Default::default(),
+            them_partial_at: None,
+            finalized_upto: [0, 0],
+            spec: Default::default(),
+            lang: None,
+        })
     }
-    let load_ms = t.elapsed().as_secs_f64() * 1000.0;
-    info!("whisper ready in {load_ms:.0} ms");
-    let _ = shared.events.send(Event::Metrics { name: "stt_load".into(), ms: load_ms });
-    shared.update_status(|s| s.stt = SttState::Ready { gpu: cfg.stt.use_gpu });
 
-    // Per speaker: the text of its last final (whisper prompt context).
-    let mut last_text: [String; 2] = Default::default();
-    // Per speaker: (utterance t, text) of the last partial shown, for the stable/tail split.
-    let mut last_partial: [(u64, String); 2] = Default::default();
-    // When the last "them" partial was shown: an older one is not live speech the mic could echo.
-    let mut them_partial_at: Option<Instant> = None;
-    // Per speaker: epoch ms up to which audio is finalized; older partials are stale. Epoch ms, not
-    // stream samples: a restarted capture counts samples from 0 again, epoch ms keep growing.
-    let mut finalized_upto: [u64; 2] = [0, 0];
-    // Per speaker: the last speculative decode.
-    let mut spec: [Option<Speculative>; 2] = Default::default();
-    // Language whisper detected on the last full decode. With `language: auto`, partials reuse it:
-    // detection on < 1 s of audio guesses wrong (Russian speech came out as Japanese).
-    let mut lang: Option<String> = None;
-
-    while let Some(job) = queue.pop() {
-        let idx = match job.speaker {
-            Speaker::Me => 0,
-            Speaker::Them => 1,
-        };
-        let (speaker, t) = (job.speaker, job.t_ms);
+    fn handle(&mut self, job: Job, queue: &SttQueue) {
+        let idx = job.speaker.idx();
+        if job.partial && job.t_ms < self.finalized_upto[idx] {
+            return;
+        }
+        let key = (job.t_ms, job.utt.samples.len());
+        let end_ms = job.t_ms + ms_of(job.utt.speech_end_sample - job.utt.start_sample);
         let wait_ms = job.queued.elapsed().as_secs_f64() * 1000.0;
-        let start = job.utt.start_sample;
-        if job.partial && t < finalized_upto[idx] {
-            continue;
+        let (speaker, partial, speculative, speech_end) = (job.speaker, job.partial, job.speculative, job.speech_end);
+        let (raw, decode_ms) = self.decode_job(job, key, queue);
+        let text = raw.as_deref().and_then(|t| textproc::clean(t, &self.shared.glossary.read().unwrap()));
+        if partial || speculative {
+            if speculative {
+                self.spec[idx] = Some((key, raw, decode_ms));
+            }
+            if let Some(text) = text {
+                self.on_live(speaker, key.0, end_ms, text, partial, decode_ms);
+            }
+            return;
         }
-        // Speculative decode at the first pause; reused if the confirmed end has the same audio.
-        let key = (t, job.utt.samples.len());
-        let cached = if job.partial { None } else { spec[idx].take().filter(|(k, ..)| !job.speculative && *k == key) };
-        let (raw, decode_ms) = match cached {
-            Some((_, text, ms)) => {
-                info!("[{}] speculative decode reused", speaker.as_str());
-                (text, ms)
-            }
-            None => {
-                let t0 = Instant::now();
-                // Read per job: opening a call swaps the glossary without reloading whisper.
-                let glossary = shared.glossary.read().unwrap().join(", ");
-                let mut opts = DecodeOptions { initial_prompt: whisper_prompt(&glossary, &last_text[idx]), ..base.clone() };
-                if job.partial && opts.language.is_none() {
-                    opts.language = lang.clone();
-                }
-                let abort = job.partial.then_some(&queue.abort);
-                let out = decode(&mut states[idx], job.utt.samples, opts, abort, cfg.stt.no_speech_thold, speaker);
-                if let (Some((_, l)), false) = (&out, job.partial) {
-                    lang = Some(l.clone()).filter(|l| !l.is_empty());
-                }
-                (out.map(|(text, _)| text), t0.elapsed().as_secs_f64() * 1000.0)
-            }
-        };
-        let mut text = raw.as_deref().and_then(|t| textproc::clean(t, &shared.glossary.read().unwrap()));
-
-        if job.partial || job.speculative {
-            if job.speculative {
-                spec[idx] = Some((key, raw, decode_ms));
-            }
-            let Some(text) = text else { continue };
-            if job.speculative && speaker == Speaker::Them {
-                shared.answerer().on_them_early(crate::FinalSegment {
-                    speaker,
-                    t_ms: t,
-                    end_ms: t + (job.utt.speech_end_sample - start) / 16,
-                    text: text.clone(),
-                });
-            }
-            // Echo partials would flash the other side's words on our row until the final drops them.
-            if speaker == Speaker::Me && is_echo(shared, t, &text, live_partial(&last_partial[1].1, them_partial_at)) {
-                continue;
-            }
-            // A speculative decode is the final unless speech resumes: show all of it as settled.
-            let prev = if job.speculative { text.as_str() } else { Some(&last_partial[idx]).filter(|(pt, _)| *pt == t).map_or("", |(_, s)| s) };
-            let (stable, tail) = textproc::split_stable(prev, &text);
-            let _ = shared.events.send(Event::Partial { speaker, t, stable, tail });
-            if job.partial {
-                let _ = shared.events.send(Event::Metrics { name: "stt_partial".into(), ms: decode_ms });
-            }
-            if speaker == Speaker::Them {
-                them_partial_at = Some(Instant::now());
-            }
-            last_partial[idx] = (t, text);
-            continue;
-        }
-
-        finalized_upto[idx] = t + key.1 as u64 / 16;
+        self.finalized_upto[idx] = key.0 + ms_of(key.1 as u64);
         if text.is_none() {
             info!("[{}] dropped: {raw:?}", speaker.as_str());
         }
-        // Without headphones the mic hears the speakers: drop "me" text that repeats recent "them" speech.
+        let Some(text) = self.send_final(speaker, key.0, text) else { return };
+        let end_to_final = speech_end.elapsed().as_secs_f64() * 1000.0;
+        for (name, ms) in [("stt_decode", decode_ms), ("stt_queue_wait", wait_ms), ("speech_end_to_final", end_to_final)] {
+            let _ = self.shared.events.send(Event::Metrics { name: name.into(), ms });
+        }
+        info!("[{}] {:.1}s audio, decode {decode_ms:.0} ms, end->final {end_to_final:.0} ms: {text}", speaker.as_str(), key.1 as f32 / 16000.0);
+        self.store_final(speaker, key.0, end_ms, text);
+    }
+
+    /// The job's raw text (None if dropped) and decode ms. A speculative decode at the first pause is
+    /// reused when the confirmed end has the same audio.
+    fn decode_job(&mut self, job: Job, key: (u64, usize), queue: &SttQueue) -> (Option<String>, f64) {
+        let idx = job.speaker.idx();
+        let cached = if job.partial { None } else { self.spec[idx].take().filter(|(k, ..)| !job.speculative && *k == key) };
+        if let Some((_, text, ms)) = cached {
+            info!("[{}] speculative decode reused", job.speaker.as_str());
+            return (text, ms);
+        }
+        let t0 = Instant::now();
+        // Read per job: opening a call swaps the glossary without reloading whisper.
+        let glossary = self.shared.glossary.read().unwrap().join(", ");
+        let mut opts = DecodeOptions { initial_prompt: whisper_prompt(&glossary, &self.last_text[idx]), ..self.base.clone() };
+        if job.partial && opts.language.is_none() {
+            opts.language.clone_from(&self.lang);
+        }
+        let abort = job.partial.then_some(&queue.abort);
+        let out = decode(&mut self.states[idx], job.utt.samples, opts, abort, self.cfg.stt.no_speech_thold, job.speaker);
+        if let (Some((_, l)), false) = (&out, job.partial) {
+            self.lang = Some(l.clone()).filter(|l| !l.is_empty());
+        }
+        (out.map(|(text, _)| text), t0.elapsed().as_secs_f64() * 1000.0)
+    }
+
+    /// A partial or speculative decode: live text in the UI; a "them" speculative one also goes to auto-detect.
+    fn on_live(&mut self, speaker: Speaker, t: u64, end_ms: u64, text: String, partial: bool, decode_ms: f64) {
+        let shared = self.shared;
+        if !partial && speaker == Speaker::Them {
+            shared.answerer().on_them_early(crate::FinalSegment { speaker, t_ms: t, end_ms, text: text.clone() });
+        }
+        // Echo partials would flash the other side's words on our row until the final drops them.
+        if speaker == Speaker::Me && is_echo(shared, t, &text, live_partial(&self.last_partial[1].1, self.them_partial_at)) {
+            return;
+        }
+        // A speculative decode is the final unless speech resumes: show all of it as settled.
+        let idx = speaker.idx();
+        let prev = if partial { Some(&self.last_partial[idx]).filter(|(pt, _)| *pt == t).map_or("", |(_, s)| s) } else { text.as_str() };
+        let (stable, tail) = textproc::split_stable(prev, &text);
+        let _ = shared.events.send(Event::Partial { speaker, t, stable, tail });
+        if partial {
+            let _ = shared.events.send(Event::Metrics { name: "stt_partial".into(), ms: decode_ms });
+        }
+        if speaker == Speaker::Them {
+            self.them_partial_at = Some(Instant::now());
+        }
+        self.last_partial[idx] = (t, text);
+    }
+
+    /// Sends the final (an empty one removes the row in the UI); returns its text unless empty.
+    /// Without headphones the mic hears the speakers: "me" text that repeats recent "them" speech is dropped.
+    fn send_final(&self, speaker: Speaker, t: u64, mut text: Option<String>) -> Option<String> {
         if let (Speaker::Me, Some(tx)) = (speaker, &text)
-            && is_echo(shared, t, tx, live_partial(&last_partial[1].1, them_partial_at))
+            && is_echo(self.shared, t, tx, live_partial(&self.last_partial[1].1, self.them_partial_at))
         {
             info!("[me] echo dropped: {tx}");
             text = None;
         }
-        // An empty final removes the utterance's row from the UI.
         let text = text.unwrap_or_default();
         let question = speaker == Speaker::Them && !text.is_empty() && textproc::is_question(&text);
-        let _ = shared.events.send(Event::Final { speaker, t, text: text.clone(), question });
-        if text.is_empty() {
-            continue;
-        }
-        let end_to_final = job.speech_end.elapsed().as_secs_f64() * 1000.0;
-        for (name, ms) in [("stt_decode", decode_ms), ("stt_queue_wait", wait_ms), ("speech_end_to_final", end_to_final)] {
-            let _ = shared.events.send(Event::Metrics { name: name.into(), ms });
-        }
-        info!("[{}] {:.1}s audio, decode {decode_ms:.0} ms, end->final {end_to_final:.0} ms: {text}", speaker.as_str(), key.1 as f32 / 16000.0);
-        let seg = crate::FinalSegment { speaker, t_ms: t, end_ms: t + (job.utt.speech_end_sample - start) / 16, text: text.clone() };
+        let _ = self.shared.events.send(Event::Final { speaker, t, text: text.clone(), question });
+        Some(text).filter(|t| !t.is_empty())
+    }
+
+    /// Saves a final to the transcript and the call, and passes "them" speech on.
+    fn store_final(&mut self, speaker: Speaker, t: u64, end_ms: u64, text: String) {
+        let shared = self.shared;
+        let seg = crate::FinalSegment { speaker, t_ms: t, end_ms, text: text.clone() };
         crate::call::save_final(shared, &seg);
         shared.transcript.lock().unwrap().push(seg);
         // The translator skips speech already in the user's language (the detected language, or the configured one).
@@ -248,14 +297,13 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
             && shared.status.lock().unwrap().translate
             && let Some(tr) = shared.translator()
         {
-            tr.push(t, text.clone(), lang.as_deref().or(base.language.as_deref()));
+            tr.push(t, text.clone(), self.lang.as_deref().or(self.base.language.as_deref()));
         }
-        last_text[idx] = text;
+        self.last_text[speaker.idx()] = text;
         if speaker == Speaker::Them {
             shared.answerer().on_them_final();
         }
     }
-    Ok(())
 }
 
 /// A "them" partial younger than this can still be echoed by the mic.
