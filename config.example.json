@@ -1,5 +1,4 @@
 {
-  "anthropicApiKey": "",
   "model": "claude-sonnet-5-5",
   "altModel": "claude-opus-5-5",
   "quickModel": "claude-haiku-5-5",
@@ -14,8 +13,7 @@
   "llm": {
     "backend": "api",
     "provider": "openai",
-    "baseUrl": "",
-    "apiKey": ""
+    "baseUrl": ""
   },
   "claudeCode": {
     "command": [

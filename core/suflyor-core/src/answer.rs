@@ -371,17 +371,22 @@ pub(crate) fn session(cfg: &Config, tier: Tier, system: String) -> Session {
         Tier::Brief => 6000,
         Tier::Translate => 400,
     };
-    let key = |own: &str, env: &str| Some(own.to_string()).filter(|k| !k.is_empty()).or_else(|| std::env::var(env).ok()).unwrap_or_default();
     match cfg.llm.backend {
         Backend::ClaudeCode => {
             Session::Code(Box::new(llm::claude_code::CodeSession::new(cfg.claude_code.command.clone(), system, cfg.effort.clone(), tier.as_str())))
         }
-        Backend::Api => Session::Api(llm::api::ApiSession::new(key(&cfg.anthropic_api_key, "ANTHROPIC_API_KEY"), system, cfg.effort.clone(), max_tokens)),
+        Backend::Api => Session::Api(llm::api::ApiSession::new(cfg.anthropic_api_key.clone(), system, cfg.effort.clone(), max_tokens)),
         Backend::Openai => {
             // Reasoning models spend part of the budget thinking even at low effort: the short tiers get headroom.
             let max_tokens = if matches!(tier, Tier::Quick | Tier::Translate) { max_tokens * 4 } else { max_tokens };
-            let api_key = key(&cfg.llm.api_key, "SUFLYOR_LLM_API_KEY");
-            Session::OpenAi(llm::openai::OpenAiSession::new(&cfg.llm.provider, &cfg.llm.base_url, api_key, system, cfg.effort.clone(), max_tokens))
+            Session::OpenAi(llm::openai::OpenAiSession::new(
+                &cfg.llm.provider,
+                &cfg.llm.base_url,
+                cfg.llm.api_key.clone(),
+                system,
+                cfg.effort.clone(),
+                max_tokens,
+            ))
         }
     }
 }

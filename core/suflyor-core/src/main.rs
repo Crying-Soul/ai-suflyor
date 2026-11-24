@@ -219,14 +219,8 @@ fn main() -> Result<()> {
 
     let (cfg, loaded_from) = Config::load(args.config.as_deref())?;
     if args.print_config {
-        // The key stays out of other processes' pipes and logs; the UI keeps its own copy.
-        let mut shown = cfg;
-        for k in [&mut shown.anthropic_api_key, &mut shown.llm.api_key] {
-            if !k.is_empty() {
-                *k = "set".into();
-            }
-        }
-        println!("{}", serde_json::to_string(&shown)?);
+        // The keys are `serde(skip)`: they never reach other processes' pipes and logs.
+        println!("{}", serde_json::to_string(&cfg)?);
         return Ok(());
     }
     if let Some(dir) = &args.print_context {
@@ -364,10 +358,10 @@ fn start_llm(cfg: &Config, shared: &Arc<Shared>, context: &str) {
 /// keep what the user set with hotkeys.
 fn reload_llm(cfg: &mut Config, path: Option<&std::path::Path>, (key, llm_key): (Option<String>, Option<String>), shared: &Arc<Shared>) -> Result<()> {
     let (mut new, _) = Config::load(path)?;
-    if let Some(k) = key.filter(|_| new.anthropic_api_key.is_empty()) {
+    if let Some(k) = key {
         new.anthropic_api_key = k;
     }
-    if let Some(k) = llm_key.filter(|_| new.llm.api_key.is_empty()) {
+    if let Some(k) = llm_key {
         new.llm.api_key = k;
     }
     shared.answerer().stop();

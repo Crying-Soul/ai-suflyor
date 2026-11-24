@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
+    /// Never read from config.json: the UI keeps keys encrypted and starts the core with them in
+    /// `ANTHROPIC_API_KEY` / `SUFLYOR_LLM_API_KEY`; `reload_llm` brings new ones.
+    #[serde(skip)]
     pub anthropic_api_key: String,
     pub model: String,
     pub alt_model: String,
@@ -117,7 +120,8 @@ pub struct LlmConfig {
     pub provider: String,
     /// Overrides the provider's endpoint (a regional host, a proxy, "custom"). Up to `/v1`, without `/chat/completions`.
     pub base_url: String,
-    /// The provider's key. The UI keeps it encrypted (`llmApiKeyEnc`) and passes it as `SUFLYOR_LLM_API_KEY`.
+    /// The provider's key, from `SUFLYOR_LLM_API_KEY` or `reload_llm` (see `Config::anthropic_api_key`).
+    #[serde(skip)]
     pub api_key: String,
 }
 
@@ -223,12 +227,21 @@ impl Config {
                 let mut cfg: Config = serde_json::from_str(&raw).with_context(|| format!("parse {}", p.display()))?;
                 cfg.base_dir = std::path::absolute(&p)?.parent().map(Path::to_path_buf).unwrap_or_default();
                 cfg.fill_data_dir();
+                cfg.fill_keys();
                 return Ok((cfg, Some(p)));
             }
         }
         let mut cfg = Config { base_dir: std::env::current_dir()?, ..Config::default() };
         cfg.fill_data_dir();
+        cfg.fill_keys();
         Ok((cfg, None))
+    }
+
+    /// The keys from the environment the UI starts the core with.
+    fn fill_keys(&mut self) {
+        let env = |k| std::env::var(k).unwrap_or_default();
+        self.anthropic_api_key = env("ANTHROPIC_API_KEY");
+        self.llm.api_key = env("SUFLYOR_LLM_API_KEY");
     }
 
     /// The default is the real Documents folder (a Known Folder: it may be redirected to OneDrive or another drive).
@@ -267,12 +280,14 @@ mod tests {
     fn missing_keys_take_defaults_and_paths_resolve_against_the_config() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("config.json");
-        std::fs::write(&file, r#"{"model": "m", "vad": {"minSilenceMs": 700}, "dataDir": "data", "unknownKey": 1}"#).unwrap();
+        std::fs::write(&file, r#"{"model": "m", "vad": {"minSilenceMs": 700}, "dataDir": "data", "unknownKey": 1, "anthropicApiKey": "file"}"#).unwrap();
         let (cfg, from) = Config::load(Some(&file)).unwrap();
         assert_eq!(from.as_deref(), Some(file.as_path()));
         assert_eq!((cfg.model.as_str(), cfg.vad.min_silence_ms), ("m", 700));
         assert_eq!(cfg.vad.threshold, VadConfig::default().threshold, "the rest of a section keeps its defaults");
         assert_eq!(cfg.quick_model, Config::default().quick_model);
+        assert_eq!(cfg.anthropic_api_key, std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(), "keys come from the environment only");
+        assert!(!serde_json::to_string(&cfg).unwrap().contains("apiKey"), "and never go out with the config");
         assert_eq!(cfg.profile_dir(), dir.path().join("data").join("profile"));
         let abs = dir.path().join("abs");
         assert_eq!(cfg.path(&abs.display().to_string()), abs);
@@ -289,9 +304,10 @@ mod tests {
     }
 
     /// Form fields the core does not read: hotkeys (main only), the theme (windows.json), and
-    /// rows that are tools, not settings (the capture check, the log folder, the app name and icon).
+    /// rows that are tools, not settings (the capture check, the log folder, the app name and icon), and
+    /// the API keys (stored encrypted, passed in the environment).
     fn ui_only(key: &str) -> bool {
-        key.starts_with("hotkeys.") || ["theme", "privacy", "logs", "brand"].contains(&key)
+        key.starts_with("hotkeys.") || ["theme", "privacy", "logs", "brand", "anthropicApiKey", "llm.apiKey"].contains(&key)
     }
 
     /// serde fills in defaults for unknown keys without a word: a key the UI writes under another
