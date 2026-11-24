@@ -16,11 +16,11 @@ printf 'Authorization: Bearer %s\n' "$(tr -d '\r\n ' < "$TOKEN_FILE")" > "$HDR"
 api=(-sS -H @"$HDR" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
 
 # The installer's SHA-256 goes into the notes and a SHA256SUMS.txt asset: the unsigned exe can be
-# checked against it with `Get-FileHash`. The VirusTotal link works once the exe is uploaded there.
+# checked against it with `Get-FileHash`.
 EXE="Suflyor-Setup-$V.exe"
 SHA=$(sha256sum "$REL/$EXE" | cut -d' ' -f1)
 printf '%s  %s\n' "$SHA" "$EXE" > "$REL/SHA256SUMS.txt"
-body=$(python3 -c 'import json,sys; notes=open(sys.argv[1],encoding="utf-8").read().rstrip()+"\n\n**SHA-256** `"+sys.argv[5]+"`: "+sys.argv[4]+"\n\nПроверка в PowerShell: `Get-FileHash .\\"+sys.argv[5]+"` · [Отчёт VirusTotal](https://www.virustotal.com/gui/file/"+sys.argv[4]+")"; print(json.dumps({"tag_name":"v"+sys.argv[2],"name":sys.argv[3],"body":notes,"draft":False,"prerelease":False}))' "$REL/release-notes-$V.md" "$V" "$TITLE" "$SHA" "$EXE")
+body=$(python3 -c 'import json,sys; notes=open(sys.argv[1],encoding="utf-8").read().rstrip()+"\n\n**SHA-256** `"+sys.argv[5]+"`: "+sys.argv[4]+"\n\nПроверка в PowerShell: `Get-FileHash .\\"+sys.argv[5]+"`"; print(json.dumps({"tag_name":"v"+sys.argv[2],"name":sys.argv[3],"body":notes,"draft":False,"prerelease":False}))' "$REL/release-notes-$V.md" "$V" "$TITLE" "$SHA" "$EXE")
 resp=$(curl "${api[@]}" -X POST "https://api.github.com/repos/$REPO/releases" -d "$body")
 id=$(printf '%s' "$resp" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("id") or ""); sys.stderr.write(d.get("message","")+"\n")')
 [ -n "$id" ] || { echo "release not created"; exit 1; }
