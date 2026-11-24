@@ -3,8 +3,9 @@
 import { app } from "electron";
 import { autoUpdater } from "electron-updater";
 import type { UpdateState } from "../shared/protocol";
+import { isPackaged } from "./config";
 
-let state: UpdateState = { state: app.isPackaged ? "idle" : "dev", version: app.getVersion() };
+let state: UpdateState = { state: isPackaged ? "idle" : "dev", version: app.getVersion() };
 let notify: (s: UpdateState) => void = () => undefined;
 
 function set(patch: Partial<UpdateState>): void {
@@ -28,7 +29,7 @@ export const updateState = (): UpdateState => state;
 
 // The promises also reject on failure; the `error` event above already reports it.
 export function check(): void {
-  if (app.isPackaged) autoUpdater.checkForUpdates().catch(() => undefined);
+  if (isPackaged) autoUpdater.checkForUpdates().catch(() => undefined);
 }
 
 export function download(): void {

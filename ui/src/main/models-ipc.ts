@@ -3,7 +3,7 @@ import { app, ipcMain, net } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import type { SaveResult } from "../shared/protocol";
-import { configPath, configRel, newConfigPath, readRaw, rootDir } from "./config";
+import { configPath, isPackaged, configRel, newConfigPath, readRaw, rootDir } from "./config";
 import type { CoreProcess } from "./core";
 import { cuda } from "./cuda";
 import * as models from "./models";
@@ -18,7 +18,7 @@ export interface ModelsDeps {
 let d!: ModelsDeps;
 
 /** Where downloaded whisper models go: whisper/ in dev (next to whisper.dll), userData when installed. */
-const modelsDir = () => (app.isPackaged ? path.join(app.getPath("userData"), "whisper-models") : path.join(rootDir(), "whisper"));
+const modelsDir = () => (isPackaged ? path.join(app.getPath("userData"), "whisper-models") : path.join(rootDir(), "whisper"));
 
 /** stt.model as an absolute path (relative ones resolve against the config's folder, as in the core). */
 export function activeModel(): string {

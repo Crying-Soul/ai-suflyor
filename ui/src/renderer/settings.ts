@@ -1,12 +1,13 @@
-import type { ConfigSnapshot, ModelInfo, PackId, SaveResult, ThemeId, UpdateState } from "../shared/protocol";
+import type { BrandInfo, ConfigSnapshot, ModelInfo, PackId, SaveResult, ThemeId, UpdateState } from "../shared/protocol";
 import { appliesLive, THEMES } from "../shared/protocol";
 import type { HotkeyAction } from "../shared/protocol";
 import { accelerator, DEFAULT_HOTKEYS, duplicates } from "../shared/hotkeys";
+import { ICON_MAX_BYTES, NAME_MAX, nameProblem, PRESET_ICON } from "../shared/branding";
 import { CLAUDE_MODELS, defaultModels, modelChoices, PROVIDERS, provider } from "../shared/providers";
 import { $, api, askConfirm, guardPopups, keyLabel } from "./common";
 import { el, packOps, renderModels, small, WHISPER } from "./model-row";
 
-type Kind = "hotkey" | "model" | "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs" | "theme";
+type Kind = "hotkey" | "model" | "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs" | "theme" | "brand";
 
 interface Field {
   /** Dotted config.json key. */
@@ -165,6 +166,12 @@ const SECTIONS: Section[] = [
     title: "Приватность",
     note: "Все окна ассистента скрыты от демонстрации экрана, записи и скриншотов (Windows 10 2004 и новее). Не скрывает: камеру телефона, направленную на экран, карты видеозахвата и системное окно выбора файлов.",
     fields: [{ key: "privacy", label: "Проверка", kind: "privacy", hint: "Снимает экран с окнами ассистента так, как его видят Zoom, Teams и OBS. Окон на снимке быть не должно." }],
+  },
+  {
+    id: "brand",
+    title: "Кастомизация",
+    note: "Имя и значок программы в диспетчере задач (столбец «Имя»). Применяются после автоматического перезапуска; открытый звонок закроется.",
+    fields: [{ key: "brand", label: "Имя и значок", kind: "brand" }],
   },
   {
     id: "data",
@@ -351,6 +358,8 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       };
       return [el("div", { className: "privacy" }, run, out), () => undefined];
     }
+    case "brand":
+      return [brandControl(id), () => undefined];
     case "models":
     case "pack": {
       const ops = f.pack ? packOps(f.pack) : { ...WHISPER, onUse: reportUse };
@@ -366,6 +375,134 @@ function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLEle
       return [i, () => i.value];
     }
   }
+}
+
+/** Settings → Кастомизация: not a config.json key, main builds the renamed program and restarts. */
+function brandControl(id: string): HTMLElement {
+  const name = el("input", { type: "text", className: "input", id, maxLength: NAME_MAX, autocomplete: "off", spellcheck: false });
+  const nameErr = el("p", { className: "hint error" });
+  const preview = el("img", { className: "brand-icon", alt: "Значок программы" });
+  const pick = el("input", { type: "file", accept: ".ico,.png", hidden: true });
+  const iconErr = el("p", { className: "hint error" });
+  const status = el("p", { className: "hint" });
+  const applyBtn = el("button", { type: "button", className: "btn", textContent: "Применить и перезапустить" });
+  const resetBtn = el("button", { type: "button", className: "btn-ghost", textContent: "Вернуть исходные" });
+  /** A picked file, null for the original icon, undefined: keep the current one. */
+  let icon: string | null | undefined;
+  let original = "";
+  let originalIcon = "";
+
+  const say = (p: HTMLElement, text: string) => {
+    p.textContent = text;
+  };
+  const fail = (text: string) => {
+    status.textContent = text;
+    status.classList.add("error");
+  };
+  const load = () =>
+    api.brand.info().then((i) => {
+      original = i.original;
+      originalIcon = i.originalIcon;
+      name.placeholder = i.original;
+      name.value = i.name ?? "";
+      preview.src = i.icon;
+      icon = undefined;
+      status.classList.remove("error");
+      status.textContent = i.name ? `Сейчас: «${i.name}»${i.customIcon ? " со своим значком" : ""}.` : `Сейчас исходные имя и значок («${i.original}»).`;
+      if (i.error) fail(`Прошлое изменение не применено и отменено: ${i.error}`);
+      showPresets(i.presets);
+    });
+  // Names and icons of standard Windows programs: one click fills the name and the icon.
+  const presets = el("div", { className: "brand-presets" });
+  presets.setAttribute("role", "radiogroup");
+  presets.setAttribute("aria-label", "Готовые варианты");
+  const markPreset = (id: string | null) => {
+    for (const b of presets.children) b.setAttribute("aria-checked", String((b as HTMLElement).dataset.preset === id));
+  };
+  const showPresets = (list: BrandInfo["presets"]) => {
+    presets.replaceChildren(
+      ...list.map((p) => {
+        const b = el("button", { type: "button", className: "brand-preset" }, el("img", { src: p.icon, alt: "" }), el("span", { textContent: p.name }));
+        b.dataset.preset = p.id;
+        b.setAttribute("role", "radio");
+        b.onclick = () => {
+          name.value = p.name;
+          icon = `${PRESET_ICON}${p.id}`;
+          preview.src = p.icon;
+          nameErr.textContent = iconErr.textContent = "";
+          markPreset(p.id);
+        };
+        return b;
+      }),
+    );
+    presets.hidden = !list.length;
+    markPreset(null);
+  };
+  name.addEventListener("input", () => {
+    markPreset(null);
+    nameErr.textContent = name.value.trim() ? (nameProblem(name.value) ?? "") : "";
+  });
+  // Enter would submit the settings form.
+  name.addEventListener("keydown", (e) => e.key === "Enter" && e.preventDefault());
+  const choose = small("Выбрать значок…", () => pick.click());
+  const plain = small("Исходный значок", () => {
+    icon = null;
+    iconErr.textContent = "";
+    preview.src = originalIcon;
+    markPreset(null);
+  });
+  pick.onchange = async () => {
+    const f = pick.files?.[0];
+    pick.value = "";
+    if (!f) return;
+    if (f.size > ICON_MAX_BYTES) return say(iconErr, "Файл больше 1 МБ");
+    const path = api.pathForFile(f);
+    const r = await api.brand.checkIcon(path);
+    if ("error" in r) return say(iconErr, r.error);
+    iconErr.textContent = "";
+    icon = path;
+    preview.src = r.url;
+    markPreset(null);
+  };
+
+  applyBtn.onclick = async () => {
+    const value = name.value.trim() || original;
+    const problem = nameProblem(value);
+    if (problem) return say(nameErr, problem);
+    if (value === original && icon !== undefined && icon !== null) return say(nameErr, "Чтобы сменить значок, задайте и своё имя");
+    if (value === original) return resetBtn.click();
+    const call = await api.calls.current();
+    const warn = call?.dir ? ` Звонок «${call.title}» закроется.` : "";
+    if (!(await askConfirm(`Программа перезапустится под именем «${value}».${warn} Продолжить?`, "Перезапустить"))) return;
+    applyBtn.disabled = resetBtn.disabled = true;
+    status.classList.remove("error");
+    status.textContent = "Готовлю файл программы…";
+    const r = await api.brand.apply(value, icon);
+    // Success quits the app; an answer means nothing changed.
+    if (r) fail(r.error);
+    applyBtn.disabled = resetBtn.disabled = false;
+  };
+  resetBtn.onclick = async () => {
+    if (!(await askConfirm(`Вернуть имя «${original}» и исходный значок? Программа перезапустится.`, "Вернуть"))) return;
+    applyBtn.disabled = resetBtn.disabled = true;
+    await api.brand.reset();
+    await load();
+    applyBtn.disabled = resetBtn.disabled = false;
+  };
+  void load().catch((e) => fail(`Не удалось прочитать настройки: ${e}`));
+  return el(
+    "div",
+    { className: "brand" },
+    presets,
+    el("p", { className: "hint", textContent: "Или своё имя и значок:" }),
+    name,
+    nameErr,
+    el("div", { className: "brand-row" }, preview, choose, plain, pick),
+    el("p", { className: "hint", textContent: "Файл .ico или квадратный .png от 32×32 до 1 МБ." }),
+    iconErr,
+    el("div", { className: "brand-row" }, applyBtn, resetBtn),
+    status,
+  );
 }
 
 /** The in-app guide: first in the list, a page to read rather than a form section. */

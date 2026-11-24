@@ -7,13 +7,14 @@ import { DEFAULT_HOTKEYS } from "../shared/hotkeys";
 import * as update from "./update";
 import { createTray } from "./tray";
 import { startLogs } from "./log";
-import { CoreProcess, resolveCoreExe } from "./core";
+import { CoreProcess } from "./core";
 import { apiKey, coreEnv, encryptStoredKey, llmKey, secretPatch } from "./api-key";
 import { configPath, coreArgs, loadHotkeys, newConfigPath, readRaw, rootDir, writeConfig } from "./config";
 import { migrateContext, registerCallsIpc } from "./calls-ipc";
 import { markStarted } from "./calls";
 import { registerModelsIpc } from "./models-ipc";
 import { checkProtection, registerPrivacyIpc } from "./privacy";
+import * as branding from "./branding";
 import * as readiness from "./readiness";
 import { forgetClaudeCodeCheck, readyItems, refreshReady, registerReadyIpc } from "./ready-ipc";
 import { createOverlay, openCalls, openReady, openSettings, sendUi, setTheme, toggleClickThrough, togglePreset, toggleWindows, wins, zoom } from "./windows";
@@ -26,16 +27,12 @@ let lastStatus: Status | null = null;
 let lastCall: CallInfo | null = null;
 /** <dataDir> with the profile and the call folders; the core's effective value. */
 let dataDir = "";
-let tray: ReturnType<typeof createTray> | null = null;
 
 function emit(e: CoreEvent): void {
   if (e.ev === "status") lastStatus = e;
   if (e.ev === "ready" || e.ev === "core_down") coreError = e.ev === "core_down" ? e.message : null;
   if (e.ev === "status" || e.ev === "ready" || e.ev === "core_down") refreshReady();
-  if (e.ev === "call") {
-    lastCall = e;
-    tray?.setCall(e.dir ? e.title : null);
-  }
+  if (e.ev === "call") lastCall = e;
   // A restarted core knows nothing of the open call: open it again (its transcript is replayed).
   if (e.ev === "ready" && lastCall?.dir) openCall(lastCall.dir);
   // A muted source stays muted across a core restart (a settings change must not start listening).
@@ -57,7 +54,8 @@ function openCall(dir: string): void {
   core.send({ cmd: "open_call", dir });
 }
 
-const coreExe = resolveCoreExe(app.getAppPath(), app.isPackaged);
+// The copy with the custom name, if any: Task Manager lists the core under its file name and description.
+const coreExe = branding.coreExe();
 const core = new CoreProcess(coreExe, coreArgs, rootDir(), emit, coreEnv);
 
 /** What each hotkey does; the overlay buttons run the same through `ui:action`. */
@@ -168,8 +166,14 @@ function registerUpdateIpc(): void {
   ipcMain.on("update:install", () => void update.install(() => core.stopped()));
 }
 
+const logDir = path.join(app.getPath("userData"), "logs");
+startLogs(logDir);
+
+// With a custom name (Settings → Кастомизация) the original exe only starts the renamed copy,
+// and must not take the lock the copy is about to ask for.
+if (branding.handOver()) app.exit(0);
 // A second copy would add a second tray and core and fight over the hotkeys and config.json.
-if (!app.requestSingleInstanceLock()) app.exit(0);
+else if (!app.requestSingleInstanceLock()) app.exit(0);
 app.on("second-instance", () => {
   for (const w of Object.values(overlays)) w.showInactive();
 });
@@ -179,9 +183,6 @@ app.on("web-contents-created", (_e, wc) => {
   wc.on("will-navigate", (e) => e.preventDefault());
   wc.setWindowOpenHandler(() => ({ action: "deny" }));
 });
-
-const logDir = path.join(app.getPath("userData"), "logs");
-startLogs(logDir);
 
 app.whenReady().then(() => {
   ipcMain.on("core-cmd", (_e, cmd: Command) => {
@@ -205,6 +206,7 @@ app.whenReady().then(() => {
   registerUpdateIpc();
   registerReadyIpc({ core, saveConfig, coreError: () => coreError, lastStatus: () => lastStatus, logDir });
   registerPrivacyIpc(runCore);
+  branding.registerBrandingIpc();
   ipcMain.on("logs:open", () => shell.openPath(logDir));
   const replay = (w: BrowserWindow) => {
     if (lastStatus) w.webContents.send("core-event", { ev: "status", ...lastStatus });
@@ -215,7 +217,7 @@ app.whenReady().then(() => {
     createOverlay("transcript", replay);
     createOverlay("hints", replay);
   };
-  tray = createTray({
+  createTray({
     toggleWindows,
     openCalls,
     openSettings,
@@ -230,6 +232,8 @@ app.whenReady().then(() => {
     quit: () => app.quit(),
   });
   setTimeout(() => void checkProtection(runCore, emit), 3000);
+  // The custom name could not be applied at this start and was rolled back: say why.
+  if (branding.takeStartError()) openSettings("brand");
   registerHotkeys();
   encryptStoredKey();
   // The core reads the migrated profile, so it starts after the migration.
@@ -242,12 +246,17 @@ app.whenReady().then(() => {
     if (missing.length) console.log(`[ready] missing: ${missing.join(", ")}`);
     if (!readiness.blocking(items)) return overlaysOn();
     openReady();
-    wins.ready?.once("closed", overlaysOn);
+    // Not while quitting: new windows would cancel the quit (Выход, the restart into a renamed copy).
+    wins.ready?.once("closed", () => quitting || overlaysOn());
   }, overlaysOn);
 });
 
 // Quitting with a call open does not wait for its summary: the core leaves the call marked, and
 // writes the summary at the next start (call::defer_summary).
+let quitting = false;
+app.on("before-quit", () => {
+  quitting = true;
+});
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   core.stop();

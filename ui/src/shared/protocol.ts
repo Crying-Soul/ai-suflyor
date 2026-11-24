@@ -277,6 +277,33 @@ export interface PrivacyReport {
   osOk: boolean;
 }
 
+/** Settings → Кастомизация: the name and icon in Task Manager. */
+export interface BrandInfo {
+  /** The custom name; null: the original. */
+  name: string | null;
+  /** The original name ("Suflyor"). */
+  original: string;
+  /** Image data URL of the icon in use. */
+  icon: string;
+  originalIcon: string;
+  customIcon: boolean;
+  /** Why the last change failed (it was rolled back), or null. */
+  error: string | null;
+  /** Ready names with icons of standard Windows programs. */
+  presets: { id: string; name: string; icon: string }[];
+}
+
+export interface BrandApi {
+  info(): Promise<BrandInfo>;
+  /** Checks a picked .ico or .png; a preview, or what is wrong with it. */
+  checkIcon(path: string): Promise<{ url: string } | { error: string }>;
+  /** Builds the renamed program and restarts into it. `icon`: a file, null for the original icon,
+   * undefined to keep the current one. Resolves only on failure (nothing changed). */
+  apply(name: string, icon: string | null | undefined): Promise<{ error: string } | undefined>;
+  /** Back to the original name and icon; restarts. */
+  reset(): Promise<void>;
+}
+
 export interface RendererApi {
   send(cmd: Command): void;
   onEvent(cb: (e: CoreEvent) => void): void;
@@ -307,6 +334,7 @@ export interface RendererApi {
   update: UpdateApi;
   ready: ReadyApi;
   privacyTest(): Promise<PrivacyReport>;
+  brand: BrandApi;
   openLogs(): void;
   /** Disk path of a file dropped on the page. */
   pathForFile(file: File): string;

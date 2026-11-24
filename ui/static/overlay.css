@@ -6,6 +6,8 @@
 @import url("./themes.css");
 
 html, body { height: 100%; }
+/* The cursor is in a screen share while the overlay is not: a hand or I-beam over "nothing" gives it away. */
+body, body * { cursor: default !important; }
 body { overflow: hidden; font-size: var(--text-sm); }
 
 #app {

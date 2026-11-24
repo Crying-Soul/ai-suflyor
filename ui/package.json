@@ -1,5 +1,6 @@
 {
   "name": "suflyor",
+  "productName": "Suflyor",
   "version": "0.4.0",
   "description": "Suflyor, a live call prompter: hears mic + system audio, transcribes locally with whisper.cpp, answers with Claude",
   "main": "dist/main.js",
@@ -24,6 +25,7 @@
     "electron-updater": "^6.8.11",
     "esbuild": "^0.28.2",
     "gifenc": "^1.0.3",
+    "resedit": "^1.7.2",
     "typescript": "^7.0.2"
   },
   "build": {

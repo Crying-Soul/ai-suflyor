@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ThemeId, UiMessage } from "../shared/protocol";
 import { toTheme } from "../shared/protocol";
+import { customIcon } from "./branding";
 import { markImage } from "./tray";
 
 export type OverlayName = "transcript" | "hints";
@@ -29,7 +30,7 @@ const titleBar = () => ({ color: paper(), symbolColor: CHROME[win.theme].symbol,
 
 /** The taskbar and Alt+Tab icon of the normal windows (overlays stay out of both). */
 let icon: Electron.NativeImage | undefined;
-const windowIcon = () => (icon ??= markImage([[32, 1], [64, 2]]));
+const windowIcon = () => (icon ??= customIcon() ?? markImage([[32, 1], [64, 2]]));
 
 function webPreferences(): Electron.WebPreferences {
   return { preload: path.join(__dirname, "preload.js"), contextIsolation: true, nodeIntegration: false, sandbox: true };
@@ -191,11 +192,17 @@ export function zoom(delta: number): void {
   saveState();
 }
 
+/** Brings back a normal window, minimized too (Win+D): with no taskbar button the tray is the only way back. */
+function raise(w: BrowserWindow): void {
+  if (w.isMinimized()) w.restore();
+  w.focus();
+}
+
 /** `section`: the Settings section to show ("guide" is the in-app guide). */
 export function openSettings(section?: string): void {
   if (wins.settings) {
     if (section) sendUi(wins.settings, { kind: "section", id: section });
-    wins.settings.focus();
+    raise(wins.settings);
     return;
   }
   wins.settings = new BrowserWindow({
@@ -205,6 +212,9 @@ export function openSettings(section?: string): void {
     minHeight: 480,
     title: "Настройки",
     backgroundColor: paper(),
+    // No taskbar button: a full-screen share shows the taskbar. No minimize: there would be no button to restore from.
+    skipTaskbar: true,
+    minimizable: false,
     titleBarStyle: "hidden",
     titleBarOverlay: titleBar(),
     icon: windowIcon(),
@@ -220,7 +230,7 @@ export function openSettings(section?: string): void {
 
 export function openCalls(): void {
   if (wins.calls) {
-    wins.calls.focus();
+    raise(wins.calls);
     return;
   }
   wins.calls = new BrowserWindow({
@@ -230,6 +240,8 @@ export function openCalls(): void {
     minHeight: 480,
     title: "Звонки",
     backgroundColor: paper(),
+    skipTaskbar: true,
+    minimizable: false,
     titleBarStyle: "hidden",
     titleBarOverlay: titleBar(),
     icon: windowIcon(),
@@ -255,7 +267,7 @@ export function toggleWindows(): void {
 
 export function openReady(): void {
   if (wins.ready) {
-    wins.ready.focus();
+    raise(wins.ready);
     return;
   }
   wins.ready = new BrowserWindow({
@@ -265,6 +277,8 @@ export function openReady(): void {
     minHeight: 420,
     title: "Проверка готовности",
     backgroundColor: paper(),
+    skipTaskbar: true,
+    minimizable: false,
     titleBarStyle: "hidden",
     titleBarOverlay: titleBar(),
     icon: windowIcon(),

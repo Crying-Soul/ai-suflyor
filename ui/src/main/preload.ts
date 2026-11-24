@@ -78,6 +78,12 @@ const api: RendererApi = {
     },
   },
   privacyTest: () => ipcRenderer.invoke("privacy:test"),
+  brand: {
+    info: () => ipcRenderer.invoke("brand:info"),
+    checkIcon: (path) => ipcRenderer.invoke("brand:check-icon", path),
+    apply: (name, icon) => ipcRenderer.invoke("brand:apply", name, icon),
+    reset: () => ipcRenderer.invoke("brand:reset"),
+  },
   openLogs: () => ipcRenderer.send("logs:open"),
   pathForFile: (file) => webUtils.getPathForFile(file),
 };

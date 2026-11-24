@@ -2,6 +2,7 @@
 // overlay pair could be found only by hotkey, and there was no way to quit.
 import { Menu, Tray, nativeImage } from "electron";
 import { rasterize } from "../shared/mark";
+import { customIcon, customName } from "./branding";
 
 export interface TrayActions {
   toggleWindows(): void;
@@ -28,9 +29,14 @@ export function markImage(sizes: [size: number, scale: number][] = [[16, 1], [32
   return img;
 }
 
-export function createTray(a: TrayActions): { setCall(title: string | null): void } {
-  const tray = new Tray(markImage());
-  tray.setToolTip("Суфлёр");
+// Held at module level: a collected Tray takes its icon with it.
+let tray: Tray | null = null;
+
+export function createTray(a: TrayActions): void {
+  // The custom icon and name (Settings → Кастомизация) are on disk before the tray exists: no switch-over.
+  tray = new Tray(customIcon() ?? markImage());
+  // No call title here: hovering the tray during a full-screen share would show it.
+  tray.setToolTip(customName() ?? "Суфлёр");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Показать или скрыть окна", click: a.toggleWindows },
@@ -48,5 +54,4 @@ export function createTray(a: TrayActions): { setCall(title: string | null): voi
     ]),
   );
   tray.on("click", a.toggleWindows);
-  return { setCall: (title) => tray.setToolTip(title ? `Суфлёр: ${title}` : "Суфлёр") };
 }

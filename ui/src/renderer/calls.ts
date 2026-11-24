@@ -167,9 +167,10 @@ function renderPane(n: NodeData): void {
     }
     actions.append(
       button("Предпросмотр контекста", "btn-ghost", () => preview(n.dir)),
-      button("Экспорт в Markdown", "btn-ghost", () =>
-        api.calls.exportMd(n.dir).then((p) => p && setState("done", `Сохранено: ${p}`)).catch(fail),
-      ),
+      button("Экспорт в Markdown", "btn-ghost", async () => {
+        if (!(await nativeDialogOk())) return;
+        api.calls.exportMd(n.dir).then((p) => p && setState("done", `Сохранено: ${p}`)).catch(fail);
+      }),
     );
     actions.append(moveControl(n, isLive));
   } else if (n.kind === "folder") {
@@ -289,7 +290,7 @@ function filesField(n: NodeData): HTMLElement {
     );
     list.append(li);
   }
-  const add = button("Добавить файлы", "btn-ghost", () => addFiles(n));
+  const add = button("Добавить файлы", "btn-ghost", async () => (await nativeDialogOk(" Файлы можно перетащить в поле без него.")) && addFiles(n));
   box.append(list, add, el("p", "hint", "MD, TXT или PDF. Можно перетащить сюда. Текст PDF лежит рядом в files/.text и правится руками."));
   // Drop anywhere on the field.
   box.addEventListener("dragover", (e) => {
@@ -313,6 +314,15 @@ function filesField(n: NodeData): HTMLElement {
 async function refreshFiles(n: NodeData): Promise<void> {
   n.files = (await api.calls.node(n.dir)).files;
   pane.querySelector(".files-field")?.replaceWith(filesField(n));
+}
+
+/**
+ * The Windows file dialog is a separate window that capture protection does not reach (checked), so during a
+ * call (likely shared) it asks first. Dropping files on the field needs no dialog.
+ */
+async function nativeDialogOk(hint = ""): Promise<boolean> {
+  if (!(await api.calls.current())?.dir) return true;
+  return askConfirm(`Идёт звонок. Окно выбора файла Windows видно в демонстрации экрана.${hint}`, "Открыть всё равно", "Отмена");
 }
 
 async function addFiles(n: NodeData, paths?: string[]): Promise<void> {

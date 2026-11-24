@@ -20,6 +20,7 @@ function ourWindows(): [string, BrowserWindow][] {
     ["Подсказки", overlays.hints],
     ["Настройки", wins.settings],
     ["Звонки", wins.calls],
+    ["Проверка готовности", wins.ready],
   ];
   return all.filter((e): e is [string, BrowserWindow] => Boolean(e[1]));
 }
@@ -27,6 +28,8 @@ function ourWindows(): [string, BrowserWindow][] {
 /** Display affinity of each window, read by the core (0x11 = hidden from capture). */
 async function affinities(runCore: RunCore): Promise<{ name: string; hidden: boolean }[]> {
   const list = ourWindows();
+  // Overlays open only after «Проверка готовности»; the core refuses --check-affinity without windows.
+  if (!list.length) return [];
   const { stdout } = await runCore(["--check-affinity", ...list.map(([, w]) => hwnd(w))]);
   const lines = stdout.trim().split(/\r?\n/);
   return list.map(([name], i) => ({ name, hidden: /\s0x11$/.test(lines[i] ?? "") }));

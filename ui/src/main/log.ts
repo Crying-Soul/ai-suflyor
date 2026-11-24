@@ -24,17 +24,14 @@ export function prune(dir: string, now = Date.now(), keepDays = KEEP_DAYS): stri
 export function startLogs(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
   prune(dir);
-  let open = "";
-  let out: fs.WriteStream | null = null;
+  // Synchronous: the original exe logs the hand-over to the renamed copy and exits at once (app.exit).
   const write = (level: string, args: unknown[]) => {
     const now = new Date();
-    if (day(now) !== open) {
-      out?.end();
-      open = day(now);
-      out = fs.createWriteStream(path.join(dir, `${open}.log`), { flags: "a" });
-      out.on("error", () => (out = null)); // a full or locked disk must not crash the app
+    try {
+      fs.appendFileSync(path.join(dir, `${day(now)}.log`), `${now.toTimeString().slice(0, 8)} ${level} ${format(...args)}\n`);
+    } catch {
+      // a full or locked disk must not crash the app
     }
-    out?.write(`${now.toTimeString().slice(0, 8)} ${level} ${format(...args)}\n`);
   };
   for (const level of ["log", "warn", "error"] as const) {
     const orig = console[level].bind(console);

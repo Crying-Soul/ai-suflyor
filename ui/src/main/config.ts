@@ -6,9 +6,15 @@ import type { Hotkeys } from "../shared/protocol";
 import { DEFAULT_HOTKEYS } from "../shared/hotkeys";
 import * as calls from "./calls";
 
+/**
+ * An installed build. Not `isPackaged`: Electron decides that by the exe's name, so the renamed
+ * copy of electron.exe (Settings → Кастомизация) in dev would pass for an installed build.
+ */
+export const isPackaged = app.getAppPath().toLowerCase().startsWith(process.resourcesPath.toLowerCase());
+
 /** Project root in dev (parent of ui/), the exe folder when packaged. */
 export function rootDir(): string {
-  return app.isPackaged ? path.dirname(app.getPath("exe")) : path.resolve(app.getAppPath(), "..");
+  return isPackaged ? path.dirname(app.getPath("exe")) : path.resolve(app.getAppPath(), "..");
 }
 
 function findConfig(): string | null {
@@ -18,7 +24,7 @@ function findConfig(): string | null {
 
 /** Where a new config.json goes when none exists yet (the install folder may be read-only). */
 export function newConfigPath(): string {
-  return app.isPackaged ? path.join(app.getPath("userData"), "config.json") : path.join(rootDir(), "config.json");
+  return isPackaged ? path.join(app.getPath("userData"), "config.json") : path.join(rootDir(), "config.json");
 }
 
 let file = findConfig();

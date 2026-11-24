@@ -31,7 +31,7 @@ export const cuda = pack({
     fs.mkdirSync(tmp);
     // Windows' own bsdtar reads zip; a tar earlier in PATH (Git's) may not.
     const tar = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
-    await promisify(execFile)(tar, ["-xf", zip, "-C", tmp, ...FILES.map((f) => `Release/${f}`)]);
+    await promisify(execFile)(tar, ["-xf", zip, "-C", tmp, ...FILES.map((f) => `Release/${f}`)], { windowsHide: true });
     for (const f of FILES) fs.renameSync(path.join(tmp, "Release", f), path.join(dir, f));
     fs.rmSync(tmp, { recursive: true, force: true });
     fs.rmSync(zip, { force: true });
