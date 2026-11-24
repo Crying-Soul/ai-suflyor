@@ -210,172 +210,200 @@ function get(obj: Record<string, unknown>, key: string): unknown {
   return key.split(".").reduce<unknown>((o, k) => (o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined), obj);
 }
 
-function control(f: Field, value: unknown, id: string, mics: string[]): [HTMLElement, () => unknown] {
-  switch (f.kind) {
-    case "bool": {
-      const b = el("button", { type: "button", className: "switch", id, textContent: value ? "Вкл." : "Выкл." });
-      b.setAttribute("role", "switch");
-      b.setAttribute("aria-checked", String(Boolean(value)));
-      b.onclick = () => {
-        const on = b.getAttribute("aria-checked") !== "true";
-        b.setAttribute("aria-checked", String(on));
-        b.textContent = on ? "Вкл." : "Выкл.";
-        markDirty();
-      };
-      return [b, () => b.getAttribute("aria-checked") === "true"];
-    }
-    case "number": {
-      const i = el("input", { type: "number", className: "input num", id, name: f.key, value: String(value ?? "") });
-      if (f.min !== undefined) i.min = String(f.min);
-      if (f.max !== undefined) i.max = String(f.max);
-      if (f.step !== undefined) i.step = String(f.step);
-      i.required = true;
-      return [i, () => i.valueAsNumber];
-    }
-    case "textarea":
-    case "list": {
-      const text = f.kind === "list" ? ((value as string[] | undefined) ?? []).join("\n") : String(value ?? "");
-      const t = el("textarea", { className: "textarea", id, name: f.key, value: text, rows: f.kind === "list" ? 6 : 4 });
-      return [t, () => (f.kind === "list" ? t.value.split("\n").map((s) => s.trim()).filter(Boolean) : t.value)];
-    }
-    case "model": {
-      const i = el("input", { type: "text", className: "input", id, name: f.key, value: String(value ?? "") });
-      i.setAttribute("list", modelList.id);
-      i.autocomplete = "off";
-      i.spellcheck = false;
-      i.required = true;
-      return [i, () => i.value.trim()];
-    }
-    case "select":
-    case "mic": {
-      const opts: [string, string][] = f.kind === "mic" ? [["", "Системный по умолчанию"], ...mics.map((m): [string, string] => [m, m])] : f.options!;
-      const v = String(value ?? "");
-      // A stored value the list does not have (a renamed mic, a newer model) stays selectable.
-      if (!opts.some(([o]) => o === v)) opts.push([v, v]);
-      const s = el("select", { className: "select", id, name: f.key }, ...opts.map(([o, l]) => el("option", { value: o, textContent: l })));
-      s.value = v;
-      return [s, () => s.value];
-    }
-    case "source": {
-      const v = String(value ?? "system");
-      const isProc = v.startsWith("process:");
-      const s = el("select", { className: "select", id, name: f.key },
-        el("option", { value: "system", textContent: "Весь звук системы" }),
-        el("option", { value: "process", textContent: "Одно приложение" }),
-      );
-      s.value = isProc ? "process" : "system";
-      const exe = el("input", { type: "text", className: "input", name: `${f.key}.exe`, placeholder: "chrome.exe", value: isProc ? v.slice(8) : "" });
-      exe.setAttribute("aria-label", "Исполняемый файл приложения");
-      exe.pattern = ".*\\.exe";
-      // The programs playing sound now drop down under the field; any other name can still be typed.
-      const apps = el("datalist", { id: `${id}-apps` });
-      exe.setAttribute("list", apps.id);
-      let listed = false;
-      const listApps = () => {
-        if (listed) return;
-        listed = true;
-        void api.listAudioApps().then((names) => apps.replaceChildren(...names.map((n) => el("option", { value: n })))).catch(() => (listed = false));
-      };
-      exe.addEventListener("focus", listApps);
-      const sync = () => {
-        exe.hidden = s.value !== "process";
-        exe.required = s.value === "process";
-        if (s.value === "process") listApps();
-      };
-      s.addEventListener("change", sync);
-      sync();
-      return [el("div", { className: "pair" }, s, exe, apps), () => (s.value === "process" ? `process:${exe.value.trim()}` : "system")];
-    }
-    case "hotkey": {
-      const action = f.key.slice("hotkeys.".length) as HotkeyAction;
-      let accel = String(value ?? DEFAULT_HOTKEYS[action] ?? "");
-      const i = el("input", { type: "text", className: "input hotkey", id, name: f.key, readOnly: true, value: keyLabel(accel), placeholder: "нажмите сочетание" });
-      i.dataset.action = action;
-      i.addEventListener("keydown", (e) => {
-        if (e.key === "Tab" && !e.ctrlKey && !e.altKey) return;
-        e.preventDefault();
-        if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey) return i.blur();
-        const a = accelerator(e);
-        if (!a) return;
-        accel = a;
-        i.value = keyLabel(a);
-        hotkeysChanged();
-      });
-      const reset = el("button", { type: "button", className: "btn-ghost small", textContent: "По умолчанию" });
-      reset.onclick = () => {
-        accel = DEFAULT_HOTKEYS[action];
-        i.value = keyLabel(accel);
-        hotkeysChanged();
-      };
-      hotkeyReaders.set(action, () => accel);
-      return [el("div", { className: "hotkey-row" }, i, reset, el("p", { className: "hint error", id: `${id}-problem` })), () => accel];
-    }
-    case "logs": {
-      const open = el("button", { type: "button", className: "btn-ghost", textContent: "Открыть папку логов" });
-      open.onclick = () => api.openLogs();
-      // The file this window edits: for support, not in the title bar.
-      return [el("div", { className: "control" }, open, el("p", { className: "hint", textContent: `Файл настроек: ${snapshot.path}` })), () => undefined];
-    }
-    case "theme": {
-      // Not a config.json key: main keeps the theme with the window positions and applies it at once.
-      const group = el("div", { className: "themes", id });
-      group.setAttribute("role", "radiogroup");
-      const mark = (id: string) => {
-        for (const b of group.children) b.setAttribute("aria-checked", String((b as HTMLElement).dataset.theme === id));
-      };
-      for (const t of THEMES) {
-        const [name, note] = THEME_TEXT[t];
-        // data-theme scopes that theme's tokens to the card: it previews itself.
-        const b = el("button", { type: "button", className: "theme" }, el("span", { className: "sw", ariaHidden: "true" }, el("span", { className: "sw-q" }), el("span", { className: "sw-a", textContent: "Аа" })), el("span", { className: "sw-name", textContent: name }), el("span", { className: "sw-note", textContent: note }));
-        b.dataset.theme = t;
-        b.setAttribute("role", "radio");
-        b.onclick = () => {
-          mark(t);
-          api.setTheme(t);
-        };
-        group.append(b);
-      }
-      mark(document.documentElement.dataset.theme ?? "");
-      return [group, () => undefined];
-    }
-    case "privacy": {
-      const out = el("div", { className: "privacy-out" });
-      const run = el("button", { type: "button", className: "btn-ghost", textContent: "Проверить захват" });
-      run.onclick = async () => {
-        run.disabled = true;
-        out.replaceChildren(el("p", { className: "hint", textContent: "Снимаю экран…" }));
-        try {
-          const r = await api.privacyTest();
-          const list = el("ul", { className: "privacy-list" }, ...r.windows.map((w) => el("li", { className: w.hidden ? "ok" : "bad", textContent: `${w.name}: ${w.hidden ? "скрыто" : "ВИДНО в захвате"}` })));
-          if (!r.osOk) list.append(el("li", { className: "bad", textContent: "Windows старше 10 2004: окна видны чёрными прямоугольниками" }));
-          const img = el("img", { src: r.image, alt: "Экран так, как его видят другие программы" });
-          out.replaceChildren(list, img);
-        } catch (e) {
-          out.replaceChildren(el("p", { className: "hint error", textContent: `Не удалось: ${e}` }));
-        } finally {
-          run.disabled = false;
-        }
-      };
-      return [el("div", { className: "privacy" }, run, out), () => undefined];
-    }
-    case "brand":
-      return [brandControl(id), () => undefined];
-    case "models":
-    case "pack": {
-      const ops = f.pack ? packOps(f.pack) : { ...WHISPER, onUse: reportUse };
-      const box = el("ul", { className: "models" });
-      renderModels(box, ops).catch(() => box.replaceChildren(el("li", { className: "hint", textContent: "Список моделей недоступен." })));
-      api.models.onChange(() => void renderModels(box, ops));
-      return [box, () => value];
-    }
-    default: {
-      const i = el("input", { type: f.kind === "secret" ? "password" : "text", className: "input", id, name: f.key, value: String(value ?? "") });
-      i.autocomplete = "off";
-      i.spellcheck = false;
-      return [i, () => i.value];
-    }
+/** A form control for one field and the reader of its value. */
+type Control = (f: Field, value: unknown, id: string, mics: string[]) => [HTMLElement, () => unknown];
+
+const switchControl: Control = (_f, value, id) => {
+  const b = el("button", { type: "button", className: "switch", id, textContent: value ? "Вкл." : "Выкл." });
+  b.setAttribute("role", "switch");
+  b.setAttribute("aria-checked", String(Boolean(value)));
+  b.onclick = () => {
+    const on = b.getAttribute("aria-checked") !== "true";
+    b.setAttribute("aria-checked", String(on));
+    b.textContent = on ? "Вкл." : "Выкл.";
+    markDirty();
+  };
+  return [b, () => b.getAttribute("aria-checked") === "true"];
+};
+
+const numberControl: Control = (f, value, id) => {
+  const i = el("input", { type: "number", className: "input num", id, name: f.key, value: String(value ?? "") });
+  if (f.min !== undefined) i.min = String(f.min);
+  if (f.max !== undefined) i.max = String(f.max);
+  if (f.step !== undefined) i.step = String(f.step);
+  i.required = true;
+  return [i, () => i.valueAsNumber];
+};
+
+const textareaControl: Control = (f, value, id) => {
+  const list = f.kind === "list";
+  const text = list ? ((value as string[] | undefined) ?? []).join("\n") : String(value ?? "");
+  const t = el("textarea", { className: "textarea", id, name: f.key, value: text, rows: list ? 6 : 4 });
+  return [t, () => (list ? t.value.split("\n").map((s) => s.trim()).filter(Boolean) : t.value)];
+};
+
+const modelControl: Control = (f, value, id) => {
+  const i = el("input", { type: "text", className: "input", id, name: f.key, value: String(value ?? "") });
+  i.setAttribute("list", modelList.id);
+  i.autocomplete = "off";
+  i.spellcheck = false;
+  i.required = true;
+  return [i, () => i.value.trim()];
+};
+
+const selectControl: Control = (f, value, id, mics) => {
+  const opts: [string, string][] = f.kind === "mic" ? [["", "Системный по умолчанию"], ...mics.map((m): [string, string] => [m, m])] : f.options!;
+  const v = String(value ?? "");
+  // A stored value the list does not have (a renamed mic, a newer model) stays selectable.
+  if (!opts.some(([o]) => o === v)) opts.push([v, v]);
+  const s = el("select", { className: "select", id, name: f.key }, ...opts.map(([o, l]) => el("option", { value: o, textContent: l })));
+  s.value = v;
+  return [s, () => s.value];
+};
+
+const sourceControl: Control = (f, value, id) => {
+  const v = String(value ?? "system");
+  const isProc = v.startsWith("process:");
+  const s = el("select", { className: "select", id, name: f.key },
+    el("option", { value: "system", textContent: "Весь звук системы" }),
+    el("option", { value: "process", textContent: "Одно приложение" }),
+  );
+  s.value = isProc ? "process" : "system";
+  const exe = el("input", { type: "text", className: "input", name: `${f.key}.exe`, placeholder: "chrome.exe", value: isProc ? v.slice(8) : "" });
+  exe.setAttribute("aria-label", "Исполняемый файл приложения");
+  exe.pattern = ".*\\.exe";
+  // The programs playing sound now drop down under the field; any other name can still be typed.
+  const apps = el("datalist", { id: `${id}-apps` });
+  exe.setAttribute("list", apps.id);
+  let listed = false;
+  const listApps = () => {
+    if (listed) return;
+    listed = true;
+    void api.listAudioApps().then((names) => apps.replaceChildren(...names.map((n) => el("option", { value: n })))).catch(() => (listed = false));
+  };
+  exe.addEventListener("focus", listApps);
+  const sync = () => {
+    exe.hidden = s.value !== "process";
+    exe.required = s.value === "process";
+    if (s.value === "process") listApps();
+  };
+  s.addEventListener("change", sync);
+  sync();
+  return [el("div", { className: "pair" }, s, exe, apps), () => (s.value === "process" ? `process:${exe.value.trim()}` : "system")];
+};
+
+const hotkeyControl: Control = (f, value, id) => {
+  const action = f.key.slice("hotkeys.".length) as HotkeyAction;
+  let accel = String(value ?? DEFAULT_HOTKEYS[action] ?? "");
+  const i = el("input", { type: "text", className: "input hotkey", id, name: f.key, readOnly: true, value: keyLabel(accel), placeholder: "нажмите сочетание" });
+  i.dataset.action = action;
+  i.addEventListener("keydown", (e) => {
+    if (e.key === "Tab" && !e.ctrlKey && !e.altKey) return;
+    e.preventDefault();
+    if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.shiftKey) return i.blur();
+    const a = accelerator(e);
+    if (!a) return;
+    accel = a;
+    i.value = keyLabel(a);
+    hotkeysChanged();
+  });
+  const reset = el("button", { type: "button", className: "btn-ghost small", textContent: "По умолчанию" });
+  reset.onclick = () => {
+    accel = DEFAULT_HOTKEYS[action];
+    i.value = keyLabel(accel);
+    hotkeysChanged();
+  };
+  hotkeyReaders.set(action, () => accel);
+  return [el("div", { className: "hotkey-row" }, i, reset, el("p", { className: "hint error", id: `${id}-problem` })), () => accel];
+};
+
+const logsControl: Control = () => {
+  const open = el("button", { type: "button", className: "btn-ghost", textContent: "Открыть папку логов" });
+  open.onclick = () => api.openLogs();
+  // The file this window edits: for support, not in the title bar.
+  return [el("div", { className: "control" }, open, el("p", { className: "hint", textContent: `Файл настроек: ${snapshot.path}` })), () => undefined];
+};
+
+/** Not a config.json key: main keeps the theme with the window positions and applies it at once. */
+const themeControl: Control = (_f, _value, id) => {
+  const group = el("div", { className: "themes", id });
+  group.setAttribute("role", "radiogroup");
+  const mark = (id: string) => {
+    for (const b of group.children) b.setAttribute("aria-checked", String((b as HTMLElement).dataset.theme === id));
+  };
+  for (const t of THEMES) {
+    const [name, note] = THEME_TEXT[t];
+    // data-theme scopes that theme's tokens to the card: it previews itself.
+    const b = el("button", { type: "button", className: "theme" }, el("span", { className: "sw", ariaHidden: "true" }, el("span", { className: "sw-q" }), el("span", { className: "sw-a", textContent: "Аа" })), el("span", { className: "sw-name", textContent: name }), el("span", { className: "sw-note", textContent: note }));
+    b.dataset.theme = t;
+    b.setAttribute("role", "radio");
+    b.onclick = () => {
+      mark(t);
+      api.setTheme(t);
+    };
+    group.append(b);
   }
-}
+  mark(document.documentElement.dataset.theme ?? "");
+  return [group, () => undefined];
+};
+
+const privacyControl: Control = () => {
+  const out = el("div", { className: "privacy-out" });
+  const run = el("button", { type: "button", className: "btn-ghost", textContent: "Проверить захват" });
+  run.onclick = async () => {
+    run.disabled = true;
+    out.replaceChildren(el("p", { className: "hint", textContent: "Снимаю экран…" }));
+    try {
+      const r = await api.privacyTest();
+      const list = el("ul", { className: "privacy-list" }, ...r.windows.map((w) => el("li", { className: w.hidden ? "ok" : "bad", textContent: `${w.name}: ${w.hidden ? "скрыто" : "ВИДНО в захвате"}` })));
+      if (!r.osOk) list.append(el("li", { className: "bad", textContent: "Windows старше 10 2004: окна видны чёрными прямоугольниками" }));
+      const img = el("img", { src: r.image, alt: "Экран так, как его видят другие программы" });
+      out.replaceChildren(list, img);
+    } catch (e) {
+      out.replaceChildren(el("p", { className: "hint error", textContent: `Не удалось: ${e}` }));
+    } finally {
+      run.disabled = false;
+    }
+  };
+  return [el("div", { className: "privacy" }, run, out), () => undefined];
+};
+
+const modelsControl: Control = (f, value) => {
+  const ops = f.pack ? packOps(f.pack) : { ...WHISPER, onUse: reportUse };
+  const box = el("ul", { className: "models" });
+  renderModels(box, ops).catch(() => box.replaceChildren(el("li", { className: "hint", textContent: "Список моделей недоступен." })));
+  api.models.onChange(() => void renderModels(box, ops));
+  return [box, () => value];
+};
+
+const inputControl: Control = (f, value, id) => {
+  const i = el("input", { type: f.kind === "secret" ? "password" : "text", className: "input", id, name: f.key, value: String(value ?? "") });
+  i.autocomplete = "off";
+  i.spellcheck = false;
+  return [i, () => i.value];
+};
+
+const CONTROLS: Record<Kind, Control> = {
+  bool: switchControl,
+  number: numberControl,
+  textarea: textareaControl,
+  list: textareaControl,
+  model: modelControl,
+  select: selectControl,
+  mic: selectControl,
+  source: sourceControl,
+  hotkey: hotkeyControl,
+  logs: logsControl,
+  theme: themeControl,
+  privacy: privacyControl,
+  brand: (_f, _value, id) => [brandControl(id), () => undefined],
+  models: modelsControl,
+  pack: modelsControl,
+  text: inputControl,
+  secret: inputControl,
+};
+
+const control: Control = (f, value, id, mics) => CONTROLS[f.kind](f, value, id, mics);
 
 /** Settings → Кастомизация: not a config.json key, main builds the renamed program and restarts. */
 function brandControl(id: string): HTMLElement {
