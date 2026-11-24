@@ -380,6 +380,15 @@ fn request_id() -> String {
 mod tests {
     use super::*;
 
+    /// The settings offer what `PROVIDERS` knows: an id on one side only would be sent as "custom" or never shown.
+    #[test]
+    fn ui_lists_the_same_providers() {
+        let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ui/src/shared/providers.ts");
+        let ts = std::fs::read_to_string(file).unwrap();
+        let ui: Vec<&str> = ts.lines().filter_map(|l| l.trim().strip_prefix("id: \"")?.split('"').next()).collect();
+        assert_eq!(ui, PROVIDERS.iter().map(|p| p.id).collect::<Vec<_>>());
+    }
+
     async fn read(parts: &[&str]) -> (Result<String>, Vec<(u64, u64, u64, Option<f64>)>) {
         let chunks: Vec<std::result::Result<Vec<u8>, std::io::Error>> = parts.iter().map(|p| Ok(p.as_bytes().to_vec())).collect();
         let mut usage = vec![];
