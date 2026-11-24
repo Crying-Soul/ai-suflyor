@@ -191,11 +191,13 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
                 spec[idx] = Some((key, raw, decode_ms));
             }
             let Some(text) = text else { continue };
-            if job.speculative
-                && speaker == Speaker::Them
-                && let Some(a) = shared.answerer()
-            {
-                a.on_them_early(crate::FinalSegment { speaker, t_ms: t, end_ms: t + (job.utt.speech_end_sample - start) / 16, text: text.clone() });
+            if job.speculative && speaker == Speaker::Them {
+                shared.answerer().on_them_early(crate::FinalSegment {
+                    speaker,
+                    t_ms: t,
+                    end_ms: t + (job.utt.speech_end_sample - start) / 16,
+                    text: text.clone(),
+                });
             }
             // Echo partials would flash the other side's words on our row until the final drops them.
             if speaker == Speaker::Me && is_echo(shared, t, &text, live_partial(&last_partial[1].1, them_partial_at)) {
@@ -249,10 +251,8 @@ fn run(cfg: &Config, shared: &Shared, queue: &SttQueue) -> anyhow::Result<()> {
             tr.push(t, text.clone(), lang.as_deref().or(base.language.as_deref()));
         }
         last_text[idx] = text;
-        if speaker == Speaker::Them
-            && let Some(a) = shared.answerer()
-        {
-            a.on_them_final();
+        if speaker == Speaker::Them {
+            shared.answerer().on_them_final();
         }
     }
     Ok(())

@@ -93,8 +93,9 @@ impl Shared {
         let _ = self.events.send(Event::Status(snapshot));
     }
 
-    pub fn answerer(&self) -> Option<answer::Answerer> {
-        self.answerer.read().unwrap().clone()
+    /// The Claude side in use. `run` starts it before audio and commands, so it is always there.
+    pub fn answerer(&self) -> answer::Answerer {
+        self.answerer.read().unwrap().clone().expect("the answerer starts before audio and commands")
     }
 
     pub fn translator(&self) -> Option<translate::Translator> {
@@ -304,13 +305,13 @@ async fn run(mut cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
     let _ = tx.send(Event::Ready { version: env!("CARGO_PKG_VERSION").into() });
     shared.update_status(|_| {});
 
+    start_llm(&cfg, &shared, &profile.text);
     let queue = Arc::new(SttQueue::default());
     let stt = stt_worker::spawn(&cfg, shared.clone(), queue.clone())?;
     let streams = StreamSet::start(&cfg, shared.clone(), queue.clone(), record_dir)?;
-    let mut answerer = start_llm(&cfg, &shared, &profile.text);
     // Calls left open at the last quit get their summary now.
     for dir in call::pending_summaries(&cfg) {
-        call::summarize(&cfg, &shared, &answerer, dir);
+        call::summarize(&cfg, &shared, dir);
     }
 
     // stdin reader: commands from the UI. EOF means the UI died -> shut down.
@@ -322,11 +323,10 @@ async fn run(mut cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
                 if line.trim().is_empty() { continue; }
                 match serde_json::from_str::<Command>(&line) {
                     Ok(Command::Shutdown) => break,
-                    Ok(Command::ReloadLlm { anthropic_api_key, llm_api_key }) => match reload_llm(&mut cfg, config_path.as_deref(), (anthropic_api_key, llm_api_key), &shared, &answerer) {
-                        Ok(a) => answerer = a,
-                        Err(e) => { let _ = tx.send(Event::Error { message: format!("настройки не применились: {e:#}"), kind: None }); }
+                    Ok(Command::ReloadLlm { anthropic_api_key, llm_api_key }) => if let Err(e) = reload_llm(&mut cfg, config_path.as_deref(), (anthropic_api_key, llm_api_key), &shared) {
+                        let _ = tx.send(Event::Error { message: format!("настройки не применились: {e:#}"), kind: None });
                     },
-                    Ok(cmd) => handle(cmd, &cfg, &shared, &answerer),
+                    Ok(cmd) => handle(cmd, &cfg, &shared),
                     Err(e) => { let _ = tx.send(Event::Error { message: format!("bad command {line:?}: {e}"), kind: None }); }
                 }
             }
@@ -350,27 +350,19 @@ async fn run(mut cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
 }
 
 /// The Claude side: the answerer and the translator, put into `shared`.
-fn start_llm(cfg: &Config, shared: &Arc<Shared>, context: &str) -> answer::Answerer {
-    let answerer = answer::Answerer::start(cfg, shared.clone(), context);
-    *shared.answerer.write().unwrap() = Some(answerer.clone());
+fn start_llm(cfg: &Config, shared: &Arc<Shared>, context: &str) {
+    *shared.answerer.write().unwrap() = Some(answer::Answerer::start(cfg, shared.clone(), context));
     let translator = translate::Translator::start(cfg, shared.clone());
     if shared.status.lock().unwrap().translate {
         translator.warm();
     }
     *shared.translator.write().unwrap() = Some(translator);
-    answerer
 }
 
 /// `reload_llm`: re-reads the config and replaces the Claude side; audio and speech recognition go on.
 /// Status switches the new config changed (auto, model, mode, translation) follow it; the others
 /// keep what the user set with hotkeys.
-fn reload_llm(
-    cfg: &mut Config,
-    path: Option<&std::path::Path>,
-    (key, llm_key): (Option<String>, Option<String>),
-    shared: &Arc<Shared>,
-    old: &answer::Answerer,
-) -> Result<answer::Answerer> {
+fn reload_llm(cfg: &mut Config, path: Option<&std::path::Path>, (key, llm_key): (Option<String>, Option<String>), shared: &Arc<Shared>) -> Result<()> {
     let (mut new, _) = Config::load(path)?;
     if let Some(k) = key.filter(|_| new.anthropic_api_key.is_empty()) {
         new.anthropic_api_key = k;
@@ -378,7 +370,7 @@ fn reload_llm(
     if let Some(k) = llm_key.filter(|_| new.llm.api_key.is_empty()) {
         new.llm.api_key = k;
     }
-    old.stop();
+    shared.answerer().stop();
     shared.update_status(|s| {
         if new.auto_detect != cfg.auto_detect {
             s.auto = new.auto_detect;
@@ -395,14 +387,15 @@ fn reload_llm(
     });
     *cfg = new;
     let profile = context::assemble(&cfg.profile_dir(), None, &cfg.user_context, &cfg.glossary);
-    let answerer = start_llm(cfg, shared, &profile.text);
+    start_llm(cfg, shared, &profile.text);
     // The open call's context (or the profile) goes to the new tiers; the transcript stays.
-    call::reload(cfg, shared, &answerer);
+    call::reload(cfg, shared);
     info!("LLM settings reloaded: model {}, quick {}, backend {:?} {}", cfg.model, cfg.quick_model, cfg.llm.backend, cfg.llm.provider);
-    Ok(answerer)
+    Ok(())
 }
 
-fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::Answerer) {
+fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>) {
+    let answerer = shared.answerer();
     match cmd {
         Command::Ask { kind: AskKind::Answer, screenshot, question } => {
             let picked = question.filter(|q| !q.trim().is_empty()).map(|q| (q, None));
@@ -410,7 +403,7 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
                 answerer.ask(shared, if picked.is_some() { Trigger::Picked } else { Trigger::Hotkey }, picked, None);
                 return;
             }
-            let (shared, answerer) = (shared.clone(), answerer.clone());
+            let shared = shared.clone();
             tokio::spawn(async move {
                 let t = std::time::Instant::now();
                 let shot = match tokio::task::spawn_blocking(|| screen::capture(false)).await {
@@ -476,12 +469,12 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
         }
         // shortcut: assembly runs on the command loop; a large uncached PDF stalls commands for a second or two.
         Command::OpenCall { dir } => {
-            if let Err(e) = call::open(cfg, shared, answerer, PathBuf::from(dir)) {
+            if let Err(e) = call::open(cfg, shared, PathBuf::from(dir)) {
                 let _ = shared.events.send(Event::Error { message: format!("{e:#}"), kind: None });
             }
         }
-        Command::ReloadContext => call::reload(cfg, shared, answerer),
-        Command::CloseCall => call::close(cfg, shared, answerer),
+        Command::ReloadContext => call::reload(cfg, shared),
+        Command::CloseCall => call::close(cfg, shared),
         Command::Summarize { dir } => {
             let dir = PathBuf::from(dir);
             let open = shared.call.lock().unwrap().as_ref() == Some(&dir);
@@ -489,7 +482,7 @@ fn handle(cmd: Command, cfg: &Config, shared: &Arc<Shared>, answerer: &answer::A
                 let why = if open { "звонок ещё идёт, сначала завершите его" } else { "нет папки звонка" };
                 let _ = shared.events.send(Event::Summary { dir: dir.display().to_string(), ok: false, error: Some(why.into()) });
             } else {
-                call::summarize(cfg, shared, answerer, dir);
+                call::summarize(cfg, shared, dir);
             }
         }
         Command::Feedback { turn, value } => call::set_feedback(shared, turn, value),

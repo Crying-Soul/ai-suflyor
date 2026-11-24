@@ -149,7 +149,8 @@ pub fn set_feedback(shared: &Shared, turn: u64, value: Option<i8>) {
 /// glossary, and tells the UI. A large context gets its brief for the quick tier (`brief.rs`):
 /// from `brief.md` when it is current, else made in the background while the quick tier reads the
 /// whole context.
-pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Option<&Path>) {
+pub fn apply(cfg: &Config, shared: &Arc<Shared>, dir: Option<&Path>) {
+    let answerer = shared.answerer();
     // A brief still being made is for the context this call replaces: stop paying for it.
     let old = BRIEF_TASK.lock().unwrap().take();
     if let Some(old) = old {
@@ -194,7 +195,7 @@ pub fn apply(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: Optio
     add_brief_part(&mut ev, "", true);
     let _ = shared.events.send(ev.clone());
     info!("brief: building for {}", place.display());
-    let (shared, answerer, text) = (shared.clone(), answerer.clone(), a.text);
+    let (shared, text) = (shared.clone(), a.text);
     let task = tokio::spawn(async move {
         let started = std::time::Instant::now();
         match answerer.brief(&text).await {
@@ -245,7 +246,7 @@ const BRIEF_PART: &str = "Досье для быстрой подсказки (b
 const PREPARED_PART: &str = "Заготовки ответов из досье (полная подсказка)";
 const BRIEF_BUILDING: &str = "Досье собирается, пока быстрая подсказка читает весь контекст";
 
-pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBuf) -> Result<()> {
+pub fn open(cfg: &Config, shared: &Arc<Shared>, dir: PathBuf) -> Result<()> {
     if !dir.is_dir() {
         bail!("no call directory {}", dir.display());
     }
@@ -253,7 +254,7 @@ pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBu
     let prev = shared.call.lock().unwrap().clone().filter(|p| *p != dir);
     if let Some(prev) = prev {
         info!("call {} replaced: writing its summary", prev.display());
-        summarize(cfg, shared, answerer, prev);
+        summarize(cfg, shared, prev);
     }
     let was_open = shared.call.lock().unwrap().is_some();
     let unsaved = if was_open { Vec::new() } else { shared.transcript.lock().unwrap().clone() };
@@ -265,12 +266,12 @@ pub fn open(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBu
     *shared.transcript.lock().unwrap() = segs.clone();
     Answerer::forget_notes(shared);
     // The `call` event goes first: the UI clears its windows when the call changes.
-    apply(cfg, shared, answerer, Some(&dir));
+    apply(cfg, shared, Some(&dir));
     info!("call opened: {} ({} segments, {} answers)", dir.display(), segs.len(), answers.len());
     for s in segs {
         let _ = shared.events.send(Event::Final { speaker: s.speaker, t: s.t_ms, text: s.text, question: false });
     }
-    replay(shared, answerer, answers);
+    replay(shared, answers);
     Ok(())
 }
 
@@ -290,7 +291,8 @@ fn adopt(dir: &Path, unsaved: Vec<FinalSegment>) -> Vec<FinalSegment> {
 
 /// Saved answers as answer events, under fresh ids, turns kept together. A saved turn id comes back
 /// in a later session of the same call, so a turn also ends where its quick and full pair is complete.
-fn replay(shared: &Shared, answerer: &Answerer, answers: Vec<AnswerRecord>) {
+fn replay(shared: &Shared, answers: Vec<AnswerRecord>) {
+    let answerer = shared.answerer();
     let mut turns: BTreeMap<u64, (u64, Vec<Tier>)> = BTreeMap::new();
     for r in answers {
         let entry = turns.entry(r.turn).or_insert_with(|| (answerer.next_id(), Vec::new()));
@@ -308,27 +310,27 @@ fn replay(shared: &Shared, answerer: &Answerer, answers: Vec<AnswerRecord>) {
     }
 }
 
-pub fn reload(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
+pub fn reload(cfg: &Config, shared: &Arc<Shared>) {
     let dir = shared.call.lock().unwrap().clone();
-    apply(cfg, shared, answerer, dir.as_deref());
+    apply(cfg, shared, dir.as_deref());
 }
 
 /// Stops saving, goes back to the profile context and writes the summary in the background.
-pub fn close(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer) {
+pub fn close(cfg: &Config, shared: &Arc<Shared>) {
     let Some(dir) = shared.call.lock().unwrap().take() else { return };
     shared.answer_ids.lock().unwrap().clear();
-    apply(cfg, shared, answerer, None);
-    summarize(cfg, shared, answerer, dir);
+    apply(cfg, shared, None);
+    summarize(cfg, shared, dir);
 }
 
 /// Writes `summary.md` of a call in the background, from its saved files: «Очистить» empties only the
 /// transcript in memory, and a call closed in an earlier session («Повторить итог») has none.
-pub fn summarize(cfg: &Config, shared: &Arc<Shared>, answerer: &Answerer, dir: PathBuf) {
+pub fn summarize(cfg: &Config, shared: &Arc<Shared>, dir: PathBuf) {
     // The summary sees the call's own context (who they are, the vacancy), not just the profile.
     let context = context::assemble(&cfg.profile_dir(), Some(&dir), &cfg.user_context, &cfg.glossary).text;
     let segs: Vec<FinalSegment> = read_jsonl(&dir.join(TRANSCRIPT));
     let hints = read_answers(&dir);
-    let (shared, answerer) = (shared.clone(), answerer.clone());
+    let (shared, answerer) = (shared.clone(), shared.answerer());
     tokio::spawn(async move {
         let r = if segs.is_empty() {
             Err(anyhow::anyhow!("транскрипт пуст"))
@@ -511,9 +513,9 @@ mod tests {
         cfg.claude_code.command = vec!["suflyor-test-no-such-claude".into()];
         let (shared, mut rx) = Shared::for_test();
         shared.transcript.lock().unwrap().push(seg(0, "сказано до звонка"));
-        let a = Answerer::start(&cfg, shared.clone(), "");
+        *shared.answerer.write().unwrap() = Some(Answerer::start(&cfg, shared.clone(), ""));
 
-        open(&cfg, &shared, &a, c1.clone()).unwrap();
+        open(&cfg, &shared, c1.clone()).unwrap();
         assert!(!c1.join(SUMMARY_PENDING).exists(), "open again: it ends the normal way");
         assert_eq!(shared.transcript.lock().unwrap().iter().map(|s| s.t_ms).collect::<Vec<_>>(), vec![1, 5], "the call's own transcript");
         let mut evs = vec![];
@@ -527,16 +529,16 @@ mod tests {
         assert!(turns[0] == turns[1] && turns[1] != turns[2], "quick and full share a turn, a repeated tier starts one: {turns:?}");
 
         // Another call replaces this one: its summary is written, the new one starts empty.
-        open(&cfg, &shared, &a, c2.clone()).unwrap();
+        open(&cfg, &shared, c2.clone()).unwrap();
         let (_, ok, error) = until_summary(&mut rx, &c1).await;
         assert!(!ok && error.contains("suflyor-test-no-such-claude"), "{error}");
         assert!(shared.transcript.lock().unwrap().is_empty(), "the old call's transcript does not carry over");
 
-        close(&cfg, &shared, &a);
+        close(&cfg, &shared);
         let (seen, ok, error) = until_summary(&mut rx, &c2).await;
         assert!(seen.iter().any(|e| matches!(e, Event::Call { dir: None, .. })), "back to the profile context");
         assert!(!ok && error.contains("пуст"), "{error}");
         assert!(shared.call.lock().unwrap().is_none());
-        a.stop();
+        shared.answerer().stop();
     }
 }

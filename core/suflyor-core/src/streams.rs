@@ -281,10 +281,8 @@ fn emit(speaker: Speaker, shared: &Shared, queue: &SttQueue, epoch_ms: u64, pos:
                 let _ = shared.events.send(Event::Vad { speaker, active: true, t: t_of(start_sample) });
             }
             VadEvent::Resume { .. } => {
-                if speaker == Speaker::Them
-                    && let Some(a) = shared.answerer()
-                {
-                    a.on_them_resumed();
+                if speaker == Speaker::Them {
+                    shared.answerer().on_them_resumed();
                 }
             }
             VadEvent::Discarded { start_sample } => {
