@@ -121,9 +121,9 @@ async function loadConfig(): Promise<ConfigSnapshot> {
   const raw = readRaw();
   let effective: Record<string, unknown> = {};
   try {
-    effective = JSON.parse((await runCore(["--print-config", ...coreArgs()])).stdout);
+    effective = JSON.parse((await runCore(["print-config", ...coreArgs()])).stdout);
   } catch (e) {
-    console.warn(`[settings] core --print-config failed: ${e}`);
+    console.warn(`[settings] core print-config failed: ${e}`);
   }
   effective.hotkeys = { ...DEFAULT_HOTKEYS, ...(raw.hotkeys as object | undefined) };
   // The core prints only whether a key is set; the form shows the key itself.
@@ -195,12 +195,12 @@ app.whenReady().then(() => {
   ipcMain.on("ui:action", (_e, a: HotkeyAction) => Object.hasOwn(actions, a) && actions[a]());
   ipcMain.handle("hotkeys:get", loadHotkeys);
   ipcMain.handle("hotkeys:failed", () => failedHotkeys);
-  ipcMain.handle("config:audio-apps", async () => (await runCore(["--list-audio-apps"])).stdout.split(/\r?\n/).filter(Boolean));
+  ipcMain.handle("config:audio-apps", async () => (await runCore(["list-audio-apps"])).stdout.split(/\r?\n/).filter(Boolean));
   ipcMain.on("theme:set", (_e, id: unknown) => isTheme(id) && setTheme(id));
   ipcMain.on("window:close", (e) => BrowserWindow.fromWebContents(e.sender)?.close());
   ipcMain.handle("config:load", loadConfig);
   ipcMain.handle("config:save", (_e, patch: Record<string, unknown>) => saveConfig(patch));
-  ipcMain.handle("config:mics", async () => (await runCore(["--list-mics"])).stdout.split(/\r?\n/).filter(Boolean));
+  ipcMain.handle("config:mics", async () => (await runCore(["list-mics"])).stdout.split(/\r?\n/).filter(Boolean));
   registerCallsIpc({ core, runCore, dataDir: () => dataDir, lastCall: () => lastCall });
   registerModelsIpc({ core, saveConfig, refreshReady });
   registerUpdateIpc();

@@ -346,7 +346,7 @@ pub async fn one_shot(cfg: &Config, tier: Tier, system: String, model: &str, tex
     Ok(out.trim().to_string())
 }
 
-/// The brief of `context` with the full model. Also run outside a call by `--brief` («Подготовить» in «Звонки»).
+/// The brief of `context` with the full model. Also run outside a call by `brief` («Подготовить» in «Звонки»).
 pub async fn make_brief(cfg: &Config, context: &str, usage: &mut (dyn FnMut(Event) + Send)) -> anyhow::Result<String> {
     let system = crate::brief::SYSTEM.replace("{user_language}", &llm::language_name(&cfg.user_language));
     one_shot(cfg, Tier::Brief, system, &cfg.model, format!("{context}\n\nWrite the brief."), usage).await

@@ -28,9 +28,9 @@ function ourWindows(): [string, BrowserWindow][] {
 /** Display affinity of each window, read by the core (0x11 = hidden from capture). */
 async function affinities(runCore: RunCore): Promise<{ name: string; hidden: boolean }[]> {
   const list = ourWindows();
-  // Overlays open only after «Проверка готовности»; the core refuses --check-affinity without windows.
+  // Overlays open only after «Проверка готовности»; the core refuses check-affinity without windows.
   if (!list.length) return [];
-  const { stdout } = await runCore(["--check-affinity", ...list.map(([, w]) => hwnd(w))]);
+  const { stdout } = await runCore(["check-affinity", ...list.map(([, w]) => hwnd(w))]);
   const lines = stdout.trim().split(/\r?\n/);
   return list.map(([name], i) => ({ name, hidden: /\s0x11$/.test(lines[i] ?? "") }));
 }
@@ -56,7 +56,7 @@ async function privacyTest(runCore: RunCore): Promise<PrivacyReport> {
   // The core writes the picture as it would send it to Claude (lossless WebP).
   const file = path.join(app.getPath("temp"), `suflyor-privacy-${Date.now()}.webp`);
   try {
-    await runCore(["--snap", file, "--rect", `${r.x},${r.y},${r.width},${r.height}`]);
+    await runCore(["snap", file, "--rect", `${r.x},${r.y},${r.width},${r.height}`]);
     const image = `data:image/webp;base64,${fs.readFileSync(file).toString("base64")}`;
     return { image, windows: await affinities(runCore), osOk: osHidesWindows() };
   } finally {

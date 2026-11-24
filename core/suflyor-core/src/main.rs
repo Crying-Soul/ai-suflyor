@@ -133,53 +133,64 @@ fn initial_status(cfg: &Config, recording_dir: Option<String>) -> Status {
     }
 }
 
-/// suflyor-core: the speech pipeline and Claude client of Suflyor. Without a one-shot flag it runs
+/// suflyor-core: the speech pipeline and Claude client of Suflyor. Without a command it runs
 /// the live pipeline and talks NDJSON over stdio.
 #[derive(Parser)]
 #[command(version, about)]
 struct Args {
-    #[arg(long)]
+    #[arg(long, global = true)]
     config: Option<PathBuf>,
+    #[command(subcommand)]
+    cmd: Option<Cmd>,
+}
+
+/// One-shot commands for the UI and for development.
+#[derive(clap::Subcommand)]
+enum Cmd {
     /// Effective config (file + defaults) as JSON, for the settings UI.
-    #[arg(long)]
-    print_config: bool,
-    /// The exact system prompt a call would get (no value: the profile alone).
-    #[arg(long, value_name = "CALL_DIR", num_args = 0..=1, default_missing_value = "")]
-    print_context: Option<PathBuf>,
+    PrintConfig,
+    /// The exact system prompt a call would get (no directory: the profile alone).
+    PrintContext {
+        call_dir: Option<PathBuf>,
+    },
     /// «Подготовить»: build the call's brief.md now, whatever the context size, and print it.
-    #[arg(long, value_name = "CALL_DIR")]
-    brief: Option<PathBuf>,
+    Brief {
+        call_dir: PathBuf,
+    },
     /// Answer quality offline (eval.rs).
-    #[arg(long, value_name = "DIR")]
-    eval: Option<PathBuf>,
-    /// Results file of `--eval`.
-    #[arg(long, requires = "eval")]
-    out: Option<PathBuf>,
-    /// An earlier `--eval` run to compare with.
-    #[arg(long, requires = "eval")]
-    baseline: Option<PathBuf>,
-    /// `--eval`: a strong model scores the answers.
-    #[arg(long, requires = "eval")]
-    judge: bool,
+    Eval {
+        dir: PathBuf,
+        /// Results file.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// An earlier run to compare with.
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// A strong model scores the answers.
+        #[arg(long)]
+        judge: bool,
+    },
     /// Screenshot as the answer would get it (the foreground window).
-    #[arg(long, value_name = "OUT")]
-    snap: Option<PathBuf>,
-    /// `--snap`: the monitor under the cursor.
-    #[arg(long, requires = "snap")]
-    monitor: bool,
-    /// `--snap`: this rectangle in physical pixels. One `X,Y,W,H` token; X and Y may be negative.
-    #[arg(long, requires = "snap", value_name = "X,Y,W,H", allow_hyphen_values = true, value_parser = parse_rect)]
-    rect: Option<[i32; 4]>,
+    Snap {
+        out: PathBuf,
+        /// The monitor under the cursor.
+        #[arg(long)]
+        monitor: bool,
+        /// This rectangle in physical pixels. One `X,Y,W,H` token; X and Y may be negative.
+        #[arg(long, value_name = "X,Y,W,H", allow_hyphen_values = true, value_parser = parse_rect)]
+        rect: Option<[i32; 4]>,
+    },
     /// Display affinity of windows (0x11 = hidden from capture).
-    #[arg(long, value_name = "HWND", num_args = 1..)]
-    check_affinity: Option<Vec<isize>>,
+    CheckAffinity {
+        #[arg(required = true)]
+        hwnds: Vec<isize>,
+    },
     /// Text of a PDF (cached next to it in .text/), for the UI's preview.
-    #[arg(long, value_name = "PDF")]
-    extract: Option<PathBuf>,
-    #[arg(long)]
-    list_audio_apps: bool,
-    #[arg(long)]
-    list_mics: bool,
+    Extract {
+        pdf: PathBuf,
+    },
+    ListAudioApps,
+    ListMics,
 }
 
 /// `X,Y,W,H` as one token. clap's `num_args` counts tokens before a delimiter splits them,
@@ -196,81 +207,73 @@ fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,ort=warn".into()))
         .init();
     let args = Args::parse();
-
-    if let Some(out) = &args.snap {
-        screen::dpi_aware();
-        let t = std::time::Instant::now();
-        let shot = match args.rect {
-            Some([x, y, w, h]) => screen::capture_rect(x, y, w, h)?,
-            None => screen::capture(args.monitor)?,
-        };
-        std::fs::write(out, &shot.image)?;
-        eprintln!("{}x{} за {} мс: {}", shot.width, shot.height, t.elapsed().as_millis(), shot.source);
-        return Ok(());
-    }
-    if let Some(hwnds) = &args.check_affinity {
-        for &h in hwnds {
-            println!("{h} {}", screen::affinity(h).map_or_else(|e| format!("error {e}"), |a| format!("{a:#x}")));
+    let Some(cmd) = args.cmd else {
+        let (cfg, loaded_from) = Config::load(args.config.as_deref())?;
+        match &loaded_from {
+            Some(p) => info!("config: {}", p.display()),
+            None => warn!("config.json not found, using defaults"),
         }
-        return Ok(());
-    }
-    if let Some(pdf) = &args.extract {
-        println!("{}", context::pdf_text(pdf)?);
-        return Ok(());
-    }
-    if args.list_audio_apps || args.list_mics {
-        for m in if args.list_mics { audio::list_mics()? } else { audio::list_audio_apps()? } {
-            println!("{m}");
+        return tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(run(cfg, loaded_from));
+    };
+    let cfg = || Config::load(args.config.as_deref()).map(|(c, _)| c);
+    match cmd {
+        Cmd::Snap { out, monitor, rect } => {
+            screen::dpi_aware();
+            let t = std::time::Instant::now();
+            let shot = match rect {
+                Some([x, y, w, h]) => screen::capture_rect(x, y, w, h)?,
+                None => screen::capture(monitor)?,
+            };
+            std::fs::write(out, &shot.image)?;
+            eprintln!("{}x{} за {} мс: {}", shot.width, shot.height, t.elapsed().as_millis(), shot.source);
         }
-        return Ok(());
-    }
-
-    let (cfg, loaded_from) = Config::load(args.config.as_deref())?;
-    if args.print_config {
+        Cmd::CheckAffinity { hwnds } => {
+            for h in hwnds {
+                println!("{h} {}", screen::affinity(h).map_or_else(|e| format!("error {e}"), |a| format!("{a:#x}")));
+            }
+        }
+        Cmd::Extract { pdf } => println!("{}", context::pdf_text(&pdf)?),
+        Cmd::ListAudioApps => audio::list_audio_apps()?.iter().for_each(|m| println!("{m}")),
+        Cmd::ListMics => audio::list_mics()?.iter().for_each(|m| println!("{m}")),
         // The keys are `serde(skip)`: they never reach other processes' pipes and logs.
-        println!("{}", serde_json::to_string(&cfg)?);
-        return Ok(());
-    }
-    if let Some(dir) = &args.print_context {
-        let dir = Some(dir.as_path()).filter(|d| !d.as_os_str().is_empty());
-        if let Some(d) = dir.filter(|d| !d.is_dir()) {
-            anyhow::bail!("no call directory {}", d.display());
+        Cmd::PrintConfig => println!("{}", serde_json::to_string(&cfg()?)?),
+        Cmd::PrintContext { call_dir } => {
+            let cfg = cfg()?;
+            let dir = call_dir.as_deref();
+            if let Some(d) = dir.filter(|d| !d.is_dir()) {
+                anyhow::bail!("no call directory {}", d.display());
+            }
+            let a = context::assemble(&cfg.profile_dir(), dir, &cfg.user_context, &cfg.glossary);
+            // As the full tier gets it: with the prepared answers of a current brief.
+            let place = dir.map_or_else(|| cfg.profile_dir(), PathBuf::from);
+            let full = brief::with_prepared(&a.text, brief::cached(&place, &brief::key(&a.text)).as_deref());
+            println!("{}", llm::system_prompt(false, &full, &cfg.user_language));
+            // Read by the «Звонки» window: Russian, one line each.
+            eprintln!("≈{} токенов. Глоссарий: {}", a.tokens(), if a.glossary.is_empty() { "пусто".into() } else { a.glossary.join(", ") });
+            for w in &a.warnings {
+                eprintln!("{w}");
+            }
         }
-        let a = context::assemble(&cfg.profile_dir(), dir, &cfg.user_context, &cfg.glossary);
-        // As the full tier gets it: with the prepared answers of a current brief.
-        let place = dir.map(PathBuf::from).unwrap_or_else(|| cfg.profile_dir());
-        let full = brief::with_prepared(&a.text, brief::cached(&place, &brief::key(&a.text)).as_deref());
-        println!("{}", llm::system_prompt(false, &full, &cfg.user_language));
-        // Read by the «Звонки» window: Russian, one line each.
-        eprintln!("≈{} токенов. Глоссарий: {}", a.tokens(), if a.glossary.is_empty() { "пусто".into() } else { a.glossary.join(", ") });
-        for w in &a.warnings {
-            eprintln!("{w}");
+        Cmd::Brief { call_dir } => {
+            let cfg = cfg()?;
+            if !call_dir.is_dir() {
+                anyhow::bail!("no call directory {}", call_dir.display());
+            }
+            let a = context::assemble(&cfg.profile_dir(), Some(&call_dir), &cfg.user_context, &cfg.glossary);
+            let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+            let b = rt.block_on(answer::make_brief(&cfg, &a.text, &mut |_| {}))?;
+            if b.is_empty() {
+                anyhow::bail!("пустой ответ модели");
+            }
+            brief::store(&call_dir, &brief::key(&a.text), &b)?;
+            println!("{b}");
         }
-        return Ok(());
-    }
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
-    if let Some(dir) = &args.brief {
-        if !dir.is_dir() {
-            anyhow::bail!("no call directory {}", dir.display());
+        Cmd::Eval { dir, out, baseline, judge } => {
+            let cfg = cfg()?;
+            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(eval::run(&cfg, &dir, out, judge, baseline))?;
         }
-        let a = context::assemble(&cfg.profile_dir(), Some(dir), &cfg.user_context, &cfg.glossary);
-        let b = rt.block_on(answer::make_brief(&cfg, &a.text, &mut |_| {}))?;
-        if b.is_empty() {
-            anyhow::bail!("пустой ответ модели");
-        }
-        brief::store(dir, &brief::key(&a.text), &b)?;
-        println!("{b}");
-        return Ok(());
     }
-    if let Some(dir) = &args.eval {
-        rt.block_on(eval::run(&cfg, dir, args.out, args.judge, args.baseline))?;
-        return Ok(());
-    }
-    match &loaded_from {
-        Some(p) => info!("config: {}", p.display()),
-        None => warn!("config.json not found, using defaults"),
-    }
-    rt.block_on(run(cfg, loaded_from))
+    Ok(())
 }
 
 async fn run(mut cfg: Config, config_path: Option<PathBuf>) -> Result<()> {
@@ -508,12 +511,19 @@ mod cli_tests {
 
     #[test]
     fn rect_is_one_token_and_may_be_negative() {
-        let a = Args::try_parse_from(["core", "--snap", "a.webp", "--rect", "0,0,200,100"]).unwrap();
-        assert_eq!(a.rect, Some([0, 0, 200, 100]));
+        let rect = |r: &str| match Args::try_parse_from(["core", "snap", "a.webp", "--rect", r]).map(|a| a.cmd) {
+            Ok(Some(Cmd::Snap { rect, .. })) => rect,
+            _ => None,
+        };
+        assert_eq!(rect("0,0,200,100"), Some([0, 0, 200, 100]));
         // A monitor left of the primary one starts at a negative X.
-        let a = Args::try_parse_from(["core", "--snap", "a.webp", "--rect", "-1920,-8,1920,1080"]).unwrap();
-        assert_eq!(a.rect, Some([-1920, -8, 1920, 1080]));
-        assert!(Args::try_parse_from(["core", "--snap", "a.webp", "--rect", "0,0,200"]).is_err());
-        assert!(Args::try_parse_from(["core", "--snap", "a.webp", "--rect", "0,0,x,1"]).is_err());
+        assert_eq!(rect("-1920,-8,1920,1080"), Some([-1920, -8, 1920, 1080]));
+        assert_eq!(rect("0,0,200"), None);
+        assert_eq!(rect("0,0,x,1"), None);
+        // `--config` goes before or after a command.
+        let a = Args::try_parse_from(["core", "print-context", "--config", "c.json"]).unwrap();
+        assert!(matches!(a.cmd, Some(Cmd::PrintContext { call_dir: None })));
+        assert_eq!(a.config.as_deref(), Some(std::path::Path::new("c.json")));
+        assert!(Args::try_parse_from(["core", "--config", "c.json"]).unwrap().cmd.is_none(), "no command: the live pipeline");
     }
 }

@@ -1,4 +1,4 @@
-//! `--eval <dir>`: answer quality offline. `<dir>` holds a data directory (`profile/`,
+//! `eval <dir>`: answer quality offline. `<dir>` holds a data directory (`profile/`,
 //! `folders/<folder>/calls/<call>/`) and `questions.jsonl`. Every question goes through both tiers
 //! with the prompts a live call would get, fixed checks run on the answers, and with `--judge` a
 //! strong model scores them. Results go to a jsonl file; `--baseline <old.jsonl>` prints that run's

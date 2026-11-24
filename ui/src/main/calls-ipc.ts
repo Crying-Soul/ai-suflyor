@@ -50,7 +50,7 @@ async function addFiles(dir: string, paths?: string[]): Promise<void> {
   }
   const failed: string[] = [];
   for (const pdf of calls.addFiles(d.dataDir(), dir, paths)) {
-    await d.runCore(["--extract", pdf], 120_000).catch((e) => failed.push(`${path.basename(pdf)}: ${e.message}`));
+    await d.runCore(["extract", pdf], 120_000).catch((e) => failed.push(`${path.basename(pdf)}: ${e.message}`));
   }
   contextChanged(dir);
   if (failed.length) throw new Error(`Текст не извлечён. ${failed.join("; ")}`);
@@ -59,7 +59,7 @@ async function addFiles(dir: string, paths?: string[]): Promise<void> {
 async function fileText(dir: string, name: string): Promise<string> {
   const p = calls.filePath(d.dataDir(), dir, name);
   if (path.extname(p).toLowerCase() !== ".pdf") return fs.readFileSync(p, "utf8");
-  return (await d.runCore(["--extract", p], 120_000)).stdout;
+  return (await d.runCore(["extract", p], 120_000)).stdout;
 }
 
 async function removeNode(dir: string): Promise<void> {
@@ -88,7 +88,7 @@ export function registerCallsIpc(deps: CallsDeps): void {
   });
   ipcMain.handle("calls:remove", (_e, dir: string) => removeNode(dir));
   ipcMain.handle("calls:preview", async (_e, dir: string | null) => {
-    const { stdout, stderr } = await d.runCore(["--print-context", dir ?? "", ...coreArgs()], 120_000);
+    const { stdout, stderr } = await d.runCore(["print-context", ...(dir ? [dir] : []), ...coreArgs()], 120_000);
     return `${stderr.trim()}\n\n${stdout.trim()}`;
   });
   // Only the data folder is ever revealed: a path from the renderer would let a page open any program.
@@ -116,7 +116,7 @@ export function registerCallsIpc(deps: CallsDeps): void {
   // «Подготовить»: the core writes brief.md into the call; a live call picks up its prepared answers.
   ipcMain.handle("calls:prepare", async (_e, dir: string) => {
     if (calls.kindOf(d.dataDir(), dir) !== "call") throw new Error("готовится только звонок");
-    const { stdout } = await d.runCore(["--brief", dir, ...coreArgs()], 600_000);
+    const { stdout } = await d.runCore(["brief", dir, ...coreArgs()], 600_000);
     contextChanged(dir);
     return stdout.trim();
   });
