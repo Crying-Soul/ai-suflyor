@@ -289,9 +289,9 @@ mod tests {
     }
 
     /// Form fields the core does not read: hotkeys (main only), the theme (windows.json), and
-    /// rows that are tools, not settings (the capture check, the log folder).
+    /// rows that are tools, not settings (the capture check, the log folder, the app name and icon).
     fn ui_only(key: &str) -> bool {
-        key.starts_with("hotkeys.") || ["theme", "privacy", "logs"].contains(&key)
+        key.starts_with("hotkeys.") || ["theme", "privacy", "logs", "brand"].contains(&key)
     }
 
     /// serde fills in defaults for unknown keys without a word: a key the UI writes under another
