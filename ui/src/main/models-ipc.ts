@@ -59,7 +59,7 @@ export function registerModelsIpc(deps: ModelsDeps): void {
 }
 
 /** Points stt.model at a downloaded model (relative to the config when it is inside its folder). */
-export function useModel(id: string): SaveResult {
+function useModel(id: string): SaveResult {
   const file = path.join(modelsDir(), models.fileOf(id));
   if (!fs.existsSync(file)) return { ok: false, error: "модель не скачана" };
   const rel = path.relative(path.dirname(configPath() ?? newConfigPath()), file);

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import * as calls from "./calls.ts";
+import { setDotted } from "./json-file.ts";
 
 test("folders, calls, files, save and migration", async () => {
   const data = fs.mkdtempSync(path.join(os.tmpdir(), "calls-"));
@@ -42,7 +43,7 @@ test("folders, calls, files, save and migration", async () => {
 
 test("setDotted writes nested keys and skips prototype keys", async () => {
   const raw: Record<string, unknown> = { stt: { dll: "a.dll" } };
-  calls.setDotted(raw, { "stt.model": "m.bin", "__proto__.polluted": true, "a.constructor.prototype.x": 1 });
+  setDotted(raw, { "stt.model": "m.bin", "__proto__.polluted": true, "a.constructor.prototype.x": 1 });
   assert.deepEqual(raw, { stt: { dll: "a.dll", model: "m.bin" } });
   assert.equal(({} as Record<string, unknown>).polluted, undefined);
 });

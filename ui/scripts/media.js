@@ -1,14 +1,14 @@
 // Dev-only: README media from mock events (no core needed). Each scene opens fresh windows, streams
 // core events into them, captures frames and writes .github/media/<scene>.gif, most with a caption strip.
-// Run after `npm run build` in ui/: ui\node_modules\.bin\electron scripts\media.js
+// Run after `npm run build` in ui/: node_modules\.bin\electron scripts\media.js
 const { app, BrowserWindow, ipcMain } = require("electron");
-const path = require("path");
-const fs = require("fs");
-const { GIFEncoder, quantize, applyPalette } = require("../ui/node_modules/gifenc");
+const path = require("node:path");
+const fs = require("node:fs");
+const { GIFEncoder, quantize, applyPalette } = require("gifenc");
 
 app.commandLine.appendSwitch("force-device-scale-factor", "1");
-const dist = path.resolve(__dirname, "../ui/dist");
-const out = path.resolve(__dirname, "../.github/media");
+const dist = path.resolve(__dirname, "../dist");
+const out = path.resolve(__dirname, "../../.github/media");
 const wp = { preload: path.join(dist, "preload.js"), contextIsolation: true, sandbox: true, backgroundThrottling: false };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const T = 1000;
@@ -39,7 +39,7 @@ async function page(file, w, h) {
 async function html(body, w, h) {
   const win = new BrowserWindow({ width: w, height: h, frame: false, show: false, backgroundColor: "#111113", webPreferences: { sandbox: true } });
   // A temp file, not a data: URL: long data URLs fail to load (ERR_FAILED).
-  const file = path.join(require("os").tmpdir(), `suflyor-media-${w}x${h}-${Date.now()}.html`);
+  const file = path.join(require("node:os").tmpdir(), `suflyor-media-${w}x${h}-${Date.now()}.html`);
   fs.writeFileSync(file, `<!doctype html><meta charset="utf-8"><body style="margin:0">${body}`);
   await win.loadFile(file);
   fs.rmSync(file);
@@ -77,7 +77,10 @@ async function scene(name, panes, { captions = true } = {}) {
         x += p.w + GAP;
       }
       if (captions) blit(c, W, await cap.webContents.capturePage(), 0, H - CAP - PAD / 2);
-      if (last && Buffer.compare(Buffer.from(last.c), Buffer.from(c)) === 0) return void (last.ms += ms);
+      if (last && Buffer.compare(Buffer.from(last.c), Buffer.from(c)) === 0) {
+        last.ms += ms;
+        return;
+      }
       if (last) flush();
       last = { c, ms };
     },

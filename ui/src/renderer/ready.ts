@@ -1,8 +1,8 @@
 // «Проверка готовности»: one card per thing the app needs, kept in place while the list updates,
 // so a download in progress or a key being typed is never redrawn away.
 import type { ReadyItem } from "../shared/protocol";
-import { $, api, guardPopups } from "./common";
-import { el, packOps, renderModels, small, type ModelOps } from "./model-row";
+import { $, api, el, guardPopups } from "./common";
+import { packOps, renderModels, small, type ModelOps } from "./model-row";
 
 const LEVEL: Record<ReadyItem["level"], string> = { required: "обязательно", recommended: "рекомендуется", optional: "по желанию" };
 

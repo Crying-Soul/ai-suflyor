@@ -4,6 +4,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type { CallsTree, NodeData, NodeFile, NodeKind, NodePatch, SearchHit, TranscriptLine } from "../shared/protocol";
+import { readJson, writeAtomic } from "./json-file.ts"; // .ts: node --test runs this file unbundled
 
 const CONTEXT_EXT = new Set([".md", ".txt", ".pdf"]);
 
@@ -15,7 +16,7 @@ export const TEMPLATES: Record<NodeKind, string> = {
 };
 
 /** Interview stages a call can be (meta.json `stage`); the core adds a line of focus for each. */
-export const STAGES = ["hr", "tech", "system_design", "final"];
+const STAGES = ["hr", "tech", "system_design", "final"];
 
 /** The section of the summary that lists facts to add to the profile. */
 const SUGGEST_HEADING = "## Добавить в профиль";
@@ -37,7 +38,7 @@ export function suggestions(summary: string): string[] {
 }
 
 /** `summary` without the line of `fact`; the section heading goes too once it is empty. */
-export function dropSuggestion(summary: string, fact: string): string {
+function dropSuggestion(summary: string, fact: string): string {
   const lines = summary.split("\n");
   const at = lines.findIndex((l) => l.trim() === SUGGEST_HEADING);
   if (at < 0) return summary;
@@ -62,36 +63,6 @@ export function withFact(notes: string, fact: string): string {
   while (end > at + 1 && !lines[end - 1].trim()) end--;
   lines.splice(end, 0, `- ${fact}`);
   return lines.join("\n") + "\n";
-}
-
-export function readJson(p: string): Record<string, unknown> {
-  try {
-    return JSON.parse(fs.readFileSync(p, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-/** Writes dotted keys ("stt.model") into `raw`, creating the objects on the way. */
-export function setDotted(raw: Record<string, unknown>, patch: Record<string, unknown>): void {
-  for (const [key, value] of Object.entries(patch)) {
-    const parts = key.split(".");
-    // "__proto__.x" would write into Object.prototype.
-    if (parts.some((p) => p === "__proto__" || p === "constructor" || p === "prototype")) continue;
-    let obj = raw;
-    for (const part of parts.slice(0, -1)) {
-      if (typeof obj[part] !== "object" || obj[part] === null) obj[part] = {};
-      obj = obj[part] as Record<string, unknown>;
-    }
-    obj[parts[parts.length - 1]] = value;
-  }
-}
-
-/** Write then rename: a crash mid-write never leaves a truncated file. */
-export function writeAtomic(p: string, data: string): void {
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(`${p}.tmp`, data);
-  fs.renameSync(`${p}.tmp`, p);
 }
 
 // Writes stay synchronous (one small file each). Reads that walk many files are async: the main

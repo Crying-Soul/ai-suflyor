@@ -105,7 +105,7 @@ export interface NodePatch {
   stage?: string;
 }
 
-export interface CallsApi {
+interface CallsApi {
   tree(): Promise<CallsTree>;
   node(dir: string): Promise<NodeData>;
   save(dir: string, patch: NodePatch): Promise<void>;
@@ -163,7 +163,7 @@ export interface ReadyItem {
   backend?: "api" | "claude-code" | "openai";
 }
 
-export interface ReadyApi {
+interface ReadyApi {
   list(): Promise<ReadyItem[]>;
   open(): void;
   /** Saves the key and switches the backend to it. */
@@ -190,7 +190,7 @@ export interface UpdateState {
   error?: string;
 }
 
-export interface UpdateApi {
+interface UpdateApi {
   state(): Promise<UpdateState>;
   check(): void;
   download(): void;
@@ -200,13 +200,13 @@ export interface UpdateApi {
 
 /** Optional downloads: the translation model and the CUDA backend. Changes arrive through `ModelsApi.onChange`. */
 export type PackId = "cuda";
-export interface PacksApi {
+interface PacksApi {
   status(id: PackId): Promise<ModelInfo>;
   download(id: PackId): Promise<void>;
   cancel(id: PackId): void;
 }
 
-export interface ModelsApi {
+interface ModelsApi {
   list(): Promise<ModelInfo[]>;
   download(id: string): Promise<void>;
   cancel(id: string): void;
@@ -293,7 +293,7 @@ export interface BrandInfo {
   presets: { id: string; name: string; icon: string }[];
 }
 
-export interface BrandApi {
+interface BrandApi {
   info(): Promise<BrandInfo>;
   /** Checks a picked .ico or .png; a preview, or what is wrong with it. */
   checkIcon(path: string): Promise<{ url: string } | { error: string }>;

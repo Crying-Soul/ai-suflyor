@@ -9,7 +9,7 @@ const BASE = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 const TREE = "https://huggingface.co/api/models/ggerganov/whisper.cpp/tree/main";
 
 /** Sizes are approximate (the download checks the real one); notes compare on an 8 GB GPU. */
-export const CATALOG: Omit<ModelInfo, "state" | "received" | "total" | "active" | "error">[] = [
+const CATALOG: Omit<ModelInfo, "state" | "received" | "total" | "active" | "error">[] = [
   { id: "large-v3-turbo", label: "Large v3 Turbo", sizeMb: 1620, note: "Лучшее соотношение: почти как Large v3, в разы быстрее. По умолчанию." },
   { id: "large-v3-turbo-q8_0", label: "Large v3 Turbo, q8", sizeMb: 874, note: "Та же точность, вдвое меньше памяти." },
   { id: "large-v3-turbo-q5_0", label: "Large v3 Turbo, q5", sizeMb: 574, note: "Для слабых GPU, точность чуть ниже." },

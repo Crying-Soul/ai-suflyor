@@ -16,7 +16,7 @@ export interface Facts {
 }
 
 /** The whisper model to offer: the q8 Turbo is as accurate in half the memory; small is the one that keeps up on a CPU. */
-export const recommendedModel = (nvidia: boolean) => (nvidia ? "large-v3-turbo-q8_0" : "small");
+const recommendedModel = (nvidia: boolean) => (nvidia ? "large-v3-turbo-q8_0" : "small");
 
 export function check(f: Facts): ReadyItem[] {
   const items: ReadyItem[] = [];

@@ -4,8 +4,8 @@ import type { HotkeyAction } from "../shared/protocol";
 import { accelerator, DEFAULT_HOTKEYS, duplicates } from "../shared/hotkeys";
 import { ICON_MAX_BYTES, NAME_MAX, nameProblem, PRESET_ICON } from "../shared/branding";
 import { CLAUDE_MODELS, defaultModels, modelChoices, PROVIDERS, provider } from "../shared/providers";
-import { $, api, askConfirm, guardPopups, keyLabel } from "./common";
-import { el, packOps, renderModels, small, WHISPER } from "./model-row";
+import { $, api, askConfirm, el, guardPopups, keyLabel } from "./common";
+import { packOps, renderModels, small, WHISPER } from "./model-row";
 
 type Kind = "hotkey" | "model" | "text" | "secret" | "textarea" | "list" | "number" | "bool" | "select" | "mic" | "source" | "models" | "pack" | "privacy" | "logs" | "theme" | "brand";
 

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Hotkeys } from "../shared/protocol";
 import { DEFAULT_HOTKEYS } from "../shared/hotkeys";
-import * as calls from "./calls";
+import { readJson, setDotted, writeAtomic } from "./json-file";
 
 /**
  * An installed build. Not `isPackaged`: Electron decides that by the exe's name, so the renamed
@@ -33,7 +33,7 @@ let file = findConfig();
 export const configPath = (): string | null => file;
 
 /** The stored config as written (no defaults filled in). */
-export const readRaw = (): Record<string, unknown> => (file ? calls.readJson(file) : {});
+export const readRaw = (): Record<string, unknown> => (file ? readJson(file) : {});
 
 /** The core's arguments: the config it should read. */
 export const coreArgs = () => (file ? ["--config", file] : []);
@@ -49,9 +49,9 @@ export function loadHotkeys(): Hotkeys {
 export function writeConfig(patch: Record<string, unknown>): { ok: true; path: string } | { ok: false; error: string } {
   const target = file ?? newConfigPath();
   const raw = readRaw();
-  calls.setDotted(raw, patch);
+  setDotted(raw, patch);
   try {
-    calls.writeAtomic(target, JSON.stringify(raw, null, 2) + "\n");
+    writeAtomic(target, JSON.stringify(raw, null, 2) + "\n");
   } catch (e) {
     return { ok: false, error: String(e) };
   }

@@ -3,7 +3,7 @@
 export const NAME_MAX = 64;
 export const ICON_MAX_BYTES = 1 << 20;
 /** Task Manager and Explorer scale from this size; smaller looks blurry. */
-export const ICON_MIN_PX = 32;
+const ICON_MIN_PX = 32;
 
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
 

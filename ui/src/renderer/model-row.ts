@@ -1,14 +1,8 @@
 // Rows of downloadable models (whisper models, the translation model, CUDA): shared by Settings and «Готовность».
 import type { ModelInfo, PackId, SaveResult } from "../shared/protocol";
-import { api, askConfirm } from "./common";
+import { api, askConfirm, el } from "./common";
 
-export function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, unknown> = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
-  const e = Object.assign(document.createElement(tag), props);
-  e.append(...kids);
-  return e;
-}
-
-export const mb = (bytes: number) => Math.round(bytes / 1024 / 1024).toLocaleString("ru-RU");
+const mb = (bytes: number) => Math.round(bytes / 1024 / 1024).toLocaleString("ru-RU");
 
 export function small(text: string, onclick: () => unknown, cls = "btn-ghost small"): HTMLButtonElement {
   const b = el("button", { type: "button", className: cls, textContent: text });
@@ -50,7 +44,7 @@ export async function renderModels(box: HTMLElement, ops: ModelOps): Promise<voi
   box.replaceChildren(...list.map((m) => modelRow(m, box, ops)));
 }
 
-export function modelRow(m: ModelInfo, box: HTMLElement, ops: ModelOps): HTMLElement {
+function modelRow(m: ModelInfo, box: HTMLElement, ops: ModelOps): HTMLElement {
   const info = el("div", { className: "model-info" },
     el("span", { className: "model-name", textContent: m.label }),
     el("span", { className: "hint", textContent: `${m.note} ${m.sizeMb.toLocaleString("ru-RU")}\u00a0МБ.` }),

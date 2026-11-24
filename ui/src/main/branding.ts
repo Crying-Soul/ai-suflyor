@@ -15,6 +15,7 @@ import type * as RE from "resedit";
 import { isPackaged } from "./config";
 import { resolveCoreExe } from "./core";
 import { BrandError, patchExe } from "./exe-patch";
+import { writeAtomic } from "./json-file";
 
 // require, not import: esbuild would bundle resedit's .mjs entry, which loads its CJS build at run time
 // through createRequire(import.meta.url), and import.meta is empty in our CJS bundle.
@@ -61,9 +62,7 @@ function load(): State {
 }
 
 function save(s: State): void {
-  fs.mkdirSync(stateDir(), { recursive: true });
-  fs.writeFileSync(`${stateFile()}.tmp`, JSON.stringify(s, null, 2));
-  fs.renameSync(`${stateFile()}.tmp`, stateFile());
+  writeAtomic(stateFile(), JSON.stringify(s, null, 2));
 }
 
 /** The inputs of the copies: name, icon and the original exes (an update replaces them). */

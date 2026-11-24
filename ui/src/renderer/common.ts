@@ -23,10 +23,10 @@ for (const slot of document.querySelectorAll("[data-mark]")) {
   slot.replaceWith(document.importNode(new DOMParser().parseFromString(MARK_SVG, "image/svg+xml").documentElement, true));
 }
 
-export function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text = ""): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (className) e.className = className;
-  if (text) e.textContent = text;
+/** A new element: `props` is its class name or properties to set; empty strings among `kids` add nothing. */
+export function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: string | Record<string, unknown> = {}, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
+  const e = Object.assign(document.createElement(tag), typeof props === "string" ? { className: props } : props);
+  e.append(...kids.filter((k) => k !== ""));
   return e;
 }
 
