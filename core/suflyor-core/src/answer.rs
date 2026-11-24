@@ -205,14 +205,9 @@ impl Answerer {
 
     /// The notes summary with the quick model.
     async fn notes(&self, prev: &str, segs: &[FinalSegment]) -> anyhow::Result<String> {
-        let mut s = session(&self.cfg, Tier::Summary, NOTES_SYSTEM.to_string());
-        let model = &self.cfg.quick_model;
-        s.prepare(model)?;
-        let mut out = String::new();
         let prev = if prev.is_empty() { String::new() } else { format!("<earlier_notes>\n{prev}\n</earlier_notes>\n") };
         let text = format!("{prev}<transcript>\n{}\n</transcript>\nWrite the notes.", llm::render(segs));
-        self.one_off(&mut s, Tier::Summary, model, &llm::Turn { text, image: None }, &mut out).await?;
-        Ok(out.trim().to_string())
+        self.one_off(Tier::Summary, NOTES_SYSTEM.to_string(), &self.cfg.quick_model, text).await
     }
 
     /// `ask` on the given transcript; returns the turn id.
@@ -303,25 +298,18 @@ impl Answerer {
 
     /// The brief of `context`, written by the full model.
     pub async fn brief(&self, context: &str) -> anyhow::Result<String> {
-        let (events, model) = (self.events.clone(), self.cfg.model.clone());
-        make_brief(&self.cfg, context, &mut |api, c| {
-            if let Some(e) = llm::usage_event(Tier::Brief, &model, api, &c) {
-                let _ = events.send(e);
-            }
+        let events = self.events.clone();
+        make_brief(&self.cfg, context, &mut |e| {
+            let _ = events.send(e);
         })
         .await
     }
 
-    /// One turn of a one-off session: its text into `out`, its token usage to the UI.
-    async fn one_off(&self, s: &mut Session, tier: Tier, model: &str, turn: &llm::Turn, out: &mut String) -> anyhow::Result<()> {
-        let (events, api) = (self.events.clone(), s.is_api());
-        s.ask(model, turn, &mut |c| match c {
-            Chunk::Text(t) => out.push_str(&t),
-            c => {
-                if let Some(e) = llm::usage_event(tier, model, api, &c) {
-                    let _ = events.send(e);
-                }
-            }
+    /// `one_shot` with its token usage sent to the UI.
+    async fn one_off(&self, tier: Tier, system: String, model: &str, text: String) -> anyhow::Result<String> {
+        let events = self.events.clone();
+        one_shot(&self.cfg, tier, system, model, text, &mut |e| {
+            let _ = events.send(e);
         })
         .await
     }
@@ -333,31 +321,35 @@ impl Answerer {
 
     /// One-off summary of `segs` with the full model, through the configured backend.
     pub async fn summarize(&self, context: &str, segs: &[FinalSegment], hints: &[crate::call::AnswerRecord]) -> anyhow::Result<String> {
-        let mut s = session(&self.cfg, Tier::Summary, llm::summary_system(context));
-        // The full model: nobody waits for a summary, and the review is worth its quality.
-        let model = &self.cfg.model;
-        s.prepare(model)?;
-        let mut out = String::new();
         let text = format!("<transcript>\n{}\n</transcript>\n{}Summarize this call.", llm::render(segs), hints_block(hints));
-        self.one_off(&mut s, Tier::Summary, model, &llm::Turn { text, image: None }, &mut out).await?;
-        Ok(out.trim().to_string())
+        // The full model: nobody waits for a summary, and the review is worth its quality.
+        self.one_off(Tier::Summary, llm::summary_system(context), &self.cfg.model, text).await
     }
 }
 
-/// The brief of `context` with the full model; `usage` gets the turn's token count (and whether it is billed per token).
-/// Also run outside a call by `--brief` («Подготовить» in «Звонки»).
-pub async fn make_brief(cfg: &Config, context: &str, usage: &mut (dyn FnMut(bool, Chunk) + Send)) -> anyhow::Result<String> {
-    let mut s = session(cfg, Tier::Brief, crate::brief::SYSTEM.replace("{user_language}", &llm::language_name(&cfg.user_language)));
-    s.prepare(&cfg.model)?;
+/// One turn of a fresh session (notes, brief, summary, eval): its text, trimmed. `usage` gets the
+/// turn's `usage` event.
+pub async fn one_shot(cfg: &Config, tier: Tier, system: String, model: &str, text: String, usage: &mut (dyn FnMut(Event) + Send)) -> anyhow::Result<String> {
+    let mut s = session(cfg, tier, system);
+    s.prepare(model)?;
     let api = s.is_api();
     let mut out = String::new();
-    let turn = llm::Turn { text: format!("{context}\n\nWrite the brief."), image: None };
-    s.ask(&cfg.model, &turn, &mut |c| match c {
+    s.ask(model, &llm::Turn { text, image: None }, &mut |c| match c {
         Chunk::Text(t) => out.push_str(&t),
-        c => usage(api, c),
+        c => {
+            if let Some(e) = llm::usage_event(tier, model, api, &c) {
+                usage(e);
+            }
+        }
     })
     .await?;
     Ok(out.trim().to_string())
+}
+
+/// The brief of `context` with the full model. Also run outside a call by `--brief` («Подготовить» in «Звонки»).
+pub async fn make_brief(cfg: &Config, context: &str, usage: &mut (dyn FnMut(Event) + Send)) -> anyhow::Result<String> {
+    let system = crate::brief::SYSTEM.replace("{user_language}", &llm::language_name(&cfg.user_language));
+    one_shot(cfg, Tier::Brief, system, &cfg.model, format!("{context}\n\nWrite the brief."), usage).await
 }
 
 /// The full-tier answers of a call for its summary: question and hint, each cut to keep the prompt small.

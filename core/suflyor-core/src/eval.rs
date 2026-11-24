@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::config::Config;
-use crate::llm::{self, Chunk, Session};
+use crate::llm;
 use crate::{FinalSegment, answer, brief, context};
 
 /// One question of the set.
@@ -186,16 +186,7 @@ fn segments(case: &Case) -> Vec<FinalSegment> {
 }
 
 async fn one_turn(cfg: &Config, tier: Tier, system: String, model: &str, text: String) -> Result<String> {
-    let mut s: Session = answer::session(cfg, tier, system);
-    s.prepare(model)?;
-    let mut out = String::new();
-    s.ask(model, &llm::Turn { text, image: None }, &mut |c| {
-        if let Chunk::Text(t) = c {
-            out.push_str(&t);
-        }
-    })
-    .await?;
-    Ok(out.trim().to_string())
+    answer::one_shot(cfg, tier, system, model, text, &mut |_| {}).await
 }
 
 /// Mean scores and counts of a run, one line.

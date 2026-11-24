@@ -251,7 +251,7 @@ fn main() -> Result<()> {
             anyhow::bail!("no call directory {}", dir.display());
         }
         let a = context::assemble(&cfg.profile_dir(), Some(dir), &cfg.user_context, &cfg.glossary);
-        let b = rt.block_on(answer::make_brief(&cfg, &a.text, &mut |_, _| {}))?;
+        let b = rt.block_on(answer::make_brief(&cfg, &a.text, &mut |_| {}))?;
         if b.is_empty() {
             anyhow::bail!("пустой ответ модели");
         }
