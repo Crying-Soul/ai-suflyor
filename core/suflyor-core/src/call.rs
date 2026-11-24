@@ -503,7 +503,7 @@ mod tests {
         }
         std::fs::write(c1.join(SUMMARY_PENDING), "").unwrap();
 
-        // No Claude to summarize with: the summary fails, and says so.
+        // No model to summarize with: the summary fails, and says so.
         let mut cfg = Config { data_dir: data.path().display().to_string(), ..Config::default() };
         cfg.llm.backend = crate::config::Backend::ClaudeCode;
         cfg.claude_code.command = vec!["suflyor-test-no-such-claude".into()];

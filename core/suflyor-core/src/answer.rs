@@ -322,7 +322,7 @@ impl Answerer {
     /// One-off summary of `segs` with the full model, through the configured backend.
     pub async fn summarize(&self, context: &str, segs: &[FinalSegment], hints: &[crate::call::AnswerRecord]) -> anyhow::Result<String> {
         let text = format!("<transcript>\n{}\n</transcript>\n{}Summarize this call.", llm::render(segs), hints_block(hints));
-        // The full model: nobody waits for a summary, and the review is worth its quality.
+        // The full model: nobody waits for a summary, so its latency does not matter.
         self.one_off(Tier::Summary, llm::summary_system(context), &self.cfg.model, text).await
     }
 }

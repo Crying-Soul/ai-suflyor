@@ -108,7 +108,7 @@ impl ApiSession {
             return Ok(());
         }
         if !cache {
-            // Any answer will do: the point is the handshake.
+            // Any status will do: the request only opens the TLS connection.
             let _ = CLIENT.head("https://api.anthropic.com/").send().await;
             return Ok(());
         }
