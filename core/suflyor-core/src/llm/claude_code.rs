@@ -2,11 +2,13 @@
 //! `claude login` session instead of an API key. One persistent process per tier;
 //! the process keeps the conversation, so each turn sends only the new transcript.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use protocol::ErrorKind;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
@@ -29,6 +31,17 @@ enum Message {
         model: Value,
         #[serde(default)]
         tools: Value,
+        // `api_retry`: a failed API request that Claude Code retries.
+        #[serde(default)]
+        attempt: u32,
+        #[serde(default)]
+        max_retries: u32,
+        #[serde(default)]
+        retry_delay_ms: u64,
+        #[serde(default)]
+        error_status: Value,
+        #[serde(default)]
+        error: Value,
     },
     Result {
         #[serde(default)]
@@ -44,8 +57,19 @@ enum Message {
     Other,
 }
 
+/// The last lines Claude Code wrote to stderr: the reason it exited, if any.
+const STDERR_TAIL: usize = 5;
+
+/// Claude Code retries a failed API request up to 10 times with a growing backoff (minutes in all)
+/// and waits up to 10 min for a reply: in a live call an error must surface in seconds.
+/// The user's own environment wins. Not passed through `wsl.exe` (that needs WSLENV).
+const ENV: [(&str, &str); 2] = [("CLAUDE_CODE_MAX_RETRIES", "2"), ("API_TIMEOUT_MS", "30000")];
+
 struct Proc {
     _child: Child,
+    stderr: Arc<Mutex<VecDeque<String>>>,
+    /// Reads stderr into `stderr`; awaited at exit, so the reason is in before it is read.
+    stderr_task: tokio::task::JoinHandle<()>,
     stdin: ChildStdin,
     lines: Lines<BufReader<ChildStdout>>,
     model: String,
@@ -89,19 +113,31 @@ impl CodeSession {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        for (k, v) in ENV {
+            if std::env::var_os(k).is_none() {
+                cmd.env(k, v);
+            }
+        }
         #[cfg(windows)]
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         let mut child = cmd.spawn().with_context(|| format!("start {}", self.command.join(" ")))?;
         let stdin = child.stdin.take().unwrap();
         let lines = BufReader::new(child.stdout.take().unwrap()).lines();
-        let mut stderr = BufReader::new(child.stderr.take().unwrap()).lines();
-        tokio::spawn(async move {
-            while let Ok(Some(l)) = stderr.next_line().await {
+        let mut err_lines = BufReader::new(child.stderr.take().unwrap()).lines();
+        let stderr = Arc::new(Mutex::new(VecDeque::new()));
+        let tail = stderr.clone();
+        let stderr_task = tokio::spawn(async move {
+            while let Ok(Some(l)) = err_lines.next_line().await {
                 warn!("claude: {l}");
+                let mut t = tail.lock().unwrap();
+                if t.len() == STDERR_TAIL {
+                    t.pop_front();
+                }
+                t.push_back(l);
             }
         });
-        info!("claude code started: {} (model {model})", self.command.join(" "));
-        self.proc = Some(Proc { _child: child, stdin, lines, model: model.to_string() });
+        info!("claude code started: {} (model {model}, pid {:?})", self.command.join(" "), child.id());
+        self.proc = Some(Proc { _child: child, stderr, stderr_task, stdin, lines, model: model.to_string() });
         self.fresh = true;
         Ok(())
     }
@@ -116,16 +152,17 @@ impl CodeSession {
 
     /// The first turn of a fresh process takes several seconds (sign-in check); pay it up front.
     pub async fn warm(&mut self, model: &str, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
-        let fresh = self.prepare(model)?;
-        let t = std::time::Instant::now();
+        // Set before the turn: a warm-up cut short (a question came first) must not hide that the
+        // history is empty.
+        self.fresh = self.prepare(model)?;
+        let t = Instant::now();
         self.ask(&Turn::text("Reply with OK."), &mut |c| {
-            if matches!(c, Chunk::Usage { .. }) {
+            if !matches!(c, Chunk::Text(_)) {
                 out(c);
             }
         })
         .await?;
         info!("claude code warm in {} ms", t.elapsed().as_millis());
-        self.fresh = fresh;
         Ok(())
     }
 
@@ -147,8 +184,19 @@ impl CodeSession {
                     Err(_) => warn!("claude: non-JSON output: {l}"),
                 },
                 Ok(None) | Err(_) => {
-                    self.proc = None;
-                    return Err(super::fail(ErrorKind::Auth, "claude code exited (check `claude login` and claudeCode.command)"));
+                    let mut tail = String::new();
+                    if let Some(mut p) = self.proc.take() {
+                        let _ = tokio::time::timeout(Duration::from_millis(500), &mut p.stderr_task).await;
+                        tail = p.stderr.lock().unwrap().iter().cloned().collect::<Vec<_>>().join(" | ");
+                    }
+                    warn!("claude code exited; stderr: {tail}");
+                    // No reason given: most likely the login (or a wrong claudeCode.command).
+                    let kind = match super::kind_of_text(&tail) {
+                        ErrorKind::Other => ErrorKind::Auth,
+                        k => k,
+                    };
+                    let why = if tail.is_empty() { "check `claude login` and claudeCode.command".to_string() } else { tail };
+                    return Err(super::fail(kind, format!("claude code exited: {why}")));
                 }
             }
         }
@@ -156,21 +204,40 @@ impl CodeSession {
 
     pub async fn ask(&mut self, turn: &Turn, out: &mut (dyn FnMut(Chunk) + Send)) -> Result<()> {
         self.send(json!({"type": "user", "message": {"role": "user", "content": turn.content()}})).await?;
+        // Where a turn spends its time: before the first line (process or network), before the
+        // first text (the model), then streaming.
+        let t = Instant::now();
+        let (mut first_line, mut first_text, mut retries) = (None, None, 0);
         loop {
-            let Ok(msg) = serde_json::from_value::<Message>(self.next().await?) else { continue };
+            let v = self.next().await?;
+            first_line.get_or_insert_with(|| t.elapsed().as_millis());
+            let Ok(msg) = serde_json::from_value::<Message>(v) else { continue };
             match msg {
                 Message::StreamEvent { event: StreamEvent::ContentBlockDelta { delta } } => {
-                    if let Some(t) = delta.text() {
-                        out(Chunk::Text(t.to_string()));
+                    if let Some(text) = delta.text() {
+                        first_text.get_or_insert_with(|| t.elapsed().as_millis());
+                        out(Chunk::Text(text.to_string()));
                     }
                 }
-                Message::System { subtype, model, tools } if subtype == "init" => {
+                Message::System { subtype, model, tools, .. } if subtype == "init" => {
                     info!("claude code session: model {model}, tools {tools}");
                 }
+                Message::System { subtype, attempt, max_retries, retry_delay_ms, error_status, error, .. } if subtype == "api_retry" => {
+                    retries += 1;
+                    let error = error.as_str().map_or_else(|| error.to_string(), str::to_string);
+                    warn!("claude code: API request failed ({error}, status {error_status}), retry {attempt}/{max_retries} in {retry_delay_ms} ms");
+                    out(Chunk::Retry { attempt, max: max_retries, error });
+                }
+                Message::System { subtype, .. } => tracing::debug!("claude code: system {subtype}"),
                 Message::Result { usage, is_error, result, subtype } => {
+                    info!(
+                        "claude code turn: first line {first_line:?} ms, first text {first_text:?} ms, total {} ms, retries {retries}",
+                        t.elapsed().as_millis()
+                    );
                     out(usage.chunk());
                     if is_error {
-                        return Err(anyhow!("claude code: {}", result.unwrap_or(subtype)));
+                        let text = result.unwrap_or(subtype);
+                        return Err(super::fail(super::kind_of_text(&text), format!("claude code: {text}")));
                     }
                     return Ok(());
                 }
@@ -233,6 +300,9 @@ require("readline").createInterface({ input: process.stdin }).on("line", (l) => 
   const text = m.message.content.map((b) => b.text || "").join("");
   if (text === "exit") process.exit(0);
   if (text === "hang") return;
+  if (text === "retry") out({ type: "system", subtype: "api_retry", attempt: 1, max_retries: 2, retry_delay_ms: 500, error_status: null, error: "Can't reach the API server (EAI_AGAIN)" });
+  if (text === "region") return out({ type: "result", subtype: "error", is_error: true, result: "API Error: Request blocked (HTTP 403) · the network this request came from isn't allowed", usage: {} });
+  if (text === "die") { console.error("fatal: getaddrinfo EAI_AGAIN api.anthropic.com"); process.exit(1); }
   if (text === "fail") return out({ type: "result", subtype: "error", is_error: true, result: "boom", usage: {} });
   console.log("not json");
   const delta = (t) => out({ type: "stream_event", event: { type: "content_block_delta", delta: { type: "text_delta", text: t } } });
@@ -258,6 +328,7 @@ require("readline").createInterface({ input: process.stdin }).on("line", (l) => 
         s.ask(&Turn::text(text), &mut |c| match c {
             Chunk::Text(t) => answer.push_str(&t),
             Chunk::Usage { input, output, .. } => usage.extend([input, output]),
+            Chunk::Retry { attempt, .. } => answer.push_str(&format!("[retry {attempt}]")),
         })
         .await?;
         Ok((answer, usage))
@@ -281,10 +352,17 @@ require("readline").createInterface({ input: process.stdin }).on("line", (l) => 
         let e = ask(&mut s, "fail").await.unwrap_err();
         assert!(e.to_string().contains("boom"), "{e}");
         assert_eq!(ask(&mut s, "again").await.unwrap().0, "m|SYS|again", "the process is still usable");
+        let e = ask(&mut s, "region").await.unwrap_err();
+        assert_eq!(super::super::error_kind(&e), ErrorKind::Region, "an API error is worded by its text");
+        let (answer, _) = ask(&mut s, "retry").await.unwrap();
+        assert!(answer.starts_with("[retry 1]m|SYS|retry"), "a retry is reported and the turn goes on: {answer}");
         let e = ask(&mut s, "exit").await.unwrap_err();
-        assert_eq!(super::super::error_kind(&e), ErrorKind::Auth, "an exit points at the login");
+        assert_eq!(super::super::error_kind(&e), ErrorKind::Auth, "an exit without a reason points at the login");
         assert!(s.prepare("m").unwrap(), "the next turn starts a new process");
         assert_eq!(ask(&mut s, "back").await.unwrap().0, "m|SYS|back");
+        let e = ask(&mut s, "die").await.unwrap_err();
+        assert_eq!(super::super::error_kind(&e), ErrorKind::Network, "the reason on stderr decides the kind");
+        assert!(e.to_string().contains("EAI_AGAIN"), "{e}");
     }
 
     #[tokio::test]

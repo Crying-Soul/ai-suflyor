@@ -243,6 +243,9 @@ pub enum ErrorKind {
     Refused,
     /// No money or quota left on the provider's account (HTTP 402, `insufficient_quota`).
     Quota,
+    /// The provider refused the network the request came from (Anthropic's 403 for an unsupported
+    /// region, a VPN or hosting exit): the VPN server, not the app, has to change.
+    Region,
     Other,
 }
 
@@ -327,6 +330,15 @@ pub enum Event {
         /// The saved rating of a replayed answer (see `Command::Feedback`).
         #[serde(skip_serializing_if = "Option::is_none")]
         feedback: Option<i8>,
+    },
+    /// The backend is retrying answer `id` after a failed request (Claude Code `api_retry`):
+    /// the connection is shaky, the answer may still come.
+    AnswerRetry {
+        id: u64,
+        attempt: u32,
+        max: u32,
+        kind: ErrorKind,
+        error: String,
     },
     Metrics {
         name: String,

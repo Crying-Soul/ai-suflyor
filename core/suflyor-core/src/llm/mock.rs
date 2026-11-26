@@ -19,17 +19,26 @@ pub struct MockSession {
     pub seen: Seen,
     /// Every ask fails (a backend that is down).
     pub fail: bool,
+    /// Warm-ups never finish (a backend that hangs on start).
+    pub warm_stall: bool,
     fresh: bool,
 }
 
 impl MockSession {
     pub fn new(delay: Duration, reply: Vec<&'static str>, stall: usize) -> (MockSession, Seen) {
         let seen = Seen::default();
-        (MockSession { delay, reply, stall, seen: seen.clone(), fail: false, fresh: true }, seen)
+        (MockSession { delay, reply, stall, seen: seen.clone(), fail: false, warm_stall: false, fresh: true }, seen)
     }
 
     pub fn prepare(&mut self) -> bool {
         std::mem::replace(&mut self.fresh, false)
+    }
+
+    pub async fn warm(&self) -> Result<()> {
+        if self.warm_stall {
+            std::future::pending::<()>().await;
+        }
+        Ok(())
     }
 
     pub fn reset(&mut self) {

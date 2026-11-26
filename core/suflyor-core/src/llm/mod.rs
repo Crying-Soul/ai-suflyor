@@ -24,6 +24,12 @@ pub enum Chunk {
         /// The price the provider reported for the turn (OpenRouter); None: the UI prices it by model.
         usd: Option<f64>,
     },
+    /// The backend failed a request and retries it (Claude Code `api_retry`); the turn goes on.
+    Retry {
+        attempt: u32,
+        max: u32,
+        error: String,
+    },
 }
 
 /// Token counts as the Messages API reports them (stream events and Claude Code `result`).
@@ -182,6 +188,27 @@ pub fn error_kind(e: &anyhow::Error) -> ErrorKind {
     ErrorKind::Other
 }
 
+/// The kind of a failure known only by its text (Claude Code reports API errors as text).
+pub fn kind_of_text(text: &str) -> ErrorKind {
+    let t = text.to_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| t.contains(n));
+    if has(&["unsupported region", "network this request came from", "not available in your region"]) {
+        ErrorKind::Region
+    } else if has(&["eai_again", "enotfound", "can't reach", "econnrefused", "econnreset", "etimedout", "socket hang up", "network error", "fetch failed"]) {
+        ErrorKind::Network
+    } else if has(&["timed out", "timeout"]) {
+        ErrorKind::Timeout
+    } else if has(&["rate limit", "rate_limit", "429"]) {
+        ErrorKind::RateLimit
+    } else if has(&["overloaded", "529", "api error: 5", "http 5"]) {
+        ErrorKind::Overloaded
+    } else if has(&["401", "invalid api key", "authentication", "/login", "not logged in", "oauth"]) {
+        ErrorKind::Auth
+    } else {
+        ErrorKind::Other
+    }
+}
+
 /// One user turn: text and, for "Экран + вопрос", a picture of the screen (`screen::MEDIA_TYPE`) placed before it.
 pub struct Turn {
     pub text: String,
@@ -236,7 +263,7 @@ impl Session {
             Session::Code(s) => s.warm(model, out).await,
             Session::OpenAi(s) => s.warm().await,
             #[cfg(test)]
-            Session::Mock(_) => Ok(()),
+            Session::Mock(s) => s.warm().await,
         }
     }
 
@@ -555,6 +582,15 @@ mod error_tests {
         assert_eq!(api::http_error(502, "<html>gateway</html>").message, "<html>gateway</html>");
         assert_eq!(error_kind(&wrapped(fail(ErrorKind::Refused, "no"))), ErrorKind::Refused);
         assert_eq!(error_kind(&anyhow::anyhow!("plain")), ErrorKind::Other);
+        // Claude Code's texts from the 2026-11-26 call.
+        assert_eq!(kind_of_text("API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)"), ErrorKind::Network);
+        let region = "API Error: Request blocked before it reached Anthropic's API (HTTP 403) · the network this request came from isn't allowed";
+        assert_eq!(kind_of_text(region), ErrorKind::Region);
+        assert_eq!(kind_of_text("API Error: 529 Overloaded"), ErrorKind::Overloaded);
+        assert_eq!(kind_of_text("API Error: 500 Internal server error"), ErrorKind::Overloaded);
+        assert_eq!(kind_of_text("Invalid API key · Please run /login"), ErrorKind::Auth);
+        assert_eq!(kind_of_text("Request timed out."), ErrorKind::Timeout);
+        assert_eq!(kind_of_text("boom"), ErrorKind::Other);
         let body = |kind: &str| ErrorBody { kind: kind.into(), message: String::new() }.error_kind();
         assert_eq!(
             [body("overloaded_error"), body("api_error"), body("rate_limit_error"), body("permission_error"), body("invalid_request_error")],

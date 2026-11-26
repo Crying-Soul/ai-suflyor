@@ -17,6 +17,8 @@ use crate::screen::Shot;
 use crate::{FinalSegment, Shared};
 
 struct Req {
+    /// When it was asked: the wait in the tier's queue goes to the log.
+    at: Instant,
     id: u64,
     turn: u64,
     model: String,
@@ -225,6 +227,7 @@ impl Answerer {
             shot_file = crate::call::save_shot(shared, turn, &sh.image);
         }
         let req = |model: String| Req {
+            at: Instant::now(),
             id: self.next_id(),
             turn,
             model,
@@ -485,6 +488,16 @@ async fn auto_detect(a: Answerer, shared: Arc<Shared>, mut rx: mpsc::UnboundedRe
 /// A hung backend (a stuck `claude -p`, a stalled stream) must not block its tier forever.
 const FIRST_TOKEN_TIMEOUT: Duration = Duration::from_secs(30);
 const ANSWER_TIMEOUT: Duration = Duration::from_secs(120);
+/// A warm-up blocks its tier: with the network down it used to hang for minutes.
+const WARM_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// What one answer turn was like, for its log line.
+#[derive(Default)]
+struct Stats {
+    fresh: bool,
+    first_ms: Option<u128>,
+    retries: u32,
+}
 
 /// Resolves when the answer is overdue: no first token in time, or too long in total.
 async fn overdue(got_first: &AtomicBool, first: Duration, total: Duration) -> u64 {
@@ -534,11 +547,7 @@ impl TierActor {
     }
 
     async fn run(mut self) {
-        if let Err(e) = self.warm(false).await {
-            warn!("[{}] warm-up failed: {e:#}", self.tier.as_str());
-            let message = format!("Claude ({}): {e:#}", self.tier.as_str());
-            let _ = self.shared.events.send(Event::Error { message, kind: Some(llm::error_kind(&e)) });
-        }
+        self.warm_and_report(false).await;
         while !self.stopping {
             let msg = match self.pending.take() {
                 Some(m) => m,
@@ -548,12 +557,17 @@ impl TierActor {
                 },
             };
             match msg {
-                Msg::Ask(req) => self.answer(req).await,
+                Msg::Ask(req) => {
+                    if let Some(req) = self.latest(req) {
+                        self.answer(req).await;
+                    }
+                }
                 Msg::Clear => self.reset(),
+                // A call opens: a failure here is said at once, not at the first question.
                 Msg::Reconfigure { system, warm_cache } => {
                     self.session.set_system(system);
                     self.reset();
-                    self.warm_quietly(warm_cache).await;
+                    self.warm_and_report(warm_cache).await;
                 }
                 Msg::Cancel { .. } => {} // that turn is over already
                 Msg::Compact => {
@@ -570,21 +584,88 @@ impl TierActor {
         if self.tier == Tier::Full { self.shared.status.lock().unwrap().model.clone() } else { self.model.clone() }
     }
 
+    /// Warms the session for at most `WARM_TIMEOUT`. A message that comes meanwhile cuts it short
+    /// and waits in `pending`: a question never waits behind a warm-up.
     async fn warm(&mut self, cache: bool) -> anyhow::Result<()> {
         let model = self.warm_model();
         let (events, tier, api) = (self.shared.events.clone(), self.tier, self.session.is_api());
-        let usage = |c: Chunk| {
+        let mut usage = |c: Chunk| {
             if let Some(e) = llm::usage_event(tier, &model, api, &c) {
                 let _ = events.send(e);
             }
         };
-        self.session.warm(&model, cache, &mut { usage }).await
+        let started = Instant::now();
+        let done = {
+            let warm = tokio::time::timeout(WARM_TIMEOUT, self.session.warm(&model, cache, &mut usage));
+            tokio::pin!(warm);
+            tokio::select! {
+                r = &mut warm => Some(r),
+                m = self.rx.recv() => {
+                    self.pending = m;
+                    None
+                }
+            }
+        };
+        let (tier, ms) = (tier.as_str(), started.elapsed().as_millis());
+        match done {
+            None => {
+                info!("[{tier}] warm-up cut short after {ms} ms: a message came");
+                self.session.cancel().await;
+                Ok(())
+            }
+            Some(Err(_)) => {
+                self.reset(); // the backend's state is unknown
+                Err(llm::fail(ErrorKind::Timeout, format!("Claude не прогрелся за {} с", WARM_TIMEOUT.as_secs())))
+            }
+            Some(Ok(r)) => {
+                info!("[{tier}] warm-up {} in {ms} ms", if r.is_ok() { "done" } else { "failed" });
+                r
+            }
+        }
     }
 
     async fn warm_quietly(&mut self, cache: bool) {
         if let Err(e) = self.warm(cache).await {
             warn!("[{}] warm-up failed: {e:#}", self.tier.as_str());
         }
+    }
+
+    async fn warm_and_report(&mut self, cache: bool) {
+        if let Err(e) = self.warm(cache).await {
+            warn!("[{}] warm-up failed: {e:#}", self.tier.as_str());
+            let message = format!("Claude ({}): {e:#}", self.tier.as_str());
+            let _ = self.shared.events.send(Event::Error { message, kind: Some(llm::error_kind(&e)) });
+        }
+    }
+
+    /// The newest of the asks waiting in the queue. Older ones end as cancelled without starting:
+    /// a backend that comes back must not work through a backlog, cancelling each in turn.
+    /// None: the newest was retracted before it started.
+    fn latest(&mut self, mut req: Req) -> Option<Req> {
+        while let Ok(m) = self.rx.try_recv() {
+            match m {
+                Msg::Ask(newer) => {
+                    self.skip(&req, ErrorKind::Cancelled);
+                    req = newer;
+                }
+                Msg::Cancel { turn } if turn == req.turn => {
+                    self.skip(&req, ErrorKind::Retracted);
+                    return None;
+                }
+                Msg::Cancel { .. } => {}
+                other => {
+                    self.pending = Some(other);
+                    break;
+                }
+            }
+        }
+        Some(req)
+    }
+
+    fn skip(&self, req: &Req, kind: ErrorKind) {
+        info!("[{}] answer {} skipped: {kind:?}", self.tier.as_str(), req.id);
+        let error = Some(if kind == ErrorKind::Retracted { "retracted" } else { "cancelled" }.to_string());
+        let _ = self.shared.events.send(Event::AnswerEnd { id: req.id, error, kind: Some(kind), feedback: None });
     }
 
     /// A new session: the next ask sends the transcript again.
@@ -604,7 +685,23 @@ impl TierActor {
         let started = Instant::now();
         let mut answer = String::new();
         let mut compact = false;
-        let outcome = self.turn(&req, &mut answer, started, &mut compact).await;
+        let mut stats = Stats::default();
+        let outcome = self.turn(&req, &mut answer, started, &mut compact, &mut stats).await;
+        let how = match &outcome {
+            Outcome::Done => "done",
+            Outcome::Failed { .. } => "failed",
+            Outcome::Interrupted => "interrupted",
+        };
+        info!(
+            "[{}] answer {id}: {how}, model {}, fresh {}, queued {} ms, first token {:?} ms, total {} ms, retries {}",
+            tier.as_str(),
+            req.model,
+            stats.fresh,
+            started.duration_since(req.at).as_millis(),
+            stats.first_ms,
+            started.elapsed().as_millis(),
+            stats.retries
+        );
         let (error, kind) = match outcome {
             Outcome::Done => {
                 crate::call::save_answer(
@@ -627,8 +724,10 @@ impl TierActor {
             Outcome::Failed { error, stuck } => {
                 warn!("[{}] answer failed: {error:#}", tier.as_str());
                 if stuck {
-                    // The backend's state is unknown: start a new session (claude-code restarts).
+                    // The backend's state is unknown: start a new session (claude-code restarts),
+                    // warmed while idle so the next question does not pay for the start.
                     self.reset();
+                    self.pending.get_or_insert(Msg::Compact);
                 }
                 (Some(format!("{error:#}")), Some(llm::error_kind(&error)))
             }
@@ -654,11 +753,12 @@ impl TierActor {
 
     /// Sends the turn and streams the reply into `answer` and the UI, until it ends, fails, times out
     /// or a newer message cuts it off. `compact`: a `Compact` arrived meanwhile.
-    async fn turn(&mut self, req: &Req, answer: &mut String, started: Instant, compact: &mut bool) -> Outcome {
+    async fn turn(&mut self, req: &Req, answer: &mut String, started: Instant, compact: &mut bool, stats: &mut Stats) -> Outcome {
         let fresh = match self.session.prepare(&req.model) {
             Ok(f) => f,
             Err(error) => return Outcome::Failed { error, stuck: false },
         };
+        stats.fresh = fresh;
         let mut earlier = String::new();
         if fresh {
             let n = self.shared.notes.lock().unwrap();
@@ -695,6 +795,7 @@ impl TierActor {
         let mut emit = |c: Chunk| match c {
             Chunk::Text(t) => {
                 if !got_first.swap(true, Ordering::Relaxed) {
+                    stats.first_ms = Some(started.elapsed().as_millis());
                     let ms = started.elapsed().as_secs_f64() * 1000.0;
                     let _ = ev.send(Event::Metrics { name: format!("answer_first_token_{tier}"), ms });
                     if let Some(end) = them_end {
@@ -711,6 +812,10 @@ impl TierActor {
                 if let Some(e) = llm::usage_event(self.tier, &req.model, api, &c) {
                     let _ = ev.send(e);
                 }
+            }
+            Chunk::Retry { attempt, max, error } => {
+                stats.retries += 1;
+                let _ = ev.send(Event::AnswerRetry { id: req.id, attempt, max, kind: llm::kind_of_text(&error), error });
             }
         };
         let outcome = {
@@ -758,6 +863,7 @@ mod tests {
 
     fn ask(id: u64, shot: Option<Arc<Shot>>) -> Msg {
         Msg::Ask(Req {
+            at: Instant::now(),
             id,
             turn: id,
             model: "test".into(),
@@ -794,6 +900,38 @@ mod tests {
         tx.send(ask(2, None)).unwrap();
         assert_eq!(end(&mut rx, 1).await, Some(ErrorKind::Cancelled));
         assert_eq!(end(&mut rx, 2).await, None);
+    }
+
+    #[tokio::test]
+    async fn a_question_cuts_a_hung_warm_up_short() {
+        let (mut mock, _) = MockSession::new(Duration::ZERO, vec!["ok"], 0);
+        mock.warm_stall = true;
+        let (tx, _shared, mut rx) = tier(mock);
+        tx.send(ask(1, None)).unwrap();
+        let ended = tokio::time::timeout(Duration::from_secs(2), end(&mut rx, 1)).await;
+        assert_eq!(ended, Ok(None), "answered without waiting for the warm-up");
+    }
+
+    #[tokio::test]
+    async fn queued_asks_collapse_to_the_newest() {
+        let (mock, _) = MockSession::new(Duration::from_millis(50), vec!["a", "b"], 0);
+        let (tx, _shared, mut rx) = tier(mock);
+        tx.send(ask(1, None)).unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        for id in 2..=4 {
+            tx.send(ask(id, None)).unwrap();
+        }
+        let (mut started, mut ended) = (vec![], vec![]);
+        while ended.last().is_none_or(|(id, _)| *id != 4) {
+            match rx.recv().await.unwrap() {
+                Event::AnswerStart { id, .. } => started.push(id),
+                Event::AnswerEnd { id, kind, .. } => ended.push((id, kind)),
+                _ => {}
+            }
+        }
+        assert_eq!(started, [1, 4], "the backlog is not worked through");
+        let c = Some(ErrorKind::Cancelled);
+        assert_eq!(ended, [(1, c), (2, c), (3, c), (4, None)]);
     }
 
     #[tokio::test]
@@ -905,7 +1043,8 @@ mod tests {
         st.on_final(&a, &shared);
         tokio::time::sleep(Duration::from_millis(300)).await;
         let (starts, ends) = drain(&mut rx);
-        assert_eq!(starts, vec!["1 Early".to_string(), "3 Auto".to_string()]);
+        // Retracted while still queued: it never starts.
+        assert_eq!(starts, vec!["3 Auto".to_string()]);
         assert_eq!(ends, vec![Some(ErrorKind::Retracted), None]);
     }
 
