@@ -28,7 +28,7 @@ export function startLogs(dir: string): void {
   const write = (level: string, args: unknown[]) => {
     const now = new Date();
     try {
-      fs.appendFileSync(path.join(dir, `${day(now)}.log`), `${now.toTimeString().slice(0, 8)} ${level} ${format(...args)}\n`);
+      fs.appendFileSync(path.join(dir, `${day(now)}.log`), `${now.toTimeString().slice(0, 8)}.${String(now.getMilliseconds()).padStart(3, "0")} ${level} ${format(...args)}\n`);
     } catch {
       // a full or locked disk must not crash the app
     }

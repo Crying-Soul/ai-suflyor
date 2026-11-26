@@ -87,6 +87,8 @@ export function humanError(kind: ErrorKind | undefined): string {
       return "На счёте провайдера закончились деньги или лимит";
     case "network":
       return "Нет связи с моделью";
+    case "region":
+      return "Провайдер не пускает эту сеть: смените сервер VPN";
     case "refused":
       return "Модель отказалась отвечать на этот вопрос";
     default:

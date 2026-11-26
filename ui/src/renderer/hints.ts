@@ -465,6 +465,12 @@ api.onEvent((e: CoreEvent) => {
       }
       break;
     }
+    case "answer_retry": {
+      // The backend retries a failed request: the answer may still come, the chip says why it is late.
+      const a = answers.get(e.id);
+      if (a?.tier === "full" && a.turn === current) setPhase("answering", `${humanError(e.kind)}, повтор ${e.attempt} из ${e.max}`, e.error);
+      break;
+    }
     case "metrics":
       if (e.name.startsWith("answer_first_token_") || e.name.startsWith("question_to_first_token_")) {
         metrics[e.name] = e.ms;
